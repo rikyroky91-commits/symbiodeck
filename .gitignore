@@ -1,0 +1,10 @@
+# personal / generated, never published
+server/config.json
+server/*.log
+server/cache-icone/*.png
+server/cache-icone/elenco.txt
+android/build/
+android/firma/
+RTSS-Global.prima-del-pannello
+__pycache__/
+*.pyc

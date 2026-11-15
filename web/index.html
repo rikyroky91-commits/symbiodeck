@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Pannello PC</title>
+<link rel="stylesheet" href="stile.css">
+</head>
+<body>
+<div id="pannello">
+
+  <header>
+    <div class="ora"><span id="ora">--:--</span><span id="data"></span></div>
+    <div class="primo-piano"><span class="etichetta" id="pp-etichetta">In primo piano</span><span id="pp-nome">—</span></div>
+    <div class="media">
+      <button data-media="media_prev" aria-label="Precedente">⏮</button>
+      <button data-media="media_play_pause" aria-label="Play/Pausa">⏯</button>
+      <button data-media="media_next" aria-label="Successivo">⏭</button>
+      <span class="sep"></span>
+      <button data-media="volume_down" aria-label="Volume giù">🔉</button>
+      <button data-media="volume_mute" aria-label="Muto">🔇</button>
+      <button data-media="volume_up" aria-label="Volume su">🔊</button>
+    </div>
+    <button id="monitor" class="monitor" aria-label="Secondo monitor">🖥️ Monitor</button>
+    <div class="stato"><span id="punto" class="punto"></span><button id="modifica" aria-label="Modifica">✎</button></div>
+  </header>
+
+  <section class="metriche">
+    <article class="scheda cpu">
+      <div class="testa"><span class="nome">CPU</span><span class="sotto" id="cpu-clock">— GHz</span></div>
+      <div class="corpo">
+        <svg class="anello" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="fondo" cx="60" cy="60" r="50"/>
+          <circle class="valore" id="cpu-anello" cx="60" cy="60" r="50"/>
+        </svg>
+        <div class="centro"><span class="grande" id="cpu-carico">—</span><span class="unita">% carico</span></div>
+      </div>
+      <div class="righe">
+        <div><span class="etichetta">Temp</span><span class="num" id="cpu-temp">—</span></div>
+        <div><span class="etichetta">Potenza</span><span class="num" id="cpu-watt">—</span></div>
+        <div><span class="etichetta" id="ram-tot">RAM</span><span class="num" id="ram">—</span></div>
+      </div>
+      <div class="barra"><i id="ram-barra"></i></div>
+    </article>
+
+    <article class="scheda fps">
+      <div class="testa"><span class="nome">FPS</span><span class="sotto" id="fps-gioco">nessun gioco</span></div>
+      <div class="fps-numero"><span id="fps-ora">—</span></div>
+      <div class="righe due">
+        <div><span class="etichetta">1% low</span><span class="num" id="fps-low">—</span></div>
+        <div><span class="etichetta">Media</span><span class="num" id="fps-media">—</span></div>
+      </div>
+      <canvas id="grafico" width="560" height="150"></canvas>
+      <div class="legenda"><span class="l-fps">FPS</span><span class="l-cpu">CPU °C</span><span class="l-gpu">GPU °C</span><span class="l-dx">ultimi 2 min</span></div>
+    </article>
+
+    <article class="scheda gpu">
+      <div class="testa"><span class="nome">GPU</span><span class="sotto" id="gpu-clock">— MHz</span></div>
+      <div class="corpo">
+        <svg class="anello" viewBox="0 0 120 120" aria-hidden="true">
+          <circle class="fondo" cx="60" cy="60" r="50"/>
+          <circle class="valore" id="gpu-anello" cx="60" cy="60" r="50"/>
+        </svg>
+        <div class="centro"><span class="grande" id="gpu-carico">—</span><span class="unita">% carico</span></div>
+      </div>
+      <div class="righe">
+        <div><span class="etichetta">Temp</span><span class="num" id="gpu-temp">—</span></div>
+        <div><span class="etichetta">Potenza</span><span class="num" id="gpu-watt">—</span></div>
+        <div><span class="etichetta" id="vram-tot">VRAM</span><span class="num" id="vram">—</span></div>
+      </div>
+      <div class="barra"><i id="vram-barra"></i></div>
+    </article>
+  </section>
+
+  <section class="comandi">
+    <div class="griglia app" id="app"></div>
+    <div class="griglia scorciatoie" id="scorciatoie"></div>
+  </section>
+
+  <div id="barra-modifica" class="nascosto">
+    <span>Modalità modifica: tocca un riquadro per cambiarlo, ✕ per toglierlo.</span>
+    <label class="luce">☀ <input type="range" id="luminosita" min="5" max="100" value="100"></label>
+    <button id="apri-android">Apri Android</button>
+    <button id="fine" class="primario">Fatto</button>
+  </div>
+</div>
+
+<div id="velo" class="nascosto">
+  <div class="finestra" id="finestra-app">
+    <div class="testa-finestra"><strong id="titolo-app">Scegli un'app</strong><button class="chiudi">✕</button></div>
+    <div class="riga-cerca"><input type="search" id="cerca" placeholder="Cerca un'app o un gioco…" autocomplete="off" enterkeyhint="search"><button class="via-tastiera" type="button">⌨ Fine</button></div>
+    <div class="elenco" id="elenco"></div>
+  </div>
+  <div class="finestra" id="finestra-tasti">
+    <div class="testa-finestra"><strong>Scorciatoia</strong><button class="chiudi">✕</button></div>
+    <label>Nome<input type="text" id="t-nome" maxlength="30"></label>
+    <label>Tasti<input type="text" id="t-tasti" placeholder="es. ctrl+shift+m, alt+f10, win+d" autocapitalize="none" autocorrect="off" spellcheck="false"></label>
+    <div class="suggerimento">Tasti: ctrl, shift, alt, win, a–z, 0–9, f1–f24, tab, esc, enter, space, printscreen, frecce (left, up…), volume_up/down/mute, media_play_pause</div>
+    <div class="icone" id="t-icone"></div>
+    <div class="azioni"><button class="via-tastiera" type="button">⌨ Fine</button><button id="t-salva" class="primario">Salva</button></div>
+  </div>
+</div>
+
+<div id="avviso" class="nascosto"></div>
+<script src="pannello.js"></script>
+</body>
+</html>

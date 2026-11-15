@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Va in /system/etc/permissions/: permessi privilegiati dell'app in /system/priv-app/PannelloPC
+     SHUTDOWN: spegnimento completo a batteria scarica; WRITE_SECURE_SETTINGS: riavvio del debug USB -->
+<permissions>
+    <privapp-permissions package="it.rikyr.pannello">
+        <permission name="android.permission.SHUTDOWN" />
+        <permission name="android.permission.WRITE_SECURE_SETTINGS" />
+    </privapp-permissions>
+</permissions>

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pannello PC – Impostazioni</title>
+<style>
+  :root { --sfondo:#07090d; --scheda:#10151d; --scheda2:#151c27; --bordo:rgba(255,255,255,.08); --testo:#e8eef6;
+          --tenue:#7d8a9c; --acc:#35c8ff; --ok:#3ddc97; --ko:#ff4d5e; --gpu:#76b900; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--sfondo); color: var(--testo); font: 14px/1.4 "Segoe UI", system-ui, sans-serif; }
+  body { background: radial-gradient(900px 500px at 10% -10%, rgba(53,200,255,.08), transparent 60%),
+                     radial-gradient(900px 500px at 90% -10%, rgba(118,185,0,.08), transparent 60%), var(--sfondo); min-height: 100vh; }
+  button, input { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--bordo); background: var(--scheda2); border-radius: 10px; padding: 8px 12px; }
+  button:hover { border-color: rgba(53,200,255,.5); }
+  button.primario { background: var(--acc); color: #00131c; font-weight: 600; border: 0; }
+  input[type=text], input[type=search] { background: #0a0e14; border: 1px solid var(--bordo); border-radius: 10px; padding: 8px 10px; width: 100%; }
+  input:focus { outline: 2px solid rgba(53,200,255,.5); outline-offset: 0; }
+  header { display: flex; align-items: center; gap: 16px; padding: 18px 28px; border-bottom: 1px solid var(--bordo); }
+  header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  header .stato { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--tenue); }
+  .punto { width: 10px; height: 10px; border-radius: 50%; background: var(--ko); }
+  .punto.vivo { background: var(--ok); }
+  main { display: grid; grid-template-columns: 1.25fr 1fr; gap: 22px; padding: 22px 28px 40px; max-width: 1500px; margin: 0 auto; }
+  section { background: linear-gradient(180deg, var(--scheda2), var(--scheda)); border: 1px solid var(--bordo); border-radius: 18px; padding: 18px; }
+  section h2 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 10px; }
+  section h2 small, .nota { color: var(--tenue); font-weight: 400; font-size: 12px; }
+  .barra { display: flex; gap: 8px; margin: 12px 0; }
+  .griglia-app { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .carta { position: relative; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 10px 10px;
+           background: var(--scheda); border: 1px solid var(--bordo); border-radius: 14px; cursor: grab; }
+  .carta.trascina { opacity: .4; } .carta.sopra { border-color: var(--acc); }
+  .carta img, .carta .lettera { width: 52px; height: 52px; border-radius: 12px; object-fit: cover; }
+  .lettera { display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 22px; background: #334; }
+  .carta input { text-align: center; padding: 5px 6px; font-size: 13px; }
+  .carta .via, .riga .via { position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; padding: 0; border-radius: 50%;
+                            background: transparent; border: 0; color: var(--tenue); }
+  .carta .via:hover, .riga .via:hover { color: var(--ko); }
+  .carta .dove { font-size: 10px; color: var(--tenue); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .riga { position: relative; display: grid; grid-template-columns: 44px 1fr 1fr auto auto; gap: 8px; align-items: center;
+          padding: 8px 36px 8px 8px; background: var(--scheda); border: 1px solid var(--bordo); border-radius: 12px; margin-bottom: 8px; cursor: grab; }
+  .riga.trascina { opacity: .4; } .riga.sopra { border-color: var(--acc); }
+  .riga .emoji { font-size: 20px; height: 38px; padding: 0; }
+  .tasti { font-family: Consolas, monospace; }
+  .tasti.registra { outline: 2px solid var(--gpu); }
+  .avviso { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: #0e2433; border: 1px solid rgba(53,200,255,.4);
+            padding: 10px 16px; border-radius: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .avviso.si { opacity: 1; } .avviso.ko { background: #3a1d24; border-color: rgba(255,77,94,.5); }
+  /* catalogo */
+  #velo { position: fixed; inset: 0; background: rgba(0,0,0,.65); display: none; align-items: center; justify-content: center; z-index: 10; }
+  #velo.aperto { display: flex; }
+  .finestra { width: min(980px, 94vw); height: min(720px, 90vh); background: #0d121a; border: 1px solid var(--bordo); border-radius: 18px;
+              padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .schede { display: flex; gap: 6px; }
+  .schede button.attiva { background: var(--acc); color: #00131c; border-color: transparent; }
+  .catalogo { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; align-content: start; }
+  .catalogo button { display: flex; align-items: center; gap: 10px; text-align: left; padding: 8px; }
+  .catalogo img, .catalogo .lettera { width: 36px; height: 36px; border-radius: 8px; flex: none; object-fit: cover; font-size: 15px; }
+  .catalogo .gia { opacity: .45; }
+  .altro { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; }
+  .emoji-scelta { position: absolute; z-index: 5; display: grid; grid-template-columns: repeat(8, 36px); gap: 4px; padding: 8px;
+                  background: #0d121a; border: 1px solid var(--bordo); border-radius: 12px; }
+  .emoji-scelta button { padding: 0; height: 36px; font-size: 18px; }
+  section.largo { grid-column: 1 / -1; order: 3; }
+  @media (max-width: 1050px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>🖥️ Pannello PC</h1>
+  <span class="nota">Le modifiche si salvano da sole e compaiono subito sul tablet.</span>
+  <div class="stato"><span class="punto" id="punto"></span><span id="stato">…</span></div>
+</header>
+
+<main>
+  <section>
+    <h2>App e giochi <small>trascina per riordinare · fino a 18 · sul tablet ne stanno 6 per riga</small></h2>
+    <div class="barra">
+      <button class="primario" id="aggiungi-app">＋ Aggiungi app o gioco</button>
+    </div>
+    <div class="griglia-app" id="app"></div>
+  </section>
+
+  <section class="largo">
+    <h2>🖥️ Secondo monitor <small>la dock in basso sul monitor del tablet · si aprono e restano lì · fino a 10</small></h2>
+    <div class="barra">
+      <button class="primario" id="aggiungi-monitor">＋ Aggiungi app alla dock</button>
+    </div>
+    <div class="griglia-app" id="monitor-app"></div>
+  </section>
+
+  <section>
+    <h2>Scorciatoie <small>clicca il campo tasti e premi la combinazione</small></h2>
+    <div class="barra">
+      <button class="primario" id="aggiungi-sc">＋ Aggiungi scorciatoia</button>
+    </div>
+    <div id="scorciatoie"></div>
+    <p class="nota">"Prova" preme la combinazione dopo 3 secondi, così hai il tempo di passare alla finestra giusta.
+      Le scorciatoie non arrivano ai programmi avviati come amministratore.</p>
+  </section>
+</main>
+
+<div id="velo">
+  <div class="finestra">
+    <div style="display:flex;gap:10px;align-items:center">
+      <strong style="font-size:16px">Aggiungi al pannello</strong>
+      <div class="schede" id="schede">
+        <button data-f="tutte" class="attiva">Tutte</button><button data-f="steam">Giochi Steam</button><button data-f="start">Menu Start</button>
+      </div>
+      <button id="chiudi" style="margin-left:auto">✕</button>
+    </div>
+    <input type="search" id="cerca" placeholder="Cerca…" autocomplete="off">
+    <div class="catalogo" id="catalogo"></div>
+    <div class="altro">
+      <input type="text" id="link" placeholder="…oppure incolla un percorso o un link (https://, steam://, discord://…)">
+      <input type="text" id="link-nome" placeholder="Nome sul pannello">
+      <button id="aggiungi-link">Aggiungi</button>
+      <button id="sfoglia">📂 Sfoglia…</button>
+    </div>
+  </div>
+</div>
+<div class="avviso" id="avviso"></div>
+
+<script>
+(function () {
+  "use strict";
+  var token = location.hash.slice(1);
+  var $ = function (id) { return document.getElementById(id); };
+  var config = { app: [], scorciatoie: [], monitor_app: [] }, catalogo = [], filtro = "tutte", destinazione = "app";
+  var MASSIMO = { app: 18, monitor_app: 10 };
+  var EMOJI = ["⌨️","📷","🎬","🎙️","🔇","🖥️","📊","🎮","🎯","🔴","⏺️","💬","🌙","🔒","📁","🌐","⚡","🎧","🎵","📺","🕹️","🚀","🛠️","🧹","📸","🗂️","💡","🔊","🔁","⏸️","✂️","📋"];
+
+  function api(p, corpo) {
+    var o = { headers: { "X-Token": token } };
+    if (corpo !== undefined) { o.method = "POST"; o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(corpo); }
+    return fetch(p, o).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.errore || r.status); return j; }); });
+  }
+  function avviso(t, ko) {
+    var a = $("avviso"); a.textContent = t; a.className = "avviso si" + (ko ? " ko" : "");
+    clearTimeout(avviso.t); avviso.t = setTimeout(function () { a.className = "avviso"; }, 2600);
+  }
+  function icona(target) { return "/api/icona?t=" + encodeURIComponent(token) + "&target=" + encodeURIComponent(target); }
+  function immagine(target, nome) {
+    var img = document.createElement("img"); img.alt = ""; img.loading = "lazy"; img.src = icona(target);
+    img.onerror = function () {
+      var l = document.createElement("span"); l.className = "lettera"; l.textContent = (nome || "?").charAt(0).toUpperCase();
+      img.replaceWith(l);
+    };
+    return img;
+  }
+
+  // ---------------------------------------------------------- salvataggio (automatico, con un attimo di ritardo)
+  var timer = null;
+  function salva(subito) {
+    clearTimeout(timer);
+    timer = setTimeout(function () {
+      var semplice = function (l) { return (l || []).map(function (a) { return { nome: a.nome, target: a.target }; }); };
+      api("/api/config", { app: semplice(config.app), monitor_app: semplice(config.monitor_app),
+                           scorciatoie: config.scorciatoie.filter(function (s) { return s.tasti; }) })
+        .then(function (c) { config = c; disegna(); avviso("Salvato · il tablet si è aggiornato"); },
+              function (e) { avviso(e.message, true); });
+    }, subito ? 0 : 700);
+  }
+
+  // ---------------------------------------------------------- trascinamento
+  function trascinabile(el, lista, i) {
+    el.draggable = true;
+    el.addEventListener("dragstart", function (e) { el.classList.add("trascina"); e.dataTransfer.setData("text/plain", String(i)); });
+    el.addEventListener("dragend", function () { el.classList.remove("trascina"); });
+    el.addEventListener("dragover", function (e) { e.preventDefault(); el.classList.add("sopra"); });
+    el.addEventListener("dragleave", function () { el.classList.remove("sopra"); });
+    el.addEventListener("drop", function (e) {
+      e.preventDefault(); el.classList.remove("sopra");
+      var da = Number(e.dataTransfer.getData("text/plain"));
+      if (isNaN(da) || da === i) return;
+      lista.splice(i, 0, lista.splice(da, 1)[0]);
+      disegna(); salva(true);
+    });
+  }
+
+  // ---------------------------------------------------------- disegno
+  function disegna() {
+    griglia("app", config.app);
+    griglia("monitor-app", config.monitor_app = config.monitor_app || []);
+    disegnaScorciatoie();
+  }
+  function griglia(id, lista) {
+    var box = $(id); box.innerHTML = "";
+    lista.forEach(function (a, i) {
+      var c = document.createElement("div"); c.className = "carta";
+      c.appendChild(immagine(a.target, a.nome));
+      var n = document.createElement("input"); n.type = "text"; n.value = a.nome; n.maxLength = 40;
+      n.oninput = function () { a.nome = n.value; salva(); };
+      c.appendChild(n);
+      var d = document.createElement("span"); d.className = "dove"; d.textContent = a.target; d.title = a.target; c.appendChild(d);
+      var x = document.createElement("button"); x.className = "via"; x.textContent = "✕"; x.title = "Togli";
+      x.onclick = function () { lista.splice(i, 1); disegna(); salva(true); };
+      c.appendChild(x);
+      trascinabile(c, lista, i);
+      box.appendChild(c);
+    });
+  }
+
+  function disegnaScorciatoie() {
+    var sc = $("scorciatoie"); sc.innerHTML = "";
+    config.scorciatoie.forEach(function (s, i) {
+      var r = document.createElement("div"); r.className = "riga";
+      var e = document.createElement("button"); e.className = "emoji"; e.textContent = s.icona || "⌨️";
+      e.onclick = function (ev) { ev.stopPropagation(); scegliEmoji(e, s); };
+      var n = document.createElement("input"); n.type = "text"; n.value = s.nome; n.placeholder = "Nome"; n.maxLength = 30;
+      n.oninput = function () { s.nome = n.value; salva(); };
+      var k = document.createElement("input"); k.type = "text"; k.className = "tasti"; k.value = s.tasti; k.placeholder = "clicca e premi i tasti";
+      registraTasti(k, s);
+      var p = document.createElement("button"); p.textContent = "Prova";
+      p.onclick = function () { api("/api/pc/prova", { tasti: s.tasti }).then(function () { avviso("Tra 3 secondi premo " + s.tasti); }, function (er) { avviso(er.message, true); }); };
+      var x = document.createElement("button"); x.className = "via"; x.textContent = "✕";
+      x.onclick = function () { config.scorciatoie.splice(i, 1); disegna(); salva(true); };
+      [e, n, k, p, document.createElement("span"), x].forEach(function (el) { r.appendChild(el); });
+      trascinabile(r, config.scorciatoie, i);
+      sc.appendChild(r);
+    });
+  }
+
+  // nomi dei tasti come li capisce il server
+  var NOMI = { Control: "ctrl", Shift: "shift", Alt: "alt", Meta: "win", OS: "win", Escape: "esc", Enter: "enter", " ": "space",
+               Tab: "tab", Backspace: "backspace", Delete: "delete", Insert: "insert", Home: "home", End: "end", PageUp: "pgup",
+               PageDown: "pgdn", ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down", PrintScreen: "printscreen",
+               AudioVolumeUp: "volume_up", AudioVolumeDown: "volume_down", AudioVolumeMute: "volume_mute",
+               MediaPlayPause: "media_play_pause", MediaTrackNext: "media_next", MediaTrackPrevious: "media_prev" };
+  function registraTasti(campo, s) {
+    campo.onfocus = function () { campo.classList.add("registra"); campo.select(); };
+    campo.onblur = function () { campo.classList.remove("registra"); };
+    campo.onkeydown = function (e) {
+      e.preventDefault();
+      var tasto = NOMI[e.key] || (/^F\d{1,2}$/.test(e.key) ? e.key.toLowerCase() : (e.code.indexOf("Key") === 0 ? e.code.slice(3).toLowerCase()
+                  : e.code.indexOf("Digit") === 0 ? e.code.slice(5) : null));
+      if (!tasto) return;
+      var parti = [];
+      if (e.ctrlKey) parti.push("ctrl"); if (e.shiftKey) parti.push("shift"); if (e.altKey) parti.push("alt"); if (e.metaKey) parti.push("win");
+      if (["ctrl", "shift", "alt", "win"].indexOf(tasto) < 0) parti.push(tasto);
+      campo.value = parti.join("+");
+      if (["ctrl", "shift", "alt", "win"].indexOf(tasto) < 0) { s.tasti = campo.value; salva(); campo.blur(); }
+    };
+    campo.oninput = function () { s.tasti = campo.value.trim().toLowerCase(); salva(); };
+  }
+
+  function scegliEmoji(btn, s) {
+    var vecchio = document.querySelector(".emoji-scelta"); if (vecchio) vecchio.remove();
+    var box = document.createElement("div"); box.className = "emoji-scelta";
+    var r = btn.getBoundingClientRect();
+    box.style.left = (r.left + window.scrollX) + "px"; box.style.top = (r.bottom + window.scrollY + 6) + "px";
+    EMOJI.forEach(function (em) {
+      var b = document.createElement("button"); b.textContent = em;
+      b.onclick = function () { s.icona = em; box.remove(); disegna(); salva(true); };
+      box.appendChild(b);
+    });
+    document.body.appendChild(box);
+    setTimeout(function () { document.addEventListener("click", function via() { box.remove(); document.removeEventListener("click", via); }); }, 0);
+  }
+
+  // ---------------------------------------------------------- catalogo
+  function apriCatalogo(dove) {
+    destinazione = dove || "app";
+    $("velo").classList.add("aperto"); $("cerca").value = ""; $("cerca").focus();
+    (catalogo.length ? Promise.resolve(catalogo) : api("/api/elenco-app")).then(function (l) { catalogo = l; riempi(); }, function (e) { avviso(e.message, true); });
+  }
+  function norm(s) { return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, " ").trim(); }
+  function riempi() {
+    var parole = norm($("cerca").value).split(" ").filter(Boolean), box = $("catalogo");
+    var presenti = config[destinazione].map(function (a) { return a.target; });
+    box.innerHTML = "";
+    catalogo.filter(function (a) {
+      if (filtro !== "tutte" && a.tipo !== filtro) return false;
+      var n = norm(a.nome); return parole.every(function (p) { return n.indexOf(p) >= 0; });
+    }).slice(0, 240).forEach(function (a) {
+      var b = document.createElement("button");
+      if (presenti.indexOf(a.target) >= 0) b.className = "gia";
+      b.appendChild(immagine(a.target, a.nome));
+      var n = document.createElement("span"); n.textContent = a.nome + (a.tipo === "steam" ? " · Steam" : ""); b.appendChild(n);
+      b.onclick = function () { aggiungi(a.nome, a.target); };
+      box.appendChild(b);
+    });
+    if (!box.children.length) box.innerHTML = '<p class="nota">Nessun risultato.</p>';
+  }
+  function aggiungi(nome, target) {
+    var lista = config[destinazione];
+    if (lista.length >= MASSIMO[destinazione]) return avviso("Massimo " + MASSIMO[destinazione] + " app", true);
+    lista.push({ nome: nome, target: target });
+    $("velo").classList.remove("aperto");
+    disegna(); salva(true);
+  }
+  $("cerca").oninput = riempi;
+  $("schede").onclick = function (e) {
+    if (!e.target.dataset.f) return;
+    filtro = e.target.dataset.f;
+    Array.prototype.forEach.call(this.children, function (b) { b.classList.toggle("attiva", b === e.target); });
+    riempi();
+  };
+  $("chiudi").onclick = function () { $("velo").classList.remove("aperto"); };
+  $("velo").onclick = function (e) { if (e.target === this) this.classList.remove("aperto"); };
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") $("velo").classList.remove("aperto"); });
+  $("aggiungi-app").onclick = function () { apriCatalogo("app"); };
+  $("aggiungi-monitor").onclick = function () { apriCatalogo("monitor_app"); };
+  $("aggiungi-link").onclick = function () {
+    var t = $("link").value.trim(); if (!t) return;
+    var nome = $("link-nome").value.trim() || t.replace(/^.*[\\/]/, "").replace(/\.(exe|lnk|url)$/i, "") || t;
+    aggiungi(nome, t); $("link").value = ""; $("link-nome").value = "";
+  };
+  $("sfoglia").onclick = function () {
+    avviso("Si apre la finestra per scegliere il file…");
+    api("/api/pc/sfoglia", {}).then(function (r) {
+      if (!r.percorso) return;
+      $("link").value = r.percorso;
+      $("link-nome").value = r.percorso.replace(/^.*[\\/]/, "").replace(/\.(exe|lnk|url|bat|cmd)$/i, "");
+    }, function (e) { avviso(e.message, true); });
+  };
+  $("aggiungi-sc").onclick = function () {
+    config.scorciatoie.push({ nome: "Nuova", tasti: "", icona: "⌨️" });
+    disegna();
+    var campi = document.querySelectorAll("#scorciatoie .tasti"); campi[campi.length - 1].focus();
+  };
+
+  // ---------------------------------------------------------- stato del tablet
+  function stato() {
+    api("/api/pc/stato").then(function (s) {
+      var vivo = s.tablet.length > 0;
+      $("punto").classList.toggle("vivo", vivo);
+      $("stato").textContent = vivo ? "Tablet collegato (" + s.tablet.map(function (t) { return t.ip === "127.0.0.1" ? "USB" : t.ip; }).join(", ") + ")" : "Tablet non collegato";
+    }, function () { $("punto").classList.remove("vivo"); $("stato").textContent = "Server del pannello non raggiungibile"; });
+  }
+  setInterval(stato, 5000);
+
+  if (!token) { avviso("Apri le impostazioni dal collegamento \"Pannello PC – Impostazioni\"", true); return; }
+  api("/api/config").then(function (c) { config = c; disegna(); }, function (e) { avviso(e.message, true); });
+  stato();
+})();
+</script>
+</body>
+</html>
