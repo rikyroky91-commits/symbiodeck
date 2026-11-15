@@ -1,4 +1,6 @@
-# 🖥️ Pannello PC — turn an old Android tablet into a live control deck and second monitor for your gaming PC
+# 🧬 SymbioDeck — an old Android tablet in symbiosis with your gaming PC
+
+*Live control deck and one-tap second monitor that sleeps and wakes together with the PC.*
 
 ![Windows](https://img.shields.io/badge/PC-Windows%2010%2F11-0078D6) ![Python](https://img.shields.io/badge/server-Python%20stdlib-3776AB) ![Android](https://img.shields.io/badge/tablet-Android%208%2B-3DDC84) ![No deps](https://img.shields.io/badge/web-no%20frameworks-lightgrey)
 
@@ -21,7 +23,7 @@ controls, plus a one-tap second monitor.** Built to give a slow, forgotten table
    only dependency, sets the server to start at login and opens the settings page. No admin rights needed.
    Optional: [MSI Afterburner](https://www.msi.com/Landing/afterburner) for FPS and CPU temperature.
 2. **Tablet (Android 8+)**: install `PannelloPC.apk` from the
-   [latest release](https://github.com/rikyroky91-commits/pc-panel/releases/latest) and open it. It finds the PC by
+   [latest release](https://github.com/rikyroky91-commits/symbiodeck/releases/latest) and open it. It finds the PC by
    itself. To pair another tablet later: settings → **📲 Abbina un tablet**.
 3. Optional extras: [Apollo](https://github.com/ClassicOldSong/Apollo) on the PC and Artemis on the tablet for the
    second monitor; root/system-app install for the full power-management features (see `LEGGIMI.md`).
@@ -36,8 +38,8 @@ vanilla JS / CSS · Java Android app (WebView, DevicePolicyManager, UDP discover
 
 ## 🇮🇹 In breve
 
-Un vecchio tablet Android diventa il pannello sempre acceso del PC da gioco: temperature, FPS, carico di CPU e GPU,
+**SymbioDeck** (l'app si chiama ancora *Pannello PC*): un vecchio tablet Android diventa il pannello sempre acceso del PC da gioco: temperature, FPS, carico di CPU e GPU,
 app e scorciatoie personalizzabili, controlli multimediali e **secondo monitor con un tocco**. Si spegne e si
 riaccende insieme al PC. Per provarlo: sul PC `installa.ps1`, sul tablet l'APK dalle
-[Release](https://github.com/rikyroky91-commits/pc-panel/releases/latest); il tablet trova il PC da solo.
+[Release](https://github.com/rikyroky91-commits/symbiodeck/releases/latest); il tablet trova il PC da solo.
 La documentazione tecnica completa (in italiano) è in [LEGGIMI.md](LEGGIMI.md).
