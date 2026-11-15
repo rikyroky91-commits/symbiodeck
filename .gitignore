@@ -9,3 +9,6 @@ RTSS-Global.prima-del-pannello
 __pycache__/
 *.pyc
 android/build-generico/
+
+# istruzioni locali per gli assistenti (regola di pubblicazione)
+CLAUDE.md

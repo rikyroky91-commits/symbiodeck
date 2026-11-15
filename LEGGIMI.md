@@ -126,3 +126,9 @@ normale). Un permesso privilegiato nuovo va prima aggiunto a `privapp-permission
   chiave che ha già.
 - `installa.ps1` (senza amministratore): dipendenze, attività pianificata `Pannello PC`, collegamenti alle
   impostazioni (`pannello.py --collegamenti`) e primo avvio.
+
+## Pubblicazione su GitHub
+Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
+controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
+push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.8.1 (2026-11-15).
