@@ -43,6 +43,12 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   `WRITE_SECURE_SETTINGS` in `privapp-permissions-pannello.xml` e nell'APK di `/system`), al massimo 2 volte e
   solo nei 4 minuti dopo il ricollegamento (mai a PC addormentato: ricollegare l'USB potrebbe svegliarlo).
   Provato simulando il ricollegamento: adb è caduto ed è tornato in 3 s; con un vero adb offline non provato.
+- 2026-11-15, ripresa vera: il tablet ha ritrovato il PC via Wi-Fi, quindi la riparazione (che guardava solo
+  "nessun dato") non è scattata, e la pagina del pannello è rimasta ferma sull'indirizzo USB. Dall'app 1.8.1:
+  se i dati arrivano **solo dalla rete** con il cavo collegato a un PC acceso, dopo 20 s si riavvia il debug USB
+  (al massimo 2 volte, poi di nuovo dopo 30 min; ogni 10 s si prova se l'USB risponde di nuovo). E la pagina
+  (`web/pannello.js`), dopo 20 s senza dati, chiede all'app di ricaricarsi provando tutti gli indirizzi.
+  Non provato con un adb offline vero (non si riesce a simularlo: il server rimette `adb reverse` ogni 15 s).
 - Cosa riaccende lo schermo: il flusso del server ("acceso"), il **collegamento dati USB** (broadcast
   `android.hardware.usb.action.USB_STATE`, `configured=true`: un PC acceso ha riconosciuto il tablet) oppure
   un caricatore da muro (AC). La sola corrente USB **no**: il PC ha l'Avvio rapido (Windows va in ibernazione,
@@ -75,6 +81,8 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   appena aperto e lui si chiudeva ("il secondo monitor non parte", 2026-11-14). Dall'app 1.7.2 il pannello la
   toglie con `requestDismissKeyguard` (senza PIN non serve toccare nulla) prima di aprire Artemis e a ogni
   ritorno in primo piano. In alternativa: Impostazioni > Sicurezza > Blocco schermo: Nessuno (non fatto).
+- La dock si apre solo se il monitor virtuale è **in più** rispetto a uno schermo vero: con la TV spenta Apollo
+  tiene acceso un monitor virtuale come unico schermo del PC, e il 2026-11-15 la dock ci era finita sopra.
 - Per tornare al pannello: scorrimento dal bordo sinistro verso destra. La sessione si chiude
   (`terminate-on-pause`) e il monitor virtuale sparisce.
 - Sul monitor del tablet compare da sola una **dock** in basso (`server/dock.py`, appbar di Windows: le finestre

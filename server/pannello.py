@@ -624,17 +624,22 @@ TITOLO_DOCK = "Dock Pannello PC"
 
 def monitor_virtuale(lavoro=True):
     """(left, top, right, bottom) in pixel reali del monitor virtuale di Apollo, se c'è: l'area di lavoro
-    (senza dock e taskbar) oppure, con lavoro=False, il monitor intero."""
-    nomi, i = set(), 0
+    (senza dock e taskbar) oppure, con lavoro=False, il monitor intero.
+    Conta solo se c'è anche uno schermo vero: con la TV spenta Apollo tiene acceso un monitor virtuale come unico
+    schermo del PC (2026-11-15), e lì la dock finiva sull'unico desktop."""
+    nomi, fisici, i = set(), 0, 0
     while True:
         d = DISPLAY_DEVICEW()
         d.cb = ctypes.sizeof(d)
         if not user32.EnumDisplayDevicesW(None, i, ctypes.byref(d), 0):
             break
-        if d.StateFlags & 1 and "Virtual Display" in d.DeviceString:
-            nomi.add(d.DeviceName)
+        if d.StateFlags & 1:  # collegato al desktop
+            if "Virtual Display" in d.DeviceString:
+                nomi.add(d.DeviceName)
+            else:
+                fisici += 1
         i += 1
-    if not nomi:
+    if not nomi or not fisici:
         return None
     trovati = []
 

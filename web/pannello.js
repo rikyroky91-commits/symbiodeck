@@ -162,12 +162,23 @@
     sorgente.onerror = function () { $("punto").classList.remove("vivo"); };
   }
   // se il flusso tace (PC in sospensione, Wi-Fi caduto) lo si riapre
+  var paginaAperta = Date.now(), ricaricata = Date.now();
   setInterval(function () {
     if (Date.now() - ultimoDato > 8000) {
       // niente dati: i valori a schermo sono vecchi, lo si dice chiaramente invece di lasciarli "fermi"
       $("punto").classList.remove("vivo");
       document.body.classList.add("scollegato");
       collega();
+    }
+    // La pagina parla solo con l'indirizzo da cui è stata caricata: dopo la sospensione del PC il collegamento
+    // USB (adb) può restare bloccato mentre il Wi-Fi funziona. Dopo 20 s di silenzio si chiede all'app di
+    // ricaricare il pannello provando tutti gli indirizzi (USB, poi rete), al massimo ogni 30 s e solo a schermo
+    // acceso.
+    var silenzio = Date.now() - Math.max(ultimoDato, paginaAperta);
+    if (silenzio > 20000 && Date.now() - ricaricata > 30000 && !document.hidden &&
+        window.Pannello && window.Pannello.riprova) {
+      ricaricata = Date.now();
+      window.Pannello.riprova();
     }
   }, 5000);
 

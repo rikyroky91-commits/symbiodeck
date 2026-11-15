@@ -24,7 +24,9 @@ import java.net.URL;
  *    accende lo schermo, e se il PC non risponde lo si rispegne (rispegniDopoCorrente).
  *  - Dopo la ripresa dalla sospensione il collegamento adb può restare "offline" (niente adb reverse, niente
  *    dati): se il PC si è ricollegato via USB ma i dati non arrivano, si riavvia il debug USB (come staccare e
- *    riattaccare il cavo), al massimo TENTATIVI_ADB volte.
+ *    riattaccare il cavo), al massimo TENTATIVI_ADB volte. Lo stesso se i dati arrivano solo dalla rete mentre il
+ *    cavo USB è collegato a un PC acceso (2026-11-15: al risveglio il tablet ha ritrovato il PC via Wi-Fi e la
+ *    riparazione non scattava, mentre la pagina del pannello restava ferma sull'indirizzo USB).
  *  - batteria sotto BATTERIA_MINIMA senza PC e senza corrente da PRIMA_DI_SPEGNERE -> spegnimento completo
  * Ascolta lo stesso flusso SSE del pannello (/api/flusso), provando USB e poi rete.
  */
@@ -64,6 +66,8 @@ final class Simbiosi extends Thread {
     private volatile boolean schermoSpentoDaNoi = false;
     private volatile boolean tabletInSpegnimento = false;
     private volatile int tentativiAdb = 0;
+    private volatile long soloReteDa = 0;                // dati che arrivano solo dalla rete con il cavo USB collegato
+    private volatile long ultimaProvaUsb = 0;
     private volatile long ultimoRiavvioAdb = 0;
 
     Simbiosi(String[] pagine, boolean schermoSpento, Azioni azioni) {
@@ -148,6 +152,7 @@ final class Simbiosi extends Thread {
             @Override public void run() {
                 while (attivo) {
                     try { Thread.sleep(2000); } catch (InterruptedException e) { return; }
+                    provaUsb();
                     controlla();
                 }
             }
@@ -169,6 +174,7 @@ final class Simbiosi extends Thread {
     private boolean ascolta(String indirizzo) {
         HttpURLConnection c = null;
         boolean ricevuto = false;
+        boolean viaUsb = indirizzo.contains("://127.0.0.1");
         try {
             c = (HttpURLConnection) new URL(indirizzo).openConnection();
             c.setConnectTimeout(3000);
@@ -179,7 +185,13 @@ final class Simbiosi extends Thread {
                 if (riga.startsWith("data: ")) {
                     ricevuto = true;
                     ultimoDato = SystemClock.elapsedRealtime();
-                    tentativiAdb = 0;
+                    if (viaUsb) {
+                        tentativiAdb = 0;
+                        soloReteDa = 0;
+                    } else if (usbPc && soloReteDa == 0) {
+                        soloReteDa = ultimoDato;
+                        Log.i(TAG, "dati dal PC solo via rete con il cavo USB collegato: controllo il collegamento USB");
+                    }
                     stato(new JSONObject(riga.substring(6)).optString("pc", "acceso"));
                 } else if (riga.startsWith(":")) {
                     ultimoContatto = SystemClock.elapsedRealtime();
@@ -191,6 +203,33 @@ final class Simbiosi extends Thread {
             if (c != null) c.disconnect();
         }
         return ricevuto;
+    }
+
+    /** Con i dati che arrivano solo dalla rete, ogni 10 s si prova se il PC risponde di nuovo anche via USB. */
+    private void provaUsb() {
+        long ora = SystemClock.elapsedRealtime();
+        if (soloReteDa == 0 || ora - ultimaProvaUsb < 10_000) return;
+        ultimaProvaUsb = ora;
+        for (String f : flussi) {
+            if (!f.contains("://127.0.0.1")) continue;
+            HttpURLConnection c = null;
+            try {
+                URL u = new URL(f);
+                c = (HttpURLConnection) new URL(u.getProtocol(), u.getHost(), u.getPort(), "/").openConnection();
+                c.setConnectTimeout(2000);
+                c.setReadTimeout(3000);
+                if (c.getResponseCode() == 200) {
+                    soloReteDa = 0;
+                    tentativiAdb = 0;
+                    Log.i(TAG, "il PC risponde di nuovo anche via USB");
+                }
+            } catch (Exception e) {
+                Log.d(TAG, "prova USB: " + e);
+            } finally {
+                if (c != null) c.disconnect();
+            }
+            return;
+        }
     }
 
     /** Ogni 2 s: il PC che mandava dati tace? il collegamento adb è rimasto bloccato dopo la ripresa? */
@@ -208,6 +247,16 @@ final class Simbiosi extends Thread {
             Log.i(TAG, "PC ricollegato via USB ma nessun dato: riavvio il debug USB (tentativo " + tentativiAdb + ")");
             azioni.riavviaAdb();
         }
+        // il PC è sicuramente sveglio (manda dati via rete) ma l'USB non risponde: si riavvia il debug USB
+        if (usbPc && soloReteDa > 0 && ora - soloReteDa > 20_000 && ora - ultimoRiavvioAdb > 120_000
+                && tentativiAdb < TENTATIVI_ADB) {
+            tentativiAdb++;
+            ultimoRiavvioAdb = ora;
+            Log.i(TAG, "dati solo via rete da " + (ora - soloReteDa) / 1000 + " s: riavvio il debug USB (tentativo "
+                    + tentativiAdb + ")");
+            azioni.riavviaAdb();
+        }
+        if (tentativiAdb >= TENTATIVI_ADB && ora - ultimoRiavvioAdb > 1_800_000) tentativiAdb = 0; // si riprova fra 30 min
         valuta();
     }
 
