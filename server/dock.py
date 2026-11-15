@@ -150,6 +150,8 @@ class Dock:
         for w in parti:
             w.configure(bg=LAMPO)
         self.root.after(400, lambda: [w.configure(bg=SFONDO) for w in parti if w.winfo_exists()])
+        # il tocco l'ha ricevuto la dock: solo lei può lasciare il primo piano all'app che sta per aprirsi
+        ctypes.windll.user32.AllowSetForegroundWindow(ctypes.c_uint32(0xFFFFFFFF))  # ASFW_ANY
         threading.Thread(target=lambda: api("/api/azione", {"tipo": "monitor_app", "id": voce["id"]}), daemon=True).start()
 
     def controlla(self):

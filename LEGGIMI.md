@@ -89,6 +89,15 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   massimizzate si fermano sopra) con le app della sezione "Secondo monitor" del companion. Toccando un'icona
   l'app si apre e la sua finestra viene portata e massimizzata sul monitor del tablet. Le app del Microsoft
   Store (es. Claude) si aprono con `shell:AppsFolder\<AppID>`.
+- App **già aperta** (dal 2026-11-15): prima il server aspettava che Windows portasse davanti la finestra, ma
+  Windows non lo permette a un processo in secondo piano, e l'app restava dov'era (con Claude aperto sul monitor
+  principale bisognava cliccarla sulla barra delle applicazioni). Ora cerca le finestre dell'app per
+  AppUserModelID (`id_app`: proprietà della finestra o pacchetto del processo; Esplora file per classe
+  `CabinetWClass`) e sposta direttamente quella più in alto. La finestra viene anche alzata sopra le altre
+  (`metti_davanti`: sempre in cima e poi no, aggancio all'input), e la dock al tocco chiama
+  `AllowSetForegroundWindow` così l'app che si apre può venire davanti. Provato: riconoscimento di Claude ed
+  Esplora file aperti; **non ancora provato con un tocco vero** dalla dock. Le app della dock indicate come file
+  `.lnk` usano ancora solo il vecchio modo (finestra nuova o finestra che viene davanti).
 - **Giochi a schermo intero** (dal 2026-11-15, `CustodeGioco` in `server/pannello.py`): un tocco sul tablet con
   Artemis sposta il mouse del PC sul monitor virtuale e clicca lì, e il gioco perdeva i comandi (in FC 27 serviva
   Alt+Tab). Ora, se la finestra davanti era a schermo intero su uno schermo vero e il primo piano passa altrove

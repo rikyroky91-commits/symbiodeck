@@ -688,18 +688,125 @@ def sul_monitor(hwnd, area):
     return area[0] <= cx < area[2] and area[1] <= cy < area[3]
 
 
+def metti_davanti(hwnd):
+    """Porta la finestra sopra tutte le altre e, se Windows lo permette, in primo piano. Windows dà il primo piano
+    solo a chi ha ricevuto l'ultimo input (qui: il tablet o il gioco), quindi: prima la si alza nell'ordine delle
+    finestre (sempre in cima e poi no, questo è sempre permesso), poi ci si aggancia all'input di chi è davanti."""
+    user32.SetWindowPos(hwnd, wt.HWND(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)  # HWND_TOPMOST, NOSIZE|NOMOVE|SHOW
+    user32.SetWindowPos(hwnd, wt.HWND(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)  # HWND_NOTOPMOST
+    davanti = user32.GetForegroundWindow()
+    suo = user32.GetWindowThreadProcessId(davanti, None) if davanti else 0
+    mio = ctypes.windll.kernel32.GetCurrentThreadId()
+    agganciato = bool(suo) and suo != mio and user32.AttachThreadInput(mio, suo, True)
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if agganciato:
+            user32.AttachThreadInput(mio, suo, False)
+    if user32.GetForegroundWindow() != hwnd:  # ultima strada: un Alt premuto e rilasciato sblocca il primo piano
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.keybd_event(0x12, 0, 2, 0)
+        user32.SetForegroundWindow(hwnd)
+    return user32.GetForegroundWindow() == hwnd
+
+
 def porta_sul_monitor(hwnd, area):
     l, t, r, b = area
     user32.ShowWindow(hwnd, 9)  # SW_RESTORE: una finestra massimizzata altrove non si sposta
     user32.SetWindowPos(hwnd, None, l + 40, t + 40, (r - l) - 80, (b - t) - 80, 0x0004 | 0x0040)  # NOZORDER|SHOWWINDOW
     user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE sul monitor dove ora si trova
-    user32.SetForegroundWindow(hwnd)
+    metti_davanti(hwnd)
+
+
+class _GUID(ctypes.Structure):
+    _fields_ = [("a", wt.DWORD), ("b", wt.WORD), ("c", wt.WORD), ("d", ctypes.c_ubyte * 8)]
+
+
+def _guid(testo):
+    import uuid
+    u = uuid.UUID(testo)
+    g = _GUID(u.time_low, u.time_mid, u.time_hi_version)
+    g.d[:] = list(u.bytes[8:])
+    return g
+
+
+class _PKEY(ctypes.Structure):
+    _fields_ = [("fmtid", _GUID), ("pid", wt.DWORD)]
+
+
+_IID_IPROPERTYSTORE = _guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99")
+_PKEY_APPID = _PKEY(_guid("9f4c2855-9f79-4b39-a8d0-e1d42de1d5f3"), 5)  # PKEY_AppUserModel_ID
+
+
+def id_app(hwnd):
+    """AppUserModelID della finestra (quello usato da shell:AppsFolder): proprietà della finestra (Chrome,
+    Firefox, Discord, Telegram...) oppure quello del pacchetto del processo (app dello Store, es. Claude)."""
+    try:
+        ps = ctypes.c_void_p()
+        if ctypes.windll.shell32.SHGetPropertyStoreForWindow(wt.HWND(hwnd), ctypes.byref(_IID_IPROPERTYSTORE),
+                                                             ctypes.byref(ps)) == 0 and ps:
+            vt = ctypes.cast(ps, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            pv = (ctypes.c_ubyte * 24)()
+            try:
+                get_value = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(_PKEY), ctypes.c_void_p)(vt[5])
+                if get_value(ps, ctypes.byref(_PKEY_APPID), ctypes.byref(pv)) == 0 and pv[0] == 31:  # VT_LPWSTR
+                    valore = ctypes.wstring_at(ctypes.c_void_p.from_buffer(pv, 8).value)
+                    ctypes.windll.ole32.PropVariantClear(ctypes.byref(pv))
+                    if valore:
+                        return valore
+            finally:
+                ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vt[2])(ps)
+    except OSError:
+        pass
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    k32 = ctypes.windll.kernel32
+    hp = k32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not hp:
+        return ""
+    try:
+        n = wt.UINT(260)
+        buf = ctypes.create_unicode_buffer(260)
+        return buf.value if k32.GetApplicationUserModelId(wt.HANDLE(hp), ctypes.byref(n), buf) == 0 else ""
+    finally:
+        k32.CloseHandle(wt.HANDLE(hp))
+
+
+def finestre_dell_app(target):
+    """Finestre principali già aperte dell'app shell:AppsFolder\\<id> (dalla più in alto), oppure []."""
+    if not target.lower().startswith("shell:appsfolder\\"):
+        return []
+    voluto = target.split("\\", 1)[1].lower()
+    risultato = []
+    for h in finestre_principali():
+        if voluto == "microsoft.windows.explorer":  # le finestre di Esplora file non hanno un AppUserModelID
+            c = ctypes.create_unicode_buffer(32)
+            user32.GetClassNameW(h, c, 32)
+            if c.value == "CabinetWClass":
+                risultato.append(h)
+            continue
+        i = id_app(h).lower()
+        if i and (i == voluto or i.startswith(voluto + ".")):
+            risultato.append(h)
+    return risultato
 
 
 def apri_sul_monitor(voce):
     """Apre l'app e porta la sua finestra (nuova, o quella che si è messa in primo piano) sul monitor del tablet."""
     area = monitor_virtuale()
     CustodeGioco.apertura_fino = time.time() + 25
+    try:
+        gia_aperte = finestre_dell_app(voce["target"]) if area else []
+    except Exception as e:
+        log("finestre dell'app:", repr(e))
+        gia_aperte = []
+    if gia_aperte:
+        # app già aperta: si sposta la sua finestra (2026-11-15: con Claude aperto sul monitor principale il tocco
+        # sulla dock non faceva comparire niente e bisognava cliccarla sulla barra delle applicazioni)
+        log("porto sul secondo monitor", voce["nome"], "(già aperta)")
+        sistema_sul_monitor(gia_aperte[0], area)
+        return
     prima = set(finestre_principali())
     davanti = user32.GetForegroundWindow()
     os.startfile(voce["target"])
@@ -712,7 +819,8 @@ def apri_sul_monitor(voce):
         time.sleep(0.3)
         nuove = [h for h in finestre_principali() if h not in prima]
         if nuove:
-            scelta = nuove[0]
+            sue = set(finestre_dell_app(voce["target"]))
+            scelta = ([h for h in nuove if h in sue] or nuove)[0]
         elif time.time() - inizio > 2.5:
             ora = user32.GetForegroundWindow()
             if ora and ora != davanti and ora in set(finestre_principali()):
@@ -720,6 +828,10 @@ def apri_sul_monitor(voce):
     if not scelta:
         log("nessuna finestra trovata per", voce["nome"])
         return
+    sistema_sul_monitor(scelta, area)
+
+
+def sistema_sul_monitor(scelta, area):
     CustodeGioco.apertura_fino = time.time() + 6  # il custode del gioco aspetta che l'app sia sistemata
     for _ in range(3):  # alcune app (Electron) si rimettono dov'erano subito dopo la comparsa
         porta_sul_monitor(scelta, area)
@@ -888,23 +1000,9 @@ class CustodeGioco(threading.Thread):
         m = self.monitor_di(gioco)
         if m:
             user32.SetCursorPos((m[0] + m[2]) // 2, (m[1] + m[3]) // 2)
-        # Windows dà il primo piano solo a chi ha ricevuto l'ultimo input: ci si aggancia all'input di chi è davanti
-        davanti = user32.GetForegroundWindow()
-        suo = user32.GetWindowThreadProcessId(davanti, None) if davanti else 0
-        mio = ctypes.windll.kernel32.GetCurrentThreadId()
-        agganciato = bool(suo) and suo != mio and user32.AttachThreadInput(mio, suo, True)
-        try:
-            user32.BringWindowToTop(gioco)
-            user32.SetForegroundWindow(gioco)
-        finally:
-            if agganciato:
-                user32.AttachThreadInput(mio, suo, False)
-        if user32.GetForegroundWindow() != gioco:  # ultima strada: un Alt premuto e rilasciato sblocca il primo piano
-            user32.keybd_event(0x12, 0, 0, 0)
-            user32.keybd_event(0x12, 0, 2, 0)
-            user32.SetForegroundWindow(gioco)
+        riuscito = metti_davanti(gioco)
         log("gioco rimesso in primo piano dopo un tocco sul secondo monitor",
-            "(riuscito)" if user32.GetForegroundWindow() == gioco else "(Windows non l'ha permesso)")
+            "(riuscito)" if riuscito else "(Windows non l'ha permesso)")
 
 
 # ---------------------------------------------------------------- app moderne (Microsoft Store / MSIX)
