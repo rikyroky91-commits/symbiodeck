@@ -19,11 +19,21 @@
 <body>
   <div class="ora" id="ora">--:--</div>
   <div class="anello"></div>
-  <h1>In attesa del PC…</h1>
-  <p>Il pannello si collega da solo appena il PC è acceso e il programma "Pannello" è in esecuzione.
+  <h1 id="titolo">In attesa del PC…</h1>
+  <p id="testo">Il pannello si collega da solo appena il PC è acceso e il programma "Pannello" è in esecuzione.
      Va bene sia col cavo USB sia in Wi-Fi sulla stessa rete.</p>
   <button onclick="window.Pannello && window.Pannello.apriAndroid()">Apri Android</button>
 <script>
+  // Tablet mai abbinato: istruzioni per farlo (in italiano e in inglese)
+  if (window.Pannello && window.Pannello.abbinato && !window.Pannello.abbinato()) {
+    var it = (navigator.language || "it").toLowerCase().indexOf("it") === 0;
+    document.getElementById("titolo").textContent = it ? "Cerco il PC…" : "Looking for your PC…";
+    document.getElementById("testo").innerHTML = it
+      ? "Sul PC avvia il server del Pannello e, nelle impostazioni, premi <b>📲 Abbina un tablet</b>.<br>" +
+        "Il tablet lo trova da solo, sulla stessa rete Wi-Fi o col cavo USB."
+      : "On your PC, start the Panel server and click <b>📲 Abbina un tablet</b> (pair a tablet) in its settings.<br>" +
+        "The tablet finds it on its own, over the same Wi-Fi network or a USB cable.";
+  }
   function ora() { var d = new Date(); document.getElementById("ora").textContent =
     ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2); }
   ora(); setInterval(ora, 10000);

@@ -106,3 +106,15 @@ normale). Un permesso privilegiato nuovo va prima aggiunto a `privapp-permission
   bloccavano Android con lo schermo nero (watchdog in `prepareUserStorage`).
 - "Apri Android" (in modalità modifica) apre il launcher normale; il tasto Home riporta al pannello.
 - Se lo schermo resta nero: Power premuto 15 secondi.
+
+## Abbinamento automatico (APK generico, dal 2026-11-15)
+- `python android/costruisci.py --generico` crea in `android/build-generico/` un APK senza IP né chiave: è quello
+  pubblicato nelle Release per chiunque. La build personale (`costruisci.py` senza opzioni) resta com'era.
+- Il tablet non abbinato cerca il PC ogni 3 s: `GET http://127.0.0.1:47800/api/abbina` (USB con `adb reverse`) e
+  broadcast UDP `PANNELLO-PC?` sulla porta 47801. Il server risponde con porta, nome del PC e app di Apollo; la
+  chiave del pannello solo con l'abbinamento aperto: 10 minuti all'avvio finché nessun tablet si è mai collegato
+  (`"abbinato"` in `config.json`), oppure 10 minuti dal pulsante **📲 Abbina un tablet** nelle impostazioni.
+- Un tablet già abbinato che non trova il PC per tre giri di indirizzi lo ricerca in rete (IP cambiato) con la
+  chiave che ha già.
+- `installa.ps1` (senza amministratore): dipendenze, attività pianificata `Pannello PC`, collegamenti alle
+  impostazioni (`pannello.py --collegamenti`) e primo avvio.

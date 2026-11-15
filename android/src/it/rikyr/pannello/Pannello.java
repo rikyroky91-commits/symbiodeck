@@ -34,6 +34,7 @@ import android.webkit.WebViewClient;
 public class Pannello extends Activity {
     private WebView web;
     private String[] indirizzi;
+    private Abbinamento cerca;
     private int tentativo = 0;
     private boolean caricato = false;
     private final Handler handler = new Handler();
@@ -85,23 +86,46 @@ public class Pannello extends Activity {
                 if (errore) {
                     tentativo++;
                     web.loadUrl(ATTESA);
+                    // tre giri a vuoto: il PC forse ha cambiato IP, lo si cerca in rete (non serve riabbinare)
+                    if (tentativo >= indirizzi.length * 3) cercaPc();
                     // dopo un giro completo degli indirizzi si aspetta un po' di più
                     riprova(tentativo % indirizzi.length == 0 ? 4000 : 400);
                 } else {
                     caricato = true;
                     tentativo = 0;
+                    if (cerca != null) { cerca.ferma(); cerca = null; }
                 }
             }
         });
         setContentView(web);
         web.loadUrl(ATTESA);
-        riprova(300);
+        if (indirizzi.length == 0) cercaPc();  // APK generico, tablet non ancora abbinato
+        else riprova(300);
 
         registerReceiver(batteria, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         ritorno = new Ritorno(this);
     }
 
+    /** Cerca il PC in rete o via USB (vedi Abbinamento); appena lo trova ricarica il pannello. */
+    private void cercaPc() {
+        if (cerca != null && cerca.isAlive()) return;
+        cerca = new Abbinamento(this, new Abbinamento.Esito() {
+            @Override public void riuscito() {
+                runOnUiThread(new Runnable() {
+                    @Override public void run() {
+                        indirizzi = Applicazione.indirizzi(Pannello.this);
+                        ((Applicazione) getApplication()).abbinato();
+                        tentativo = 0;
+                        riprova(0);
+                    }
+                });
+            }
+        });
+        cerca.start();
+    }
+
     @Override protected void onDestroy() {
+        if (cerca != null) cerca.ferma();
         if (ritorno != null) ritorno.togli();
         try { unregisterReceiver(batteria); } catch (IllegalArgumentException e) { /* già tolto */ }
         super.onDestroy();
@@ -111,6 +135,7 @@ public class Pannello extends Activity {
     private boolean errore = false;
     private final Runnable carica = new Runnable() {
         @Override public void run() {
+            if (indirizzi.length == 0) return;  // si aspetta l'abbinamento
             caricato = false;
             web.loadUrl(indirizzi[tentativo % indirizzi.length]);
         }
@@ -182,9 +207,10 @@ public class Pannello extends Activity {
     private void apriArtemis() {
         Intent i = new Intent();
         i.setClassName("com.limelight.noir", "com.limelight.ShortcutTrampoline");
-        i.putExtra("Name", Config.PC_NOME);
-        i.putExtra("AppName", Config.APP_MONITOR);
-        if (!Config.APP_MONITOR_UUID.isEmpty()) i.putExtra("AppUUID", Config.APP_MONITOR_UUID);
+        i.putExtra("Name", Applicazione.valore(this, "pc_nome", Config.PC_NOME));
+        i.putExtra("AppName", Applicazione.valore(this, "app_monitor", Config.APP_MONITOR));
+        String uuid = Applicazione.valore(this, "app_monitor_uuid", Config.APP_MONITOR_UUID);
+        if (!uuid.isEmpty()) i.putExtra("AppUUID", uuid);
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             startActivity(i);
@@ -218,10 +244,23 @@ public class Pannello extends Activity {
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             try {
                 startActivity(i);
-            } catch (Exception e) {
-                startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                return;
+            } catch (Exception e) { /* non è LineageOS: si cerca un altro launcher */ }
+            Intent home = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME);
+            for (android.content.pm.ResolveInfo r : getPackageManager().queryIntentActivities(home, 0)) {
+                if (r.activityInfo.packageName.equals(getPackageName())) continue;
+                try {
+                    startActivity(new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+                            .setClassName(r.activityInfo.packageName, r.activityInfo.name)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                    return;
+                } catch (Exception e) { /* si prova il prossimo */ }
             }
+            startActivity(new Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         }
+
+        /** true se il tablet conosce già un PC (la pagina d'attesa mostra le istruzioni per abbinarlo). */
+        @JavascriptInterface public boolean abbinato() { return indirizzi.length > 0; }
 
         @JavascriptInterface public void luminosita(final float valore) {
             runOnUiThread(new Runnable() {

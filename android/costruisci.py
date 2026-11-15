@@ -4,6 +4,7 @@ L'indirizzo del PC e il token vengono da ../server/config.json e finiscono in Co
 così il tablet non va configurato a mano. Se l'IP del PC cambia, si ricostruisce e reinstalla.
 
     python costruisci.py [--ip 192.168.1.96] [--installa]
+    python costruisci.py --generico      # APK per chiunque, in build-generico/: si abbina da solo al PC
 """
 import os
 import shutil
@@ -21,7 +22,7 @@ CONFIG = QUI.parent / "server" / "config.json"
 SDK = Path(os.environ.get("ANDROID_HOME") or os.path.expandvars(r"%LOCALAPPDATA%\Android\Sdk"))
 FIRMA = QUI / "firma" / "pannello.jks"
 PASSWORD = "pannello-locale"   # chiave solo per installare sul proprio tablet, non per lo Store
-MIN_SDK, TARGET_SDK = 21, 28
+MIN_SDK, TARGET_SDK = 26, 28  # 26: requestDismissKeyguard
 
 
 def esegui(cmd, **kw):
@@ -82,19 +83,28 @@ def icona(lato=192):
 def main():
     import json
     t = attrezzi()
-    cfg = json.loads(CONFIG.read_text(encoding="utf-8"))
-    ip = sys.argv[sys.argv.index("--ip") + 1] if "--ip" in sys.argv else ip_del_pc()
-    porta, token = cfg.get("porta", 47800), cfg["token"]
+    generico = "--generico" in sys.argv  # APK per chiunque: niente IP né chiave, il tablet si abbina da solo
+    if generico:
+        cfg, pc_nome = {"app_monitor": ""}, ""
+    else:
+        cfg, pc_nome = json.loads(CONFIG.read_text(encoding="utf-8")), os.environ.get("COMPUTERNAME", "")
+        ip = sys.argv[sys.argv.index("--ip") + 1] if "--ip" in sys.argv else ip_del_pc()
+        porta, token = cfg.get("porta", 47800), cfg["token"]
+    url_usb = "" if generico else f"http://127.0.0.1:{porta}/?t={token}"
+    url_rete = "" if generico else f"http://{ip}:{porta}/?t={token}"
 
+    global COSTRUZIONE
+    if generico:
+        COSTRUZIONE = QUI / "build-generico"  # non tocca la build personale in build/
     shutil.rmtree(COSTRUZIONE, ignore_errors=True)
     gen = COSTRUZIONE / "gen" / "it" / "rikyr" / "pannello"
     gen.mkdir(parents=True)
     (gen / "Config.java").write_text(
         "package it.rikyr.pannello;\n\n/** Generato da costruisci.py: indirizzi del PC. */\nfinal class Config {\n"
-        f'    static final String URL_USB = "http://127.0.0.1:{porta}/?t={token}";\n'
-        f'    static final String URL_RETE = "http://{ip}:{porta}/?t={token}";\n'
+        f'    static final String URL_USB = "{url_usb}";\n'
+        f'    static final String URL_RETE = "{url_rete}";\n'
         # secondo monitor: PC (per nome) e app di Apollo (per UUID, così non serve l'elenco in cache di Artemis)
-        f'    static final String PC_NOME = "{os.environ.get("COMPUTERNAME", "")}";\n'
+        f'    static final String PC_NOME = "{pc_nome}";\n'
         f'    static final String APP_MONITOR = "{cfg.get("app_monitor", "Virtual Display")}";\n'
         f'    static final String APP_MONITOR_UUID = "{cfg.get("app_monitor_uuid", "")}";\n'
         "    private Config() {}\n}\n", encoding="utf-8")
@@ -106,7 +116,7 @@ def main():
     base = COSTRUZIONE / "base.apk"
     esegui([t["aapt2"], "link", "-I", t["jar"], "--manifest", QUI / "AndroidManifest.xml",
             "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
-            "--version-code", 14, "--version-name", "1.7.2", "-A", QUI / "assets",
+            "--version-code", 15, "--version-name", "1.8.0", "-A", QUI / "assets",
             "-o", base, COSTRUZIONE / "res.zip"])
 
     classi = COSTRUZIONE / "classi"
@@ -130,7 +140,7 @@ def main():
     finale = COSTRUZIONE / "PannelloPC.apk"
     esegui([t["apksigner"], "sign", "--ks", FIRMA, "--ks-pass", f"pass:{PASSWORD}", "--out", finale, allineato],
            shell=True)
-    print(f"APK: {finale}  (PC {ip}:{porta})")
+    print(f"APK: {finale}  " + ("(generico: si abbina da solo)" if generico else f"(PC {ip}:{porta})"))
 
     if "--installa" in sys.argv:
         # L'app è "persistent" (dal 2026-11-14): Android rifiuta "adb install" ("Persistent apps are not

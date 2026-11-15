@@ -829,6 +829,11 @@ class Gestore(BaseHTTPRequestHandler):
                 and ipaddress.ip_address(self.client_address[0]).is_loopback:
             return "pc"
         if token and secrets.compare_digest(token, cfg["token"]):
+            if not cfg.get("abbinato"):  # primo tablet arrivato con la chiave: l'abbinamento si chiude
+                cfg["abbinato"] = True
+                salva_config(cfg)
+                Abbinamento.chiudi()
+                log("tablet abbinato:", self.client_address[0])
             return "tablet"
         return None
 
@@ -846,6 +851,11 @@ class Gestore(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         if not u.path.startswith("/api/"):
             return self.statico(u.path)
+        if u.path == "/api/abbina":
+            # tablet collegato via USB (adb reverse: arriva da 127.0.0.1) mentre l'abbinamento è aperto
+            if not ipaddress.ip_address(self.client_address[0]).is_loopback or not Abbinamento.aperto():
+                return self.manda(403, {"errore": "abbinamento chiuso: aprilo dalle impostazioni sul PC"})
+            return self.manda(200, Abbinamento.risposta(self.server.cfg, con_chiave=True))
         livello = self.livello(q)
         if not livello:
             return self.manda(401, {"errore": "token mancante o sbagliato"})
@@ -867,7 +877,7 @@ class Gestore(BaseHTTPRequestHandler):
             ora = time.time()
             return self.manda(200, {"tablet": [{"ip": ip, "secondi_fa": round(ora - t)}
                                                for ip, t in self.server.tablet.items() if ora - t < 30],
-                                    "porta": PORTA})
+                                    "porta": PORTA, "abbinamento": Abbinamento.secondi_rimasti()})
         return self.manda(404, {"errore": "non trovato"})
 
     def icona(self, target):
@@ -933,6 +943,9 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, self.azione(dati))
             if u.path == "/api/config":
                 return self.manda(200, self.aggiorna_config(dati, livello))
+            if livello == "pc" and u.path == "/api/pc/abbina":
+                Abbinamento.apri()
+                return self.manda(200, {"abbinamento": Abbinamento.secondi_rimasti()})
             if livello == "pc" and u.path == "/api/pc/sfoglia":
                 return self.manda(200, {"percorso": sfoglia()})
             if livello == "pc" and u.path == "/api/pc/prova":
@@ -1027,11 +1040,88 @@ def adb_reverse():
         time.sleep(15)
 
 
+# ---------------------------------------------------------------- abbinamento del tablet
+
+class Abbinamento:
+    """Il tablet trova il PC da solo. Sulla porta UDP PORTA+1 risponde a "PANNELLO-PC?" (broadcast in rete locale)
+    con porta e nome del PC: così un tablet già abbinato ritrova il PC anche se l'IP cambia. La chiave del pannello
+    viaggia solo mentre l'abbinamento è aperto: i primi 10 minuti finché nessun tablet si è mai collegato, oppure
+    10 minuti dal pulsante "Abbina un tablet" nelle impostazioni. Il primo tablet che entra con la chiave lo chiude."""
+    DURATA = 600
+    _fino = 0.0
+
+    @classmethod
+    def apri(cls):
+        cls._fino = time.time() + cls.DURATA
+        log("abbinamento aperto per", cls.DURATA, "s")
+
+    @classmethod
+    def chiudi(cls):
+        cls._fino = 0.0
+
+    @classmethod
+    def aperto(cls):
+        return time.time() < cls._fino
+
+    @classmethod
+    def secondi_rimasti(cls):
+        return max(0, round(cls._fino - time.time()))
+
+    @classmethod
+    def risposta(cls, cfg, con_chiave):
+        r = {"pannello": 1, "porta": PORTA, "pc": os.environ.get("COMPUTERNAME", ""),
+             "app_monitor": cfg.get("app_monitor", "Virtual Display"), "app_monitor_uuid": cfg.get("app_monitor_uuid", "")}
+        if con_chiave:
+            r["token"] = cfg["token"]
+        return r
+
+    @classmethod
+    def ascolta(cls, cfg):
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.bind(("0.0.0.0", PORTA + 1))
+        except OSError as e:
+            log("abbinamento UDP non disponibile:", e)
+            return
+        while True:
+            try:
+                dati, mittente = s.recvfrom(256)
+                if dati.strip() != b"PANNELLO-PC?" or not rete_locale(mittente[0]):
+                    continue
+                aperto = cls.aperto()
+                s.sendto(json.dumps(cls.risposta(cfg, con_chiave=aperto)).encode("utf-8"), mittente)
+                if aperto:
+                    log("chiave del pannello inviata al tablet", mittente[0])
+            except OSError:
+                time.sleep(1)
+
+
+def crea_collegamenti(cfg):
+    """Collegamenti "Pannello PC - Impostazioni" sul Desktop e nel menu Start (li usa installa.ps1)."""
+    url = f"http://127.0.0.1:{int(cfg.get('porta', PORTA))}/impostazioni#{cfg['token_pc']}"
+    testo = f"[InternetShortcut]\r\nURL={url}\r\n"
+    cartelle = [Path(os.path.expandvars(r"%APPDATA%\Microsoft\Windows\Start Menu\Programs"))]
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf)  # CSIDL_DESKTOPDIRECTORY (anche OneDrive)
+        cartelle.append(Path(buf.value))
+    except (AttributeError, OSError):
+        cartelle.append(Path.home() / "Desktop")
+    for c in cartelle:
+        if c.is_dir():
+            (c / "Pannello PC - Impostazioni.url").write_text(testo, encoding="utf-8")
+            print("creato", c / "Pannello PC - Impostazioni.url")
+
+
 class ServerUnico(ThreadingHTTPServer):
     allow_reuse_address = False  # su Windows SO_REUSEADDR farebbe ascoltare due server sulla stessa porta
 
 
 def main():
+    if "--collegamenti" in sys.argv:  # solo crea config.json (se manca) e i collegamenti, poi esce
+        crea_collegamenti(carica_config())
+        return
     # una sola copia del server (attività pianificata all'accesso + eventuali avvii a mano)
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateMutexW.restype = wt.HANDLE
@@ -1050,6 +1140,9 @@ def main():
     camp = Campionatore()
     camp.start()
     threading.Thread(target=adb_reverse, daemon=True).start()
+    if not cfg.get("abbinato") or "--abbina" in sys.argv:
+        Abbinamento.apri()
+    threading.Thread(target=Abbinamento.ascolta, args=(cfg,), daemon=True).start()
     threading.Thread(target=ascolta_windows, args=(camp,), daemon=True).start()
     threading.Thread(target=lambda: estrai_icone([a["target"] for a in cfg["app"]] + [a["target"] for a in elenco_app()]),
                      daemon=True).start()

@@ -70,7 +70,8 @@
 <header>
   <h1>🖥️ Pannello PC</h1>
   <span class="nota">Le modifiche si salvano da sole e compaiono subito sul tablet.</span>
-  <div class="stato"><span class="punto" id="punto"></span><span id="stato">…</span></div>
+  <div class="stato"><span class="punto" id="punto"></span><span id="stato">…</span>
+    <button id="abbina" title="Per 10 minuti un tablet con l'app Pannello PC, nella stessa rete o via USB, trova questo PC da solo">📲 Abbina un tablet</button></div>
 </header>
 
 <main>
@@ -327,9 +328,18 @@
       var vivo = s.tablet.length > 0;
       $("punto").classList.toggle("vivo", vivo);
       $("stato").textContent = vivo ? "Tablet collegato (" + s.tablet.map(function (t) { return t.ip === "127.0.0.1" ? "USB" : t.ip; }).join(", ") + ")" : "Tablet non collegato";
+      var resta = s.abbinamento || 0;
+      $("abbina").textContent = resta > 0 ? "📲 Abbinamento aperto (" + Math.ceil(resta / 60) + " min)" : "📲 Abbina un tablet";
+      $("abbina").classList.toggle("primario", resta > 0);
     }, function () { $("punto").classList.remove("vivo"); $("stato").textContent = "Server del pannello non raggiungibile"; });
   }
   setInterval(stato, 5000);
+  $("abbina").onclick = function () {
+    api("/api/pc/abbina", {}).then(function () {
+      avviso("Apri l'app Pannello PC sul tablet: entro 10 minuti trova questo PC da sola (stessa rete Wi-Fi o cavo USB)");
+      stato();
+    }, function (e) { avviso(e.message, true); });
+  };
 
   if (!token) { avviso("Apri le impostazioni dal collegamento \"Pannello PC – Impostazioni\"", true); return; }
   api("/api/config").then(function (c) { config = c; disegna(); }, function (e) { avviso(e.message, true); });

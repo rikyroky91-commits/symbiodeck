@@ -26,12 +26,41 @@ public class Applicazione extends Application {
     private PowerManager.WakeLock sveglio;
     private Integer ultimaPresa = null;
 
-    /** Indirizzi del pannello: quello scelto a mano (se c'è), poi USB (adb reverse), poi rete locale. */
+    /** Indirizzi del pannello: quello scelto a mano (se c'è), poi quelli dell'abbinamento (USB, rete), poi quelli
+     *  scritti nell'APK da costruisci.py. Vuoto se l'APK è generico e il tablet non è ancora abbinato. */
     static String[] indirizzi(Context c) {
-        String salvato = c.getSharedPreferences("pannello", MODE_PRIVATE).getString("url", null);
-        return salvato != null
-                ? new String[] { salvato, Config.URL_USB, Config.URL_RETE }
-                : new String[] { Config.URL_USB, Config.URL_RETE };
+        android.content.SharedPreferences p = c.getSharedPreferences("pannello", MODE_PRIVATE);
+        java.util.LinkedHashSet<String> l = new java.util.LinkedHashSet<>();
+        for (String u : new String[] { p.getString("url", null), p.getString("url_usb", null),
+                p.getString("url_rete", null), Config.URL_USB, Config.URL_RETE })
+            if (u != null && !u.isEmpty()) l.add(u);
+        return l.toArray(new String[0]);
+    }
+
+    /** Nome del PC e app di Apollo per il secondo monitor: dall'APK, altrimenti dall'abbinamento. */
+    static String valore(Context c, String chiave, String dallApk) {
+        return dallApk != null && !dallApk.isEmpty() ? dallApk
+                : c.getSharedPreferences("pannello", MODE_PRIVATE).getString(chiave, "");
+    }
+
+    /** Chiamato dopo un abbinamento riuscito: la simbiosi riparte con i nuovi indirizzi. */
+    void abbinato() {
+        if (simbiosi != null) simbiosi.ferma();
+        simbiosi = null;
+        avviaSimbiosi(false);
+    }
+
+    private void avviaSimbiosi(boolean spento) {
+        String[] pagine = indirizzi(this);
+        if (pagine.length == 0) { Log.i(TAG, "tablet non abbinato: simbiosi in attesa"); return; }
+        simbiosi = new Simbiosi(pagine, spento, new Simbiosi.Azioni() {
+            @Override public void spegniSchermo() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.spegniSchermo(); } }); }
+            @Override public void accendiSchermo() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.accendiSchermo(); } }); }
+            @Override public void spegniTablet() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.spegniTablet(); } }); }
+            @Override public void riavviaAdb() { Applicazione.this.riavviaAdb(); }
+        });
+        simbiosi.start();
+        Log.i(TAG, "simbiosi avviata nel processo dell'app");
     }
 
     @Override public void onCreate() {
@@ -42,16 +71,9 @@ public class Applicazione extends Application {
                 .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "pannello:simbiosi");
         sveglio.setReferenceCounted(false);
         boolean spento = !((PowerManager) getSystemService(POWER_SERVICE)).isInteractive();
-        simbiosi = new Simbiosi(indirizzi(this), spento, new Simbiosi.Azioni() {
-            @Override public void spegniSchermo() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.spegniSchermo(); } }); }
-            @Override public void accendiSchermo() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.accendiSchermo(); } }); }
-            @Override public void spegniTablet() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.spegniTablet(); } }); }
-            @Override public void riavviaAdb() { Applicazione.this.riavviaAdb(); }
-        });
+        avviaSimbiosi(spento);
         registerReceiver(batteria, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         registerReceiver(usb, new IntentFilter("android.hardware.usb.action.USB_STATE"));
-        simbiosi.start();
-        Log.i(TAG, "simbiosi avviata nel processo dell'app");
     }
 
     private final BroadcastReceiver batteria = new BroadcastReceiver() {
@@ -62,22 +84,25 @@ public class Applicazione extends Application {
             int livello = scala > 0 ? i.getIntExtra(BatteryManager.EXTRA_LEVEL, 100) * 100 / scala : 100;
             if (collegato && !sveglio.isHeld()) sveglio.acquire();
             else if (!collegato && sveglio.isHeld()) sveglio.release();
+            ultimaPresa = ultimaPresa == null ? Integer.valueOf(presa) : ultimaPresa;
+            boolean cambiata = ultimaPresa != presa;
+            ultimaPresa = presa;
+            if (simbiosi == null) return;  // non ancora abbinato
             simbiosi.alimentazione(collegato, presa == BatteryManager.BATTERY_PLUGGED_AC, livello);
             // Android accende da sé lo schermo quando la corrente arriva, se ne va o cambia tipo (la porta del PC
             // spento o in sospensione la toglie e la ridà): se il PC non risponde, lo si rispegne subito.
-            if (ultimaPresa != null && ultimaPresa != presa) {
+            if (cambiata) {
                 principale.postDelayed(new Runnable() {
-                    @Override public void run() { simbiosi.rispegniDopoCorrente(); }
+                    @Override public void run() { if (simbiosi != null) simbiosi.rispegniDopoCorrente(); }
                 }, 1200);
             }
-            ultimaPresa = presa;
         }
     };
 
     // Collegamento dati USB (broadcast di sistema, sticky): "configured" = un PC acceso ha riconosciuto il tablet
     private final BroadcastReceiver usb = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
-            simbiosi.usb(i.getBooleanExtra("configured", false));
+            if (simbiosi != null) simbiosi.usb(i.getBooleanExtra("configured", false));
         }
     };
 
