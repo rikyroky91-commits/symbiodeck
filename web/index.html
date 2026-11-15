@@ -10,6 +10,7 @@
 <div id="pannello">
 
   <header>
+    <button id="energia" class="energia" aria-label="Spegni il PC"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></button>
     <div class="ora"><span id="ora">--:--</span><span id="data"></span></div>
     <div class="primo-piano"><span class="etichetta" id="pp-etichetta">In primo piano</span><span id="pp-nome">—</span></div>
     <div class="media">
@@ -98,6 +99,15 @@
     <div class="suggerimento">Tasti: ctrl, shift, alt, win, a–z, 0–9, f1–f24, tab, esc, enter, space, printscreen, frecce (left, up…), volume_up/down/mute, media_play_pause</div>
     <div class="icone" id="t-icone"></div>
     <div class="azioni"><button class="via-tastiera" type="button">⌨ Fine</button><button id="t-salva" class="primario">Salva</button></div>
+  </div>
+  <div class="finestra" id="finestra-energia">
+    <div class="testa-finestra"><strong>Cosa vuoi fare con il PC?</strong><button class="chiudi">✕</button></div>
+    <div class="scelte-energia">
+      <button data-energia="sospendi"><span class="ic">🌙</span><span class="nome-e">Sospendi</span><small>riprende in pochi secondi</small></button>
+      <button data-energia="iberna"><span class="ic">💾</span><span class="nome-e">Iberna</span><small>salva tutto e si spegne</small></button>
+      <button data-energia="riavvia"><span class="ic">🔄</span><span class="nome-e">Riavvia</span><small>chiude tutto e riparte</small></button>
+      <button data-energia="spegni" class="pericolo"><span class="ic"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></svg></span><span class="nome-e">Spegni</span><small>spegnimento completo</small></button>
+    </div>
   </div>
 </div>
 

@@ -6,55 +6,64 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 from pannello import DecisioneGioco  # noqa: E402
 
 GIOCO, APP = 100, 200
-VIRT, FUORI = (5000, 500), (1900, 1000)
+VIRT, FUORI = True, False
 
 
-def giro(d, eventi):
-    """eventi: (ora, davanti, cursore, apertura). Ritorna gli istanti in cui il gioco va ridato."""
+def giro(d, eventi, pad_presente=True):
+    """eventi: (ora, davanti, cursore sul virtuale, apertura, pad usato). Ritorna gli istanti in cui il gioco va
+    ridato."""
     ridati = []
-    for ora, davanti, cursore, apertura in eventi:
-        r = d.passo(ora, davanti, davanti == GIOCO, True, cursore, cursore[0] >= 3840, apertura)
+    for ora, davanti, virt, apertura, pad in eventi:
+        r = d.passo(ora, davanti, davanti == GIOCO, True, virt, apertura, pad, pad_presente)
         if r:
             ridati.append((ora, r))
     return ridati
 
 
-def test_tocco_sul_secondo_monitor():
+def test_tocco_poi_controller():
     d = DecisioneGioco()
-    assert giro(d, [(0, GIOCO, FUORI, False), (1, APP, VIRT, False), (1.5, APP, VIRT, False),
-                    (2.3, APP, VIRT, False)]) == [(2.3, GIOCO)]
+    assert giro(d, [(0, GIOCO, FUORI, False, False), (1, APP, VIRT, False, False), (3, APP, VIRT, False, False),
+                    (4, APP, VIRT, False, True)]) == [(4, GIOCO)]
 
 
-def test_trascinamento_aspetta_che_finisca():
+def test_scrivere_sul_tablet_non_ridà_il_gioco():
     d = DecisioneGioco()
-    ev = [(0, GIOCO, FUORI, False), (1, APP, VIRT, False)]
-    ev += [(1 + i * 0.3, APP, (5000 + i, 500), False) for i in range(1, 10)]  # dito che scorre fino a 3,7 s
-    ev += [(4.0, APP, (5009, 500), False), (5.0, APP, (5009, 500), False)]
-    assert giro(d, ev) == [(5.0, GIOCO)]
+    ev = [(0, GIOCO, FUORI, False, False), (1, APP, VIRT, False, False)]
+    ev += [(1 + i, APP, VIRT, False, False) for i in range(1, 120)]  # due minuti a scrivere, pad fermo
+    assert giro(d, ev) == []
+    assert d.gioco == GIOCO  # ma il gioco è ricordato: il primo tasto del pad lo riporta davanti
+    assert giro(d, [(200, APP, VIRT, False, True)]) == [(200, GIOCO)]
 
 
-def test_mouse_vero_che_torna_sul_gioco():
+def test_mouse_fuori_dal_tablet_con_il_pad_non_basta():
     d = DecisioneGioco()
-    assert giro(d, [(0, GIOCO, FUORI, False), (1, APP, VIRT, False), (1.3, APP, FUORI, False)]) == [(1.3, GIOCO)]
+    assert giro(d, [(0, GIOCO, FUORI, False, False), (1, APP, VIRT, False, False), (2, APP, FUORI, False, False)]) == []
+
+
+def test_senza_controller_vale_il_mouse():
+    d = DecisioneGioco()
+    ev = [(0, GIOCO, FUORI, False, False), (1, APP, VIRT, False, False), (5, APP, VIRT, False, False),
+          (6, APP, FUORI, False, False)]
+    assert giro(d, ev, pad_presente=False) == [(6, GIOCO)]
 
 
 def test_alt_tab_voluto_non_si_tocca():
     d = DecisioneGioco()
-    assert giro(d, [(0, GIOCO, FUORI, False), (1, APP, FUORI, False), (5, APP, FUORI, False)]) == []
+    assert giro(d, [(0, GIOCO, FUORI, False, False), (1, APP, FUORI, False, False), (5, APP, FUORI, False, True)]) == []
     assert d.gioco is None
 
 
 def test_aspetta_l_apertura_dalla_dock():
     d = DecisioneGioco()
-    ev = [(0, GIOCO, FUORI, False), (1, APP, VIRT, False), (2, APP, VIRT, True), (6, APP, VIRT, True),
-          (6.5, APP, VIRT, False), (7.8, APP, VIRT, False)]
-    assert giro(d, ev) == [(7.8, GIOCO)]
+    ev = [(0, GIOCO, FUORI, False, False), (1, APP, VIRT, False, False), (2, APP, VIRT, True, True),
+          (6, APP, VIRT, False, True)]
+    assert giro(d, ev) == [(6, GIOCO)]
 
 
 def test_gioco_chiuso():
     d = DecisioneGioco()
-    d.passo(0, GIOCO, True, True, FUORI, False, False)
-    assert d.passo(1, APP, False, False, VIRT, True, False) is None
+    d.passo(0, GIOCO, True, True, False, False, False, True)
+    assert d.passo(1, APP, False, False, True, False, True, True) is None
     assert d.gioco is None
 
 

@@ -716,6 +716,90 @@ def sposta_tablet(lato):
     return esito == 0
 
 
+SCALE_WINDOWS = [100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500]
+
+
+def _sorgente_display(nome):
+    """(adapterId LUID come 8 byte, id della sorgente) del display \\\\.\\DISPLAYn, per le funzioni DisplayConfig."""
+    npath, nmode = wt.UINT(), wt.UINT()
+    if user32.GetDisplayConfigBufferSizes(2, ctypes.byref(npath), ctypes.byref(nmode)):  # QDC_ONLY_ACTIVE_PATHS
+        return None
+    percorsi = (ctypes.c_ubyte * (72 * npath.value))()
+    modi = (ctypes.c_ubyte * (64 * nmode.value))()
+    if user32.QueryDisplayConfig(2, ctypes.byref(npath), percorsi, ctypes.byref(nmode), modi, None):
+        return None
+    for i in range(npath.value):
+        luid = bytes(percorsi[i * 72:i * 72 + 8])
+        sid = int.from_bytes(bytes(percorsi[i * 72 + 8:i * 72 + 12]), "little")
+        richiesta = (ctypes.c_ubyte * 84)()  # DISPLAYCONFIG_SOURCE_DEVICE_NAME
+        struct.pack_into("<iI8sI", richiesta, 0, 1, 84, luid, sid)
+        if ctypes.windll.user32.DisplayConfigGetDeviceInfo(richiesta) == 0:
+            if ctypes.wstring_at(ctypes.addressof(richiesta) + 20) == nome:
+                return luid, sid
+    return None
+
+
+def scala_display(nome, percento=None):
+    """Legge (e con percento imposta) il ridimensionamento di Windows di un solo display: è quello di
+    Impostazioni > Schermo > Scala, che Windows salva per quel display. Ritorna la scala attuale in %."""
+    s = _sorgente_display(nome)
+    if not s:
+        return None
+    luid, sid = s
+    leggi = (ctypes.c_ubyte * 32)()  # DISPLAYCONFIG_GET_DPI_SCALE (non documentato, usato dalle Impostazioni)
+    struct.pack_into("<iI8sI", leggi, 0, -3, 32, luid, sid)
+    if ctypes.windll.user32.DisplayConfigGetDeviceInfo(leggi):
+        return None
+    minimo, attuale, massimo = struct.unpack_from("<iii", leggi, 20)
+    consigliata = abs(minimo)
+    ora = SCALE_WINDOWS[min(len(SCALE_WINDOWS) - 1, consigliata + attuale)]
+    if percento is None or percento == ora or percento not in SCALE_WINDOWS:
+        return ora
+    relativa = max(minimo, min(massimo, SCALE_WINDOWS.index(percento) - consigliata))
+    scrivi = (ctypes.c_ubyte * 24)()
+    struct.pack_into("<iI8sIi", scrivi, 0, -4, 24, luid, sid, relativa)
+    esito = ctypes.windll.user32.DisplayConfigSetDeviceInfo(scrivi)
+    log("scala del monitor del tablet:", ora, "->", SCALE_WINDOWS[min(len(SCALE_WINDOWS) - 1, consigliata + relativa)],
+        "% esito", esito)
+    return scala_display(nome)
+
+
+def nome_display_virtuale():
+    area = monitor_virtuale(lavoro=False)
+    if not area:
+        return None
+    nome = None
+
+    def cb(hmon, _hdc, _r, _lp):
+        nonlocal nome
+        m = MONITORINFOEXW()
+        m.cbSize = ctypes.sizeof(m)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(m)) and (m.rcMonitor.l, m.rcMonitor.t) == area[:2]:
+            nome = m.szDevice
+        return True
+
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(cb), 0)
+    return nome
+
+
+_SOSPENSIONE = ("Add-Type -AssemblyName System.Windows.Forms; "
+                "[void][System.Windows.Forms.Application]::SetSuspendState('{}', $false, $false)")
+COMANDI_ENERGIA = {
+    # SetSuspendState di .NET abilita da solo il privilegio di spegnimento (dal pannello, 2026-11-15)
+    "sospendi": ["powershell", "-NoProfile", "-Command", _SOSPENSIONE.format("Suspend")],
+    "iberna": ["powershell", "-NoProfile", "-Command", _SOSPENSIONE.format("Hibernate")],
+    "riavvia": ["shutdown", "/r", "/t", "0"],
+    "spegni": ["shutdown", "/s", "/t", "0"],  # /s senza /hybrid: spegnimento completo, senza avvio rapido
+}
+
+
+def energia(modo, attesa=1.5):
+    """Sospende, iberna, riavvia o spegne il PC. Si aspetta un attimo: la risposta deve arrivare al tablet."""
+    time.sleep(attesa)
+    log("dal pannello:", modo)
+    subprocess.run(COMANDI_ENERGIA[modo], creationflags=SENZA_FINESTRA, check=False)
+
+
 def finestre_principali():
     """Finestre di primo livello visibili, con titolo, non di servizio e non nascoste da DWM."""
     risultato = []
@@ -923,7 +1007,13 @@ class Dock(threading.Thread):
                     spostato = False
                 elif not spostato:
                     spostato = True
-                    if sposta_tablet(self.cfg.get("lato_tablet")):
+                    cambiato = sposta_tablet(self.cfg.get("lato_tablet"))
+                    if self.cfg.get("scala_tablet"):  # caratteri più grandi sul tablet (2026-11-15)
+                        nome = nome_display_virtuale()
+                        if nome and scala_display(nome) != int(self.cfg["scala_tablet"]):
+                            scala_display(nome, int(self.cfg["scala_tablet"]))
+                            cambiato = True
+                    if cambiato:
                         time.sleep(1.5)
                         area = monitor_virtuale(lavoro=False)
                 vivo = self.processo and self.processo.poll() is None
@@ -960,26 +1050,42 @@ user32.GetCursorPos.argtypes = [ctypes.POINTER(wt.POINT)]
 user32.SwitchToThisWindow.argtypes = [wt.HWND, wt.BOOL]
 
 
+class _XINPUT_GAMEPAD(ctypes.Structure):
+    _fields_ = [("wButtons", wt.WORD), ("bLeftTrigger", ctypes.c_ubyte), ("bRightTrigger", ctypes.c_ubyte),
+                ("sThumbLX", ctypes.c_short), ("sThumbLY", ctypes.c_short),
+                ("sThumbRX", ctypes.c_short), ("sThumbRY", ctypes.c_short)]
+
+
+class _XINPUT_STATE(ctypes.Structure):
+    _fields_ = [("dwPacketNumber", wt.DWORD), ("Gamepad", _XINPUT_GAMEPAD)]
+
+
+try:
+    _xinput = ctypes.windll.xinput1_4
+except OSError:
+    _xinput = None
+
+
 class DecisioneGioco:
     """La parte che decide, senza chiamate a Windows (si prova con tests/test_custode.py).
 
-    Un gioco a schermo intero è in primo piano su uno schermo vero; un tocco sul secondo monitor (Artemis muove
-    il mouse del PC lì e clicca) porta davanti la finestra toccata e il gioco perde i comandi. Se, quando il gioco
-    perde il primo piano, il cursore è sul monitor virtuale, il gioco va ridato appena il tocco è finito: cursore
-    fermo per FERMO secondi o tornato fuori dal monitor virtuale. Se invece il gioco lo lasci tu (Alt+Tab, tasto
-    Windows) il cursore non è sul monitor virtuale e non si fa niente."""
-
-    FERMO = 1.2
+    Un gioco a schermo intero è in primo piano su uno schermo vero; un tocco (o un clic) sul secondo monitor porta
+    davanti la finestra toccata e il gioco perde i comandi. Se, quando il gioco perde il primo piano, il cursore è
+    sul monitor virtuale, il gioco si ricorda e gli si ridà il primo piano appena si usa il controller: chi tocca
+    il tablet e poi riprende il pad vuole giocare, chi scrive sul tablet no (2026-11-15: con la regola di prima,
+    "dito fermo 1,2 s", mentre scrivevi sul tablet la tastiera tornava al gioco dopo pochi secondi).
+    Senza controller collegato vale il mouse: il gioco torna quando il cursore lascia il monitor virtuale.
+    Se il gioco lo lasci tu (Alt+Tab, tasto Windows) il cursore non è sul monitor virtuale e non si fa niente."""
 
     def __init__(self):
         self.gioco = None
         self.perso_alle = 0
-        self.cursore = None
-        self.fermo_da = 0
 
-    def passo(self, ora, davanti, davanti_gioco, gioco_esiste, cursore, cursore_sul_virtuale, apertura):
-        """davanti_gioco: la finestra davanti è a schermo intero su uno schermo vero. Ritorna la finestra del gioco
-        da rimettere davanti, oppure None."""
+    def passo(self, ora, davanti, davanti_gioco, gioco_esiste, cursore_sul_virtuale, apertura, pad_usato,
+              pad_presente):
+        """davanti_gioco: la finestra davanti è a schermo intero su uno schermo vero; pad_usato: un tasto, un
+        grilletto o una levetta del controller sono premuti adesso. Ritorna la finestra del gioco da rimettere
+        davanti, oppure None."""
         if davanti_gioco:
             self.gioco, self.perso_alle = davanti, 0
             return None
@@ -992,16 +1098,14 @@ class DecisioneGioco:
             if not cursore_sul_virtuale:
                 self.gioco = None  # lasciato apposta: lo si riprende quando torna davanti
                 return None
-            self.perso_alle, self.cursore, self.fermo_da = ora, cursore, ora
+            self.perso_alle = ora
             return None
-        if apertura or cursore != self.cursore:
-            self.cursore, self.fermo_da = cursore, ora
-            if cursore_sul_virtuale or apertura:
-                return None
-        if cursore_sul_virtuale and ora - self.fermo_da < self.FERMO:
+        if apertura:
             return None
-        self.perso_alle = 0
-        return self.gioco
+        if pad_usato or (not pad_presente and not cursore_sul_virtuale):
+            self.perso_alle = 0
+            return self.gioco
+        return None
 
 
 class CustodeGioco(threading.Thread):
@@ -1036,14 +1140,31 @@ class CustodeGioco(threading.Thread):
         davanti = user32.GetForegroundWindow()
         p = wt.POINT()
         user32.GetCursorPos(ctypes.byref(p))
-        cursore = (p.x, p.y)
         sul_virtuale = self.area[0] <= p.x < self.area[2] and self.area[1] <= p.y < self.area[3]
         gioco = self.decisione.gioco
+        pad_presente, pad_usato = self.controller() if gioco and davanti != gioco else (False, False)
         da_ridare = self.decisione.passo(
             ora, davanti, bool(davanti) and self.a_schermo_intero(davanti),
-            bool(gioco) and bool(user32.IsWindow(gioco)), cursore, sul_virtuale, ora < CustodeGioco.apertura_fino)
+            bool(gioco) and bool(user32.IsWindow(gioco)), sul_virtuale, ora < CustodeGioco.apertura_fino,
+            pad_usato, pad_presente)
         if da_ridare:
             self.ridai(da_ridare)
+
+    @staticmethod
+    def controller():
+        """(c'è un controller XInput, qualcosa è premuto adesso). Le levette contano oltre la zona morta, così una
+        levetta che deriva non riporta il gioco davanti da sola."""
+        presente = usato = False
+        for i in range(4):
+            s = _XINPUT_STATE()
+            if _xinput is None or _xinput.XInputGetState(i, ctypes.byref(s)) != 0:
+                continue
+            presente = True
+            g = s.Gamepad
+            if (g.wButtons or g.bLeftTrigger > 40 or g.bRightTrigger > 40
+                    or max(abs(g.sThumbLX), abs(g.sThumbLY), abs(g.sThumbRX), abs(g.sThumbRY)) > 12000):
+                usato = True
+        return presente, usato
 
     def a_schermo_intero(self, hwnd):
         """Finestra senza barra del titolo grande quanto il suo monitor, su uno schermo vero (non il desktop)."""
@@ -1302,6 +1423,12 @@ class Gestore(BaseHTTPRequestHandler):
             if not voce:
                 raise ValueError("app del secondo monitor non configurata")
             threading.Thread(target=apri_sul_monitor, args=(voce,), daemon=True).start()
+            return {"ok": True}
+        if tipo == "energia":
+            modo = d.get("modo")
+            if modo not in COMANDI_ENERGIA:
+                raise ValueError("comando di spegnimento sconosciuto")
+            threading.Thread(target=energia, args=(modo,), daemon=True).start()
             return {"ok": True}
         if tipo == "scorciatoia":
             voce = next((s for s in cfg["scorciatoie"] if s["id"] == d.get("id")), None)

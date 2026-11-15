@@ -153,6 +153,22 @@ body.tastiera .elenco { max-height: calc(46vh - 92px); }
 body.tastiera #finestra-tasti .suggerimento, body.tastiera #finestra-tasti .icone { display: none; }
 .vuoto-elenco { grid-column: 1 / -1; color: var(--tenue); padding: 18px; text-align: center; }
 
+/* tasto di spegnimento (in alto a sinistra) e le sue scelte */
+.energia { width: 38px; height: 34px; flex: none; border-radius: 10px; background: var(--scheda); border: 1px solid rgba(255, 77, 94, .35);
+  display: flex; align-items: center; justify-content: center; }
+.energia:active { background: var(--scheda-2); }
+.energia svg, .scelte-energia svg { width: 20px; height: 20px; fill: none; stroke: var(--rovente); stroke-width: 2.4; stroke-linecap: round; }
+#finestra-energia { width: 560px; }
+.scelte-energia { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.scelte-energia button { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 14px 16px; border-radius: 14px;
+  background: #151c27; border: 1px solid var(--bordo); text-align: left; }
+.scelte-energia button:active { transform: scale(.97); background: var(--scheda-2); }
+.scelte-energia .ic { font-size: 24px; height: 28px; display: flex; align-items: center; }
+.scelte-energia .ic svg { width: 26px; height: 26px; }
+.scelte-energia .nome-e { font-size: 17px; font-weight: 600; }
+.scelte-energia small { color: var(--tenue); font-size: 12px; }
+.scelte-energia .pericolo { border-color: rgba(255, 77, 94, .45); }
+.scelte-energia .pericolo .nome-e { color: var(--rovente); }
 .monitor { height: 34px; padding: 0 12px; border-radius: 10px; background: var(--scheda); border: 1px solid rgba(53, 200, 255, .35); font-size: 13px; }
 .monitor:active { background: var(--scheda-2); }
 /* scorrimento dal bordo destro verso sinistra: entra nel secondo monitor */

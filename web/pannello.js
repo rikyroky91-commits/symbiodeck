@@ -349,6 +349,18 @@
   function chiudiFinestre() { chiudiTastiera(); clearInterval(controlloCerca); $("velo").classList.add("nascosto"); }
   Array.prototype.forEach.call(document.querySelectorAll(".chiudi"), function (b) { b.onclick = chiudiFinestre; });
 
+  // tasto di spegnimento: sospendi, iberna, riavvia o spegni (il server aspetta un attimo prima di farlo)
+  var FRASI_ENERGIA = { sospendi: "Sospendo il PC…", iberna: "Iberno il PC…", riavvia: "Riavvio il PC…", spegni: "Spengo il PC…" };
+  $("energia").onclick = function () { apriFinestra("finestra-energia"); };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-energia]"), function (b) {
+    b.onclick = function () {
+      var modo = b.getAttribute("data-energia");
+      chiudiFinestre();
+      api("/api/azione", { tipo: "energia", modo: modo }).then(function () { avviso(FRASI_ENERGIA[modo]); },
+        function (e) { avviso(e.message); });
+    };
+  });
+
   var elencoApp = null, controlloCerca = null;
   function scegliApp(posizione) {
     apriFinestra("finestra-app");

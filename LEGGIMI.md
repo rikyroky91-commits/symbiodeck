@@ -27,6 +27,14 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   registra le scorciatoie premendo i tasti. Si salva da solo e il tablet si aggiorna subito.
 - Dal tablet: ✎ in alto a destra, poi tocca un riquadro (o + e ✕).
 
+## Spegnere il PC dal pannello
+Tasto rosso ⏻ in alto a sinistra (dal 2026-11-15): chiede **Sospendi**, **Iberna**, **Riavvia** o **Spegni**
+(spegnimento completo, `shutdown /s` senza avvio rapido). Il server aspetta 1,5 s, così la risposta arriva al
+tablet, poi esegue (`COMANDI_ENERGIA` in `server/pannello.py`; sospensione e ibernazione con `SetSuspendState`
+di .NET, che abilita da sé il privilegio di spegnimento). La pagina è servita dal PC, quindi l'app del tablet
+non cambia. Provato: aspetto del menu (anteprima 960x600), rifiuto di un comando sconosciuto, comandi generati;
+**non provato** eseguendo davvero sospensione, ibernazione, riavvio o spegnimento.
+
 ## Simbiosi con il PC
 - La simbiosi vive nel processo dell'app (`Applicazione.java`), dichiarato `android:persistent="true"`:
   Android lo avvia all'accensione, non lo chiude per memoria e lo riavvia se muore (provato con `kill -9`).
@@ -110,11 +118,22 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
 - **Giochi a schermo intero** (dal 2026-11-15, `CustodeGioco` in `server/pannello.py`): un tocco sul tablet con
   Artemis sposta il mouse del PC sul monitor virtuale e clicca lì, e il gioco perdeva i comandi (in FC 27 serviva
   Alt+Tab). Ora, se la finestra davanti era a schermo intero su uno schermo vero e il primo piano passa altrove
-  mentre il cursore è sul monitor virtuale, il server lascia arrivare il tocco e poi, a dito fermo da 1,2 s (o
-  appena il mouse torna fuori dal monitor del tablet, o finita l'apertura di un'app dalla dock), rimette il gioco
-  in primo piano e il cursore al centro del suo schermo. Un Alt+Tab fatto apposta non viene toccato. Si spegne
-  con `"torna_al_gioco": false` in `config.json`. Provato: la decisione (`python tests/test_custode.py`) e il
-  riconoscimento di FC 27 come finestra a schermo intero; **non ancora provato con un tocco vero** dal tablet.
+  mentre il cursore è sul monitor virtuale, il server si ricorda il gioco e gli ridà il primo piano (con il
+  cursore al centro del suo schermo) **appena usi il controller** (XInput: tasto, grilletto o levetta oltre la zona
+  morta). Finché il controller resta fermo puoi scrivere sul tablet quanto vuoi. Prima la regola era "dito fermo
+  1,2 s" e, scrivendo sul tablet con FIFA aperto, la tastiera tornava al gioco dopo pochi secondi (log del
+  2026-11-15: sei ritorni in un minuto). Senza controller collegato il gioco torna quando il cursore lascia il
+  monitor del tablet. Si aspetta la fine dell'apertura di un'app dalla dock; un Alt+Tab fatto apposta non viene
+  toccato. Il ritorno riprova fino a 3 volte (l'ultima con `SwitchToThisWindow`, come Alt+Tab). Si spegne con
+  `"torna_al_gioco": false` in `config.json`. Provato: la decisione (`python tests/test_custode.py`), la lettura
+  del controller e il riconoscimento di FC 27; un tocco vero ha funzionato con la regola vecchia, **la regola del
+  controller non è ancora provata dal vero**.
+- **Caratteri più grandi sul tablet** (dal 2026-11-15): con `"scala_tablet": 250` in `config.json` il server, a
+  ogni comparsa del monitor virtuale, imposta il ridimensionamento di Windows di quel solo display
+  (`scala_display`, la stessa impostazione di Impostazioni > Schermo > Scala, via `DisplayConfigSetDeviceInfo`).
+  Prima era al 175%. Sul PC di casa è impostato 250; senza la chiave non si cambia niente. Provato: la lettura
+  della scala (schermo principale 200%, uguale a `GetDpiForMonitor`); l'impostazione sul tablet **non ancora
+  provata** (il monitor virtuale non c'era).
 - L'app si aggiunge ad Apollo con `server/apollo-secondo-monitor.ps1` (da amministratore; copia di
   sicurezza `apps.json.prima-del-pannello`). Le altre app e gli altri dispositivi non cambiano.
   Attenzione: in Vibepollo 1.18.4 il layout globale predefinito è `exclusive` (spegne gli altri schermi).
