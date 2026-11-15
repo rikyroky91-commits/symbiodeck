@@ -655,6 +655,67 @@ def monitor_virtuale(lavoro=True):
     return trovati[0] if trovati else None
 
 
+user32.MonitorFromPoint.argtypes = [wt.POINT, wt.DWORD]
+user32.MonitorFromPoint.restype = wt.HMONITOR
+
+
+class DEVMODEW(ctypes.Structure):
+    _fields_ = [("dmDeviceName", wt.WCHAR * 32), ("dmSpecVersion", wt.WORD), ("dmDriverVersion", wt.WORD),
+                ("dmSize", wt.WORD), ("dmDriverExtra", wt.WORD), ("dmFields", wt.DWORD),
+                ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
+                ("dmDisplayOrientation", wt.DWORD), ("dmDisplayFixedOutput", wt.DWORD),
+                ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short), ("dmYResolution", ctypes.c_short),
+                ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short), ("dmFormName", wt.WCHAR * 32),
+                ("dmLogPixels", wt.WORD), ("dmBitsPerPel", wt.DWORD), ("dmPelsWidth", wt.DWORD),
+                ("dmPelsHeight", wt.DWORD), ("dmDisplayFlags", wt.DWORD), ("dmDisplayFrequency", wt.DWORD),
+                ("dmICMMethod", wt.DWORD), ("dmICMIntent", wt.DWORD), ("dmMediaType", wt.DWORD),
+                ("dmDitherType", wt.DWORD), ("dmReserved1", wt.DWORD), ("dmReserved2", wt.DWORD),
+                ("dmPanningWidth", wt.DWORD), ("dmPanningHeight", wt.DWORD)]
+
+
+def sposta_tablet(lato):
+    """Mette il monitor virtuale del tablet a sinistra (o a destra) dello schermo principale, allineato in basso,
+    così il mouse ci passa dal lato dove il tablet sta davvero (2026-11-15: Windows lo metteva a destra, il tablet
+    è a sinistra del monitor e il mouse non tornava su FIFA). Ritorna True se l'ha spostato."""
+    area = monitor_virtuale(lavoro=False)
+    if not area or lato not in ("sinistra", "destra"):
+        return False
+    mi = MONITORINFOEXW()
+    mi.cbSize = ctypes.sizeof(mi)
+    user32.GetMonitorInfoW(user32.MonitorFromPoint(wt.POINT(0, 0), 1), ctypes.byref(mi))
+    p = mi.rcMonitor
+    w, h = area[2] - area[0], area[3] - area[1]
+    x = p.l - w if lato == "sinistra" else p.r
+    y = p.b - h
+    if (area[0], area[1]) == (x, y):
+        return False
+    nome = None
+
+    def cb(hmon, _hdc, _r, _lp):
+        nonlocal nome
+        m = MONITORINFOEXW()
+        m.cbSize = ctypes.sizeof(m)
+        if user32.GetMonitorInfoW(hmon, ctypes.byref(m)) and (m.rcMonitor.l, m.rcMonitor.t) == area[:2]:
+            nome = m.szDevice
+        return True
+
+    user32.EnumDisplayMonitors(None, None, MONITORENUMPROC(cb), 0)
+    user32.EnumDisplaySettingsW.argtypes = [wt.LPCWSTR, wt.DWORD, ctypes.POINTER(DEVMODEW)]
+    user32.ChangeDisplaySettingsExW.argtypes = [wt.LPCWSTR, ctypes.POINTER(DEVMODEW), wt.HWND, wt.DWORD, ctypes.c_void_p]
+    if not nome:
+        return False
+    dm = DEVMODEW()
+    dm.dmSize = ctypes.sizeof(dm)
+    if not user32.EnumDisplaySettingsW(nome, 0xFFFFFFFF, ctypes.byref(dm)):  # ENUM_CURRENT_SETTINGS
+        return False
+    dm.dmFields = 0x20  # DM_POSITION
+    dm.dmPositionX, dm.dmPositionY = x, y
+    esito = user32.ChangeDisplaySettingsExW(nome, ctypes.byref(dm), None, 0x01 | 0x10000000, None)  # REGISTRY|NORESET
+    user32.ChangeDisplaySettingsExW(None, None, None, 0, None)
+    log("monitor del tablet spostato a", lato, "dello schermo principale", (x, y), "esito", esito)
+    return esito == 0
+
+
 def finestre_principali():
     """Finestre di primo livello visibili, con titolo, non di servizio e non nascoste da DWM."""
     risultato = []
@@ -704,10 +765,13 @@ def metti_davanti(hwnd):
     finally:
         if agganciato:
             user32.AttachThreadInput(mio, suo, False)
-    if user32.GetForegroundWindow() != hwnd:  # ultima strada: un Alt premuto e rilasciato sblocca il primo piano
+    if user32.GetForegroundWindow() != hwnd:  # un Alt premuto e rilasciato sblocca il primo piano
         user32.keybd_event(0x12, 0, 0, 0)
         user32.keybd_event(0x12, 0, 2, 0)
         user32.SetForegroundWindow(hwnd)
+    if user32.GetForegroundWindow() != hwnd:  # ultima strada: lo stesso passaggio di Alt+Tab
+        user32.SwitchToThisWindow(hwnd, True)
+        time.sleep(0.2)
     return user32.GetForegroundWindow() == hwnd
 
 
@@ -851,9 +915,17 @@ class Dock(threading.Thread):
         self.area = None
 
     def run(self):
+        spostato = False  # una volta sola per ogni comparsa del monitor (se Apollo lo rimette, non si litiga)
         while True:
             try:
                 area = monitor_virtuale(lavoro=False)  # la dock stessa cambia l'area di lavoro
+                if not area:
+                    spostato = False
+                elif not spostato:
+                    spostato = True
+                    if sposta_tablet(self.cfg.get("lato_tablet")):
+                        time.sleep(1.5)
+                        area = monitor_virtuale(lavoro=False)
                 vivo = self.processo and self.processo.poll() is None
                 if area and (not vivo or area != self.area):
                     self.chiudi()
@@ -885,6 +957,7 @@ user32.MonitorFromWindow.restype = wt.HMONITOR
 user32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
 user32.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, wt.BOOL]
 user32.GetCursorPos.argtypes = [ctypes.POINTER(wt.POINT)]
+user32.SwitchToThisWindow.argtypes = [wt.HWND, wt.BOOL]
 
 
 class DecisioneGioco:
@@ -1000,7 +1073,12 @@ class CustodeGioco(threading.Thread):
         m = self.monitor_di(gioco)
         if m:
             user32.SetCursorPos((m[0] + m[2]) // 2, (m[1] + m[3]) // 2)
-        riuscito = metti_davanti(gioco)
+        riuscito = False
+        for _ in range(3):  # 2026-11-15: un tentativo su due andava a vuoto
+            riuscito = metti_davanti(gioco)
+            if riuscito:
+                break
+            time.sleep(0.3)
         log("gioco rimesso in primo piano dopo un tocco sul secondo monitor",
             "(riuscito)" if riuscito else "(Windows non l'ha permesso)")
 

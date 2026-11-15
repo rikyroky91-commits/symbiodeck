@@ -26,7 +26,7 @@ L, T, R, B = (int(x) for x in sys.argv[3].split(","))
 BASE = f"http://127.0.0.1:{PORTA}"
 TITOLO = "Dock Pannello PC"
 SFONDO, BORDO, TESTO, TENUE, LAMPO = "#0d1219", "#22303f", "#e8eef6", "#7d8a9c", "#1d2a3a"
-ALTEZZA = max(110, min(190, int((B - T) * 0.10)))
+ALTEZZA = max(90, min(150, int((B - T) * 0.075)))  # 2026-11-15: al 10% copriva troppo
 
 
 def api(percorso, corpo=None):
@@ -52,6 +52,8 @@ class APPBARDATA(ctypes.Structure):
 shell32 = ctypes.windll.shell32
 shell32.SHAppBarMessage.argtypes = [wt.DWORD, ctypes.POINTER(APPBARDATA)]
 ABM_NEW, ABM_REMOVE, ABM_QUERYPOS, ABM_SETPOS, ABE_BOTTOM = 0, 1, 2, 3, 3
+ctypes.windll.user32.MonitorFromPoint.argtypes = [wt.POINT, wt.DWORD]
+ctypes.windll.user32.MonitorFromPoint.restype = wt.HMONITOR
 
 
 def registra_appbar(hwnd):
@@ -62,6 +64,30 @@ def registra_appbar(hwnd):
     abd.rc.top = abd.rc.bottom - ALTEZZA
     shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
     return abd
+
+
+class MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", RECT), ("rcWork", RECT), ("dwFlags", wt.DWORD)]
+
+
+def riserva_spazio(abd):
+    """Le finestre massimizzate sul tablet devono fermarsi sopra la dock. La registrazione come appbar non
+    bastava: il 2026-11-15 l'area di lavoro del monitor del tablet era ancora lo schermo intero e le finestre
+    finivano sotto la dock. Ogni 2 s si controlla e, se serve, si rifà la posizione e si imposta l'area di
+    lavoro (SPI_SETWORKAREA, che ridimensiona anche le finestre massimizzate)."""
+    mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    hmon = ctypes.windll.user32.MonitorFromPoint(wt.POINT((L + R) // 2, (T + B) // 2), 2)
+    if not ctypes.windll.user32.GetMonitorInfoW(wt.HMONITOR(hmon), ctypes.byref(mi)):
+        return
+    voluta = B - ALTEZZA
+    if mi.rcWork.bottom <= voluta:
+        return
+    shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
+    ctypes.windll.user32.GetMonitorInfoW(wt.HMONITOR(hmon), ctypes.byref(mi))
+    if mi.rcWork.bottom > voluta:
+        lavoro = RECT(mi.rcWork.left, mi.rcWork.top, mi.rcWork.right, voluta)
+        ctypes.windll.user32.SystemParametersInfoW(0x002F, 0, ctypes.byref(lavoro), 0x02)  # SPI_SETWORKAREA
+        print("area di lavoro del tablet impostata a mano", file=sys.stderr)
 
 
 def monitor_ancora_presente():
@@ -168,6 +194,10 @@ class Dock:
             if self.errori > 5:  # server spento
                 return self.esci()
         self.root.attributes("-topmost", True)
+        try:
+            riserva_spazio(self.abd)
+        except OSError:
+            pass
         self.root.after(2000, self.controlla)
 
     def esci(self):

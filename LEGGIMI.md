@@ -98,6 +98,15 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   `AllowSetForegroundWindow` così l'app che si apre può venire davanti. Provato: riconoscimento di Claude ed
   Esplora file aperti; **non ancora provato con un tocco vero** dalla dock. Le app della dock indicate come file
   `.lnk` usano ancora solo il vecchio modo (finestra nuova o finestra che viene davanti).
+- **Posizione del monitor del tablet** (dal 2026-11-15): Windows metteva il monitor virtuale a destra dello
+  schermo principale, ma il tablet sta a sinistra, quindi il mouse andava dalla parte sbagliata e non tornava su
+  FIFA. Con `"lato_tablet": "sinistra"` (o `"destra"`) in `config.json` il server, a ogni comparsa del monitor,
+  lo mette da quel lato allineato in basso (`sposta_tablet`, una volta sola per comparsa). Sul PC di casa è
+  impostato `sinistra`; senza la chiave non si sposta niente. Provato: il monitor è passato a (-2880, 540).
+- **Spazio della dock** (dal 2026-11-15): la registrazione come appbar non riduceva l'area di lavoro del tablet
+  e le finestre massimizzate finivano sotto la dock. Ora la dock ogni 2 s controlla l'area di lavoro e, se
+  serve, la reimposta (`riserva_spazio`, anche con `SPI_SETWORKAREA`); è anche più bassa (7,5% dello schermo,
+  prima 10%). Provato: area di lavoro fino a 2039, dock da 2039 a 2160, Claude massimizzato sopra la dock.
 - **Giochi a schermo intero** (dal 2026-11-15, `CustodeGioco` in `server/pannello.py`): un tocco sul tablet con
   Artemis sposta il mouse del PC sul monitor virtuale e clicca lì, e il gioco perdeva i comandi (in FC 27 serviva
   Alt+Tab). Ora, se la finestra davanti era a schermo intero su uno schermo vero e il primo piano passa altrove
