@@ -4,7 +4,12 @@
 
 ![Windows](https://img.shields.io/badge/PC-Windows%2010%2F11-0078D6) ![Python](https://img.shields.io/badge/server-Python%20stdlib-3776AB) ![Android](https://img.shields.io/badge/tablet-Android%208%2B-3DDC84) ![No deps](https://img.shields.io/badge/web-no%20frameworks-lightgrey)
 
-![The panel on a tablet](docs/pannello.jpg)
+![SymbioDeck on an NVIDIA SHIELD Tablet: CPU, FPS and GPU with history, app launchers and shortcuts](docs/pannello.jpg)
+
+<details><summary>Settings page on the PC (apps, shortcuts, second-monitor dock, tablet pairing)</summary>
+
+![Settings page](docs/impostazioni.png)
+</details>
 
 **An always-on companion screen with live temperatures, FPS, CPU/GPU load, app launchers, custom hotkeys and media
 controls, plus a one-tap second monitor.** Built to give a slow, forgotten tablet a real job next to the PC.
