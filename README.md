@@ -17,7 +17,7 @@ controls, plus a one-tap second monitor.** Built to give a slow, forgotten table
 ### Highlights
 - 📊 **Live telemetry once per second**: CPU/GPU temperature, load, power, clocks, RAM/VRAM and **in-game FPS with 1% lows**, read straight from MSI Afterburner / RivaTuner shared memory (falls back to `psutil` + `nvidia-smi` when Afterburner isn't running)
 - 🚀 **Launchers and hotkeys you can swap in seconds**: drag-and-drop editor on the PC, Start-menu, Steam library and Microsoft Store apps detected automatically, hotkeys recorded by pressing them
-- 🖥️ **Second monitor in one tap**: opens an [Apollo](https://github.com/ClassicOldSong/Apollo) virtual display through Artemis, with a dock of chosen apps that open and stay maximised on the tablet's screen
+- 🖥️ **Second monitor in one tap**: opens an [Apollo](https://github.com/ClassicOldSong/Apollo) virtual display through Artemis, with a dock of chosen apps that open and stay maximised on the tablet's screen; touching the tablet while a fullscreen game runs no longer takes the controls away from the game (focus and cursor go back to it once the touch ends)
 - 🔗 **"Symbiosis" with the PC**: the tablet's screen turns off when the PC sleeps or shuts down and turns back on when it wakes (Windows power events, plus a silent-stream watchdog for sleeps Windows doesn't announce)
 - 📲 **Zero-config pairing**: the tablet finds the PC on its own over Wi-Fi (UDP broadcast) or USB (`adb reverse`); the access key is shared only in a 10-minute pairing window
 - 🔒 Local network only, token-protected API, separate PC-only key for the settings page

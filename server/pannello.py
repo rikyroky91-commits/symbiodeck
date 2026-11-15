@@ -699,6 +699,7 @@ def porta_sul_monitor(hwnd, area):
 def apri_sul_monitor(voce):
     """Apre l'app e porta la sua finestra (nuova, o quella che si è messa in primo piano) sul monitor del tablet."""
     area = monitor_virtuale()
+    CustodeGioco.apertura_fino = time.time() + 25
     prima = set(finestre_principali())
     davanti = user32.GetForegroundWindow()
     os.startfile(voce["target"])
@@ -719,11 +720,13 @@ def apri_sul_monitor(voce):
     if not scelta:
         log("nessuna finestra trovata per", voce["nome"])
         return
+    CustodeGioco.apertura_fino = time.time() + 6  # il custode del gioco aspetta che l'app sia sistemata
     for _ in range(3):  # alcune app (Electron) si rimettono dov'erano subito dopo la comparsa
         porta_sul_monitor(scelta, area)
         time.sleep(1.2)
         if sul_monitor(scelta, area):
             break
+    CustodeGioco.apertura_fino = time.time() + 0.5
 
 
 class Dock(threading.Thread):
@@ -758,6 +761,150 @@ class Dock(threading.Thread):
         if self.processo and self.processo.poll() is None:
             self.processo.terminate()
         self.processo = None
+
+
+# ---------------------------------------------------------------- custode del gioco
+
+user32.IsWindow.argtypes = [wt.HWND]
+user32.IsIconic.argtypes = [wt.HWND]
+user32.BringWindowToTop.argtypes = [wt.HWND]
+user32.MonitorFromWindow.argtypes = [wt.HWND, wt.DWORD]
+user32.MonitorFromWindow.restype = wt.HMONITOR
+user32.GetClassNameW.argtypes = [wt.HWND, wt.LPWSTR, ctypes.c_int]
+user32.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, wt.BOOL]
+user32.GetCursorPos.argtypes = [ctypes.POINTER(wt.POINT)]
+
+
+class DecisioneGioco:
+    """La parte che decide, senza chiamate a Windows (si prova con tests/test_custode.py).
+
+    Un gioco a schermo intero è in primo piano su uno schermo vero; un tocco sul secondo monitor (Artemis muove
+    il mouse del PC lì e clicca) porta davanti la finestra toccata e il gioco perde i comandi. Se, quando il gioco
+    perde il primo piano, il cursore è sul monitor virtuale, il gioco va ridato appena il tocco è finito: cursore
+    fermo per FERMO secondi o tornato fuori dal monitor virtuale. Se invece il gioco lo lasci tu (Alt+Tab, tasto
+    Windows) il cursore non è sul monitor virtuale e non si fa niente."""
+
+    FERMO = 1.2
+
+    def __init__(self):
+        self.gioco = None
+        self.perso_alle = 0
+        self.cursore = None
+        self.fermo_da = 0
+
+    def passo(self, ora, davanti, davanti_gioco, gioco_esiste, cursore, cursore_sul_virtuale, apertura):
+        """davanti_gioco: la finestra davanti è a schermo intero su uno schermo vero. Ritorna la finestra del gioco
+        da rimettere davanti, oppure None."""
+        if davanti_gioco:
+            self.gioco, self.perso_alle = davanti, 0
+            return None
+        if not self.gioco or not davanti or davanti == self.gioco:
+            return None
+        if not gioco_esiste:
+            self.gioco = None
+            return None
+        if not self.perso_alle:
+            if not cursore_sul_virtuale:
+                self.gioco = None  # lasciato apposta: lo si riprende quando torna davanti
+                return None
+            self.perso_alle, self.cursore, self.fermo_da = ora, cursore, ora
+            return None
+        if apertura or cursore != self.cursore:
+            self.cursore, self.fermo_da = cursore, ora
+            if cursore_sul_virtuale or apertura:
+                return None
+        if cursore_sul_virtuale and ora - self.fermo_da < self.FERMO:
+            return None
+        self.perso_alle = 0
+        return self.gioco
+
+
+class CustodeGioco(threading.Thread):
+    """Ridà il primo piano al gioco a schermo intero dopo un tocco sul secondo monitor (2026-11-15: in FC 27 un
+    tocco sul tablet con Artemis toglieva i comandi al gioco e serviva Alt+Tab). Si spegne con
+    "torna_al_gioco": false in config.json."""
+
+    apertura_fino = 0  # apri_sul_monitor sta sistemando una finestra: non la si disturba
+
+    def __init__(self, cfg):
+        super().__init__(daemon=True)
+        self.cfg = cfg
+        self.decisione = DecisioneGioco()
+        self.area, self.area_letta = None, 0
+
+    def run(self):
+        while True:
+            time.sleep(0.15)
+            try:
+                self.passo()
+            except Exception as e:
+                log("custode del gioco:", repr(e))
+                time.sleep(5)
+
+    def passo(self):
+        ora = time.time()
+        if ora - self.area_letta > 2:
+            self.area, self.area_letta = monitor_virtuale(lavoro=False), ora
+        if not self.area or self.cfg.get("torna_al_gioco") is False:
+            self.decisione.gioco = None
+            return
+        davanti = user32.GetForegroundWindow()
+        p = wt.POINT()
+        user32.GetCursorPos(ctypes.byref(p))
+        cursore = (p.x, p.y)
+        sul_virtuale = self.area[0] <= p.x < self.area[2] and self.area[1] <= p.y < self.area[3]
+        gioco = self.decisione.gioco
+        da_ridare = self.decisione.passo(
+            ora, davanti, bool(davanti) and self.a_schermo_intero(davanti),
+            bool(gioco) and bool(user32.IsWindow(gioco)), cursore, sul_virtuale, ora < CustodeGioco.apertura_fino)
+        if da_ridare:
+            self.ridai(da_ridare)
+
+    def a_schermo_intero(self, hwnd):
+        """Finestra senza barra del titolo grande quanto il suo monitor, su uno schermo vero (non il desktop)."""
+        if user32.GetWindowLongW(hwnd, -16) & 0x00C00000 == 0x00C00000:  # WS_CAPTION
+            return False
+        c = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, c, 64)
+        if c.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+            return False
+        r, m = RECT(), self.monitor_di(hwnd)
+        user32.GetWindowRect(hwnd, ctypes.byref(r))
+        if not m or (r.l, r.t, r.r, r.b) != m:
+            return False
+        return m != self.area
+
+    @staticmethod
+    def monitor_di(hwnd):
+        mi = MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(mi)
+        if not user32.GetMonitorInfoW(user32.MonitorFromWindow(hwnd, 2), ctypes.byref(mi)):
+            return None
+        return (mi.rcMonitor.l, mi.rcMonitor.t, mi.rcMonitor.r, mi.rcMonitor.b)
+
+    def ridai(self, gioco):
+        if user32.IsIconic(gioco):
+            user32.ShowWindow(gioco, 9)  # SW_RESTORE
+        m = self.monitor_di(gioco)
+        if m:
+            user32.SetCursorPos((m[0] + m[2]) // 2, (m[1] + m[3]) // 2)
+        # Windows dà il primo piano solo a chi ha ricevuto l'ultimo input: ci si aggancia all'input di chi è davanti
+        davanti = user32.GetForegroundWindow()
+        suo = user32.GetWindowThreadProcessId(davanti, None) if davanti else 0
+        mio = ctypes.windll.kernel32.GetCurrentThreadId()
+        agganciato = bool(suo) and suo != mio and user32.AttachThreadInput(mio, suo, True)
+        try:
+            user32.BringWindowToTop(gioco)
+            user32.SetForegroundWindow(gioco)
+        finally:
+            if agganciato:
+                user32.AttachThreadInput(mio, suo, False)
+        if user32.GetForegroundWindow() != gioco:  # ultima strada: un Alt premuto e rilasciato sblocca il primo piano
+            user32.keybd_event(0x12, 0, 0, 0)
+            user32.keybd_event(0x12, 0, 2, 0)
+            user32.SetForegroundWindow(gioco)
+        log("gioco rimesso in primo piano dopo un tocco sul secondo monitor",
+            "(riuscito)" if user32.GetForegroundWindow() == gioco else "(Windows non l'ha permesso)")
 
 
 # ---------------------------------------------------------------- app moderne (Microsoft Store / MSIX)
@@ -1155,6 +1302,7 @@ def main():
     srv.daemon_threads = True
     srv.tablet = {}
     Dock(cfg).start()
+    CustodeGioco(cfg).start()
     srv.cfg = cfg
     srv.campionatore = camp
     log("pannello in ascolto sulla porta", PORTA)

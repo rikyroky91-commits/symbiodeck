@@ -89,6 +89,14 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   massimizzate si fermano sopra) con le app della sezione "Secondo monitor" del companion. Toccando un'icona
   l'app si apre e la sua finestra viene portata e massimizzata sul monitor del tablet. Le app del Microsoft
   Store (es. Claude) si aprono con `shell:AppsFolder\<AppID>`.
+- **Giochi a schermo intero** (dal 2026-11-15, `CustodeGioco` in `server/pannello.py`): un tocco sul tablet con
+  Artemis sposta il mouse del PC sul monitor virtuale e clicca lì, e il gioco perdeva i comandi (in FC 27 serviva
+  Alt+Tab). Ora, se la finestra davanti era a schermo intero su uno schermo vero e il primo piano passa altrove
+  mentre il cursore è sul monitor virtuale, il server lascia arrivare il tocco e poi, a dito fermo da 1,2 s (o
+  appena il mouse torna fuori dal monitor del tablet, o finita l'apertura di un'app dalla dock), rimette il gioco
+  in primo piano e il cursore al centro del suo schermo. Un Alt+Tab fatto apposta non viene toccato. Si spegne
+  con `"torna_al_gioco": false` in `config.json`. Provato: la decisione (`python tests/test_custode.py`) e il
+  riconoscimento di FC 27 come finestra a schermo intero; **non ancora provato con un tocco vero** dal tablet.
 - L'app si aggiunge ad Apollo con `server/apollo-secondo-monitor.ps1` (da amministratore; copia di
   sicurezza `apps.json.prima-del-pannello`). Le altre app e gli altri dispositivi non cambiano.
   Attenzione: in Vibepollo 1.18.4 il layout globale predefinito è `exclusive` (spegne gli altri schermi).
