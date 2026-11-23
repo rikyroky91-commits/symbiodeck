@@ -178,12 +178,14 @@ class Interruzione:
     più di quanto spiegherebbe l'eco, con voce, per ~400 ms di fila. I primi blocchi di ogni frase servono solo
     a imparare."""
 
-    BLOCCHI = 5        # 400 ms di voce sopra la sua
+    FINESTRA = 8       # gli ultimi 640 ms...
+    BLOCCHI = 4        # ...con almeno 4 blocchi di voce chiaramente sopra la sua (le sillabe hanno pause)
     RISCALDAMENTO = 6  # 480 ms all'inizio di ogni frase: solo per imparare l'eco
 
     def __init__(self):
         self.k = None      # rapporto microfono / uscita dovuto all'eco
-        self.sopra = 0
+        self.sopra = 0     # blocchi "sopra l'eco" negli ultimi FINESTRA
+        self.ultimi = []
         self.blocchi = 0
 
     @property
@@ -210,16 +212,15 @@ class Interruzione:
             self.k += (rapporto - self.k) * 0.02
         if self.blocchi <= self.RISCALDAMENTO:
             return False
-        if prob >= 0.5 and rms > max(0.01, fattore * self.k * rif):
-            self.sopra += 1
-        else:
-            self.sopra = max(0, self.sopra - 1)
+        self.ultimi = (self.ultimi + [prob >= 0.5 and rms > max(0.01, fattore * self.k * rif)])[-self.FINESTRA:]
+        self.sopra = sum(self.ultimi)
         if self.sopra >= self.BLOCCHI:
-            self.sopra = 0
+            self.ultimi, self.sopra = [], 0
             return True
         return False
 
     def azzera(self):
         """Jarvis ha smesso di parlare: alla prossima frase si ricomincia con il riscaldamento (k resta)."""
         self.sopra = 0
+        self.ultimi = []
         self.blocchi = 0

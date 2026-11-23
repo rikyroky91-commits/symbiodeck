@@ -217,6 +217,7 @@ class Uscita:
         self.interrotta = threading.Event()
         self.parla = False
         self.livelli = []   # (ora, volume) dei pezzi mandati alle casse: serve a riconoscere l'eco
+        self.aec = None     # cancellazione dell'eco sul PC (eco.py), se attiva: riceve quello che esce
 
     def livello_uscita(self, finestra=1.0):
         """Il volume più alto di quello che è uscito dalle casse nell'ultimo secondo (copre il ritardo dell'eco)."""
@@ -243,6 +244,8 @@ class Uscita:
                     return False
                 pezzo = campioni[i:i + self.PEZZO]
                 dest.scrivi(pezzo.tobytes())
+                if self.aec is not None:
+                    self.aec.riferimento(pezzo, time.time(), self.ANTICIPO)
                 self.livelli.append((time.monotonic(), float(np.sqrt(np.mean((pezzo.astype(np.float32) / 32768) ** 2)))))
                 del self.livelli[:-30]
                 inviati += len(pezzo)

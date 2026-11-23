@@ -27,6 +27,35 @@ def trova_claude(scelto=""):
     return next((c for c in candidati if c and os.path.exists(c)), None)
 
 
+def amministratore():
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def apri_nell_app_claude(exe, sessione, cartella):
+    """`claude --desktop --resume <id>`: fa comparire la sessione nell'app Claude per Windows. Se Jarvis gira come
+    amministratore il comando parte come utente normale (attività pianificata "limited" usa e getta): l'app Claude non
+    deve aprirsi con privilegi elevati. Restituisce True se il comando è partito (e, senza privilegi, è riuscito)."""
+    if not amministratore():
+        r = subprocess.run([exe, "--desktop", "--resume", sessione], timeout=60, cwd=str(cartella),
+                           creationflags=SENZA_FINESTRA)
+        return r.returncode == 0
+    nome = f"Jarvis apri {sessione[:8]}"
+    comando = f'cmd /c cd /d "{cartella}" && "{exe}" --desktop --resume {sessione}'
+    crea = subprocess.run(["schtasks", "/create", "/tn", nome, "/tr", comando, "/sc", "once", "/st", "00:00",
+                           "/rl", "limited", "/it", "/f"], capture_output=True, timeout=30, creationflags=SENZA_FINESTRA)
+    if crea.returncode != 0:
+        return False
+    subprocess.run(["schtasks", "/run", "/tn", nome], capture_output=True, timeout=30, creationflags=SENZA_FINESTRA)
+    time.sleep(8)
+    subprocess.run(["schtasks", "/delete", "/tn", nome, "/f"], capture_output=True, timeout=30,
+                   creationflags=SENZA_FINESTRA)
+    return True
+
+
 def python_senza_finestra():
     """pythonw.exe accanto all'interprete in uso: gli hook non aprono finestre nere."""
     eseguibile = Path(sys.executable)
@@ -70,7 +99,7 @@ class Esecutore:
     def _file_impostazioni(self):
         guardia = f'"{python_senza_finestra()}" "{QUI / "guardia.py"}"'.replace("\\", "/")
         imp = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [
-            {"type": "command", "command": guardia, "timeout": 90}]}]}}
+            {"type": "command", "command": guardia, "timeout": 120}]}]}}
         f = self.dati / "impostazioni-claude.json"
         f.write_text(json.dumps(imp, indent=2), encoding="utf-8")
         return f
@@ -200,10 +229,8 @@ class Esecutore:
                 return None
             self.ferma()
             exe = trova_claude(self.imp.get("claude_exe", ""))
-            r = subprocess.run([exe, "--desktop", "--resume", self.sessione], timeout=60, cwd=str(self.cartella()),
-                               creationflags=SENZA_FINESTRA)
-            if r.returncode != 0:
-                raise RuntimeError(f"l'app Claude non ha preso la conversazione (codice {r.returncode})")
+            if not apri_nell_app_claude(exe, self.sessione, self.cartella()):
+                raise RuntimeError("l'app Claude non ha preso la conversazione")
             self._segna_nell_app(self.sessione)
             return self.sessione
 
@@ -259,10 +286,8 @@ class Esecutore:
             if not exe:
                 raise RuntimeError("Claude Code non trovato sul PC")
             # --desktop rifiuta l'uscita rediretta: niente capture_output, una console nascosta tutta sua
-            r = subprocess.run([exe, "--desktop", "--resume", sessione], timeout=60, cwd=str(self.cartella()),
-                               creationflags=SENZA_FINESTRA)
-            if r.returncode != 0:
-                raise RuntimeError(f"l'app Claude non ha aperto la conversazione (codice {r.returncode})")
+            if not apri_nell_app_claude(exe, sessione, self.cartella()):
+                raise RuntimeError("l'app Claude non ha aperto la conversazione")
             return sessione
 
     def _scrivi(self, oggetto):

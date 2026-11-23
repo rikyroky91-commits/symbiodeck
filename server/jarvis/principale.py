@@ -57,7 +57,9 @@ PREDEFINITE = {
     "pausa": 1.4,                  # secondi di silenzio che chiudono una frase (più lunga: puoi pensare)
     "conferme": "irreversibili",   # irreversibili | sempre | mai
     "stt": "auto",
+    "stt_cpu": "medium",           # modello del processore (gioco, modello locale): medium preciso, small veloce
     "accendi_schermo": False,
+    "aec_pc": False,               # cancellazione dell'eco sul PC (WebRTC): in prova, si decide con le misure
     "interrompibile": True,        # mentre parla continua ad ascoltare: se gli parli sopra si ferma
     "eco": True,                   # cancellazione dell'eco sul tablet (modalità "chiamata" di Android)
     "emergenza": "auto",           # auto (senza Internet o fuori dai limiti) | sempre | mai
@@ -73,7 +75,7 @@ SCELTE = {
     "modello_voce": ["opus", "sonnet", "haiku"], "modello_compiti": ["opus", "sonnet", "haiku"],
     "effort_voce": ["low", "medium", "high", "xhigh", "max"], "effort_compiti": ["low", "medium", "high", "xhigh", "max"],
     "microfono": ["tablet", "pc"], "casse": ["tablet", "pc"], "conferme": ["irreversibili", "sempre", "mai"],
-    "stt": MODELLI_STT, "voce": VOCI, "emergenza": ["auto", "sempre", "mai"],
+    "stt": MODELLI_STT, "stt_cpu": ["medium", "small"], "voce": VOCI, "emergenza": ["auto", "sempre", "mai"],
     "modello_emergenza": ["27b", "27b-mtp"],
 }
 
@@ -157,6 +159,8 @@ class Jarvis:
         self.conversazione = False          # dopo "Hey Jarvis": ascolta sempre finché la conversazione è viva
         self.in_gioco = False               # modalità gioco (ciclo_gpu)
         self.inizio_turno = 0.0             # quando è partita l'ultima richiesta a Claude
+        self.solo_remoto = False            # richiesta da telefono/orologio: a casa non si parla
+        self.utente_parla = False           # il microfono sta raccogliendo una frase (per unire le esitazioni)
 
     # ------------------------------------------------------------ eventi per il pannello
     def evento(self, **d):
@@ -212,7 +216,21 @@ class Jarvis:
         elif self.stato == "spento":
             self.imposta_stato("riposo")
         self._dispositivi_pc()
+        self._aec()
         self._aggiorna_microfono()
+
+    def _aec(self):
+        voluta = bool(self.imp.get("aec_pc"))
+        if voluta and self.uscita.aec is None:
+            try:
+                from .eco import CancellaEco
+                self.uscita.aec = CancellaEco(log)
+                log("cancellazione dell'eco sul PC: attiva")
+            except Exception as e:
+                log("cancellazione dell'eco sul PC non disponibile:", repr(e))
+        elif not voluta and self.uscita.aec is not None:
+            self.uscita.aec = None
+            log("cancellazione dell'eco sul PC: spenta")
 
     def _dispositivi_pc(self):
         """Apre o chiude microfono e casse del PC in un thread a parte: certi dispositivi virtuali (es. il
@@ -239,6 +257,7 @@ class Jarvis:
     def _prepara_stt(self):
         try:
             self.stt.prepara()
+            self.stt.precarica_cpu()
         except Exception as e:
             log("stt non disponibile:", repr(e))
             self.evento(errore="Riconoscimento vocale non disponibile")
@@ -247,6 +266,12 @@ class Jarvis:
     def _blocco(self, da, blocco):
         if da != self.imp["microfono"] or not self.imp["attivo"]:
             return
+        if self.uscita.aec is not None:
+            try:
+                blocco = self.uscita.aec.pulisci(blocco, time.time())
+            except Exception as e:
+                log("cancellazione dell'eco non riuscita, la spengo:", repr(e))
+                self.uscita.aec = None
         try:
             self.blocchi.put_nowait(blocco)
         except queue.Full:
@@ -296,7 +321,8 @@ class Jarvis:
                 continue
 
             # mentre Jarvis parla si continua ad ascoltare: una voce vera, più forte dell'eco, lo interrompe
-            if self.stato == "parlo" and self.uscita.parla and self.imp.get("interrompibile", True):
+            # (anche nelle pause tra una frase e l'altra: lo stato resta "parlo" finché la risposta non è finita)
+            if self.stato == "parlo" and self.imp.get("interrompibile", True):
                 prob = float(vad.predict(blocco, frame_size=640))
                 sopra_voce.append(blocco)
                 del sopra_voce[:-10]                    # 800 ms: l'inizio della frase non si perde
@@ -311,6 +337,7 @@ class Jarvis:
             interruzione.azzera()
             ascolta = ("ascolto", "seguito", "conferma") + (("penso", "lavoro") if self.conversazione else ())
             if self.stato not in ascolta:
+                self.utente_parla = False
                 continue
             if self.uscita.parla:
                 continue  # suoni brevi (attivazione, conferma): non si ascoltano
@@ -320,6 +347,7 @@ class Jarvis:
             frase.append(blocco)
             if voce:
                 parlato, silenzio = True, 0
+                self.utente_parla = True
             elif parlato:
                 silenzio += 1
             if not parlato:
@@ -343,6 +371,7 @@ class Jarvis:
             if silenzio >= round(self.imp["pausa"] / 0.08) or durata > 40:  # la frase è finita
                 pcm = np.concatenate(frase)
                 frase, parlato, silenzio, inizio_ascolto = [], False, 0, 0
+                self.utente_parla = False
                 vad.reset_states()
                 if self.stato == "conferma":
                     threading.Thread(target=self._capisci_conferma, args=(pcm,), daemon=True).start()
@@ -384,6 +413,7 @@ class Jarvis:
             self._svuota(self.da_dire)
         self.uscita.riprendi()
         self.conversazione = True
+        self.solo_remoto = False
         self.imposta_stato("ascolto")
         self.tablet.comando(attivato=time.time())
         # solo un suono, niente "Dimmi" a voce: mentre parla non ascolta, e si perderebbe l'inizio
@@ -406,6 +436,7 @@ class Jarvis:
                     t0 = time.time()
                     testo = self.stt.trascrivi(dato)
                     log("capito", f"({time.time() - t0:.1f}s):", testo)
+                    testo = self._unisci_seguito(testo)
                     if not testo:
                         if not self.claude.occupato and not self.claude.lavora_in_sottofondo():
                             self.imposta_stato("seguito" if self.conversazione else "riposo")
@@ -449,6 +480,27 @@ class Jarvis:
                 log("errore richiesta:", traceback.format_exc())
                 self.imposta_stato("riposo")
                 self.di("Scusa, qualcosa è andato storto: " + str(e)[:120])
+
+    def _unisci_seguito(self, testo, attesa=8):
+        """Esitazione a metà frase: se finita la trascrizione l'utente sta già parlando di nuovo, si aspetta il
+        pezzo che sta dicendo e lo si unisce, così Claude riceve una richiesta sola (non mezza frase)."""
+        fine = time.time() + attesa
+        while time.time() < fine:
+            try:
+                tipo, dato = self.richieste.get_nowait()
+            except queue.Empty:
+                if not self.utente_parla:
+                    return testo
+                time.sleep(0.1)
+                continue
+            if tipo != "voce":
+                self.richieste.put((tipo, dato))   # non è il seguito: torna in coda
+                return testo
+            seguito = self.stt.trascrivi(dato)
+            log("seguito unito:", seguito)
+            testo = (testo.rstrip(" .") + " " + seguito).strip() if seguito else testo
+            fine = time.time() + attesa
+        return testo
 
     def _claude_testo(self, pezzo):
         if self.scarta:
@@ -665,6 +717,9 @@ class Jarvis:
                 continue
             if self.uscita.interrotta.is_set():
                 continue  # frase vecchia di prima dell'interruzione
+            if self.solo_remoto:
+                log("detto (solo al telefono/orologio):", voce[0])
+                continue   # la risposta l'ha già letta il telefono o l'orologio
             if self.stato in ("lavoro", "penso", "riposo", "seguito"):
                 self.imposta_stato("parlo")
             self.domanda = voce[0].rstrip().endswith("?")
@@ -684,7 +739,7 @@ class Jarvis:
         self.da_dire.put(f"Devo {descrizione.split(':')[0]}. Confermi?")
         # si ascolta appena finita la domanda
         threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
-        c["esito"].wait(attesa)
+        c["esito"].wait(90 if self.solo_remoto else attesa)   # da telefono/orologio si risponde più lentamente
         self.conferma = None
         self.evento(conferma=None)
         log("conferma", descrizione, "->", c["ok"])
@@ -733,25 +788,45 @@ class Jarvis:
             eventi = [(n, e) for n, e in self.eventi if n > dopo]
             ultimo = self.n_evento
         messaggi, pezzi = [], []
-        for _n, e in eventi:
+        inizio_pezzi = None
+        for n, e in eventi:
             if e.get("utente"):
                 messaggi.append({"chi": "utente", "testo": e["utente"]})
             if e.get("jarvis_pezzo"):
+                if not pezzi:
+                    inizio_pezzi = n
                 pezzi.append(e["jarvis_pezzo"])
             if e.get("jarvis"):
                 messaggi.append({"chi": "jarvis", "testo": e["jarvis"]})
-                pezzi = []
+                pezzi, inizio_pezzi = [], None
             elif e.get("fine") and pezzi:
                 messaggi.append({"chi": "jarvis", "testo": "".join(pezzi).strip()})
-                pezzi = []
+                pezzi, inizio_pezzi = [], None
             if e.get("azione"):
                 messaggi.append({"chi": "azione", "testo": e["azione"]})
+        if pezzi and inizio_pezzi is not None:
+            # una risposta ancora a metà: non si consuma, la prossima richiesta la riceve intera
+            ultimo = inizio_pezzi - 1
+        c = self.conferma
         return {"ultimo": ultimo, "messaggi": messaggi, "stato": self.stato,
-                "lavoro": self.claude.lavora_in_sottofondo(), "emergenza": self.emergenza.attiva}
+                "lavoro": self.claude.lavora_in_sottofondo(), "emergenza": self.emergenza.attiva,
+                "conferma": c and {"id": c["id"], "descrizione": c["descrizione"]}}
 
-    def chiedi_e_aspetta(self, testo, attesa=30):
-        """Per Apple Watch e iPhone: manda la richiesta e aspetta la prima risposta della voce (di solito pochi
-        secondi; un lavoro lungo continua e il suo esito si legge poi con /jarvis/eventi)."""
+    def chiedi_e_aspetta(self, testo, attesa=30, parla_a_casa=False):
+        """Per Apple Watch, iPhone e Comandi Rapidi: manda la richiesta e aspetta la prima risposta della voce (di
+        solito pochi secondi; un lavoro lungo continua e il suo esito si legge poi con /jarvis/eventi).
+        - Se c'è una conferma in attesa e il testo è un sì o un no, è la risposta alla conferma.
+        - Se durante l'attesa Jarvis chiede una conferma, la domanda torna subito come risposta.
+        - Senza parla_a_casa, le risposte non si leggono dal tablet (sei fuori: a casa nessuno ascolta)."""
+        self.solo_remoto = not parla_a_casa
+        c = self.conferma
+        if c:
+            ok = si_o_no(testo)
+            if ok is not None:
+                self.evento(utente=testo)
+                self.conferma_dal_pannello(c["id"], ok)
+                return {"risposta": "Ok, procedo." if ok else "D'accordo, lascio stare.", "ultimo": self.n_evento,
+                        "lavoro": self.claude.lavora_in_sottofondo(), "conferma": None}
         with self.cond:
             inizio = self.n_evento
         self.scrivi(testo)
@@ -770,8 +845,12 @@ class Jarvis:
                     risposta = e["jarvis"]
                 elif e.get("fine") and pezzi:
                     risposta = "".join(pezzi).strip()
+                if e.get("conferma"):
+                    risposta = f"Devo {e['conferma']['descrizione'].split(':')[0]}. Confermi?"
+        c = self.conferma
         return {"risposta": risposta or "".join(pezzi).strip(), "ultimo": visto,
-                "lavoro": self.claude.lavora_in_sottofondo()}
+                "lavoro": self.claude.lavora_in_sottofondo(),
+                "conferma": c and {"id": c["id"], "descrizione": c["descrizione"]}}
 
     def tocca(self):
         self._attivato()
@@ -968,6 +1047,8 @@ class Gestore(BaseHTTPRequestHandler):
             if u.path == "/jarvis/impostazioni":
                 j.cambia(d)
                 return self.manda(200, j.istantanea())
+            if u.path in ("/jarvis/scrivi", "/jarvis/tocca", "/jarvis/prova-voce"):
+                j.solo_remoto = False
             if u.path == "/jarvis/scrivi":
                 testo = str(d.get("testo", "")).strip()[:2000]
                 if not testo:
@@ -979,7 +1060,7 @@ class Gestore(BaseHTTPRequestHandler):
                 if not testo:
                     raise ValueError("testo vuoto")
                 attesa = max(3, min(60, int(d.get("attesa", 30))))
-                return self.manda(200, j.chiedi_e_aspetta(testo, attesa))
+                return self.manda(200, j.chiedi_e_aspetta(testo, attesa, bool(d.get("parla_a_casa", False))))
             if u.path == "/jarvis/tocca":
                 j.tocca()
                 return self.manda(200, {"ok": True})

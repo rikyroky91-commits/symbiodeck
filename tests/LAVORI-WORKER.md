@@ -13,7 +13,7 @@ Regole per tutti i brief:
 | # | Stato | Compito | File | Controllo |
 |---|---|---|---|---|
 | W1 | fatto (worker MoE, 14 min, rivisto) | Test di `Esecutore.conta_domande` e `continuata_nell_app` con un registro `.jsonl` finto | `tests/test_jarvis_sessioni.py` | `python tests/test_jarvis_sessioni.py` |
-| W2 | da fare | Test di `audio.Blocchi` (pezzi di lunghezza qualsiasi → blocchi da 1280 campioni) | `tests/test_jarvis_audio.py` | `python tests/test_jarvis_audio.py` |
+| W2 | fatto (worker MoE, 5,5 min, rivisto) | Test di `audio.Blocchi` (pezzi di lunghezza qualsiasi → blocchi da 1280 campioni) | `tests/test_jarvis_audio.py` | `python tests/test_jarvis_audio.py` |
 | W3 | da fare | Test di `cervello.Cervello` con esecutore e voce finti (affida, esito alla voce, stato_lavoro) | `tests/test_jarvis_cervello.py` | `python tests/test_jarvis_cervello.py` |
 | W4 | da fare | Test di `guardia.main` come processo (JSON su stdin, `JARVIS_DELEGA`, uscita deny) | `tests/test_jarvis_guardia_processo.py` | `python tests/test_jarvis_guardia_processo.py` |
 | W5 | da fare | `tests/tutti.py`: esegue tutti i `tests/test_*.py` e riassume ok/falliti | `tests/tutti.py` | `python tests/tutti.py` |
@@ -35,8 +35,8 @@ Scrivi nel file righe JSON (una per riga). Casi:
 
 ### W2 – blocchi audio
 Crea `tests/test_jarvis_audio.py`. Leggi `server/jarvis/audio.py` (classe `Blocchi`, `BLOCCO_IN`). Raccogli i blocchi
-in una lista passando `su_blocco=lista.append`. Casi: 1) 3000 byte → nessun blocco; 2) poi altri 2120 byte → un
-blocco di 1280 campioni int16 (2560 byte) e resto 2560 byte in `buf`; 3) dati in 7 pezzi da 1000 byte → 2 blocchi;
+in una lista passando `su_blocco=lista.append`. Casi: 1) 3000 byte → un blocco (2560 byte) e 440 in `buf`; 2) poi altri 2120 byte → un secondo
+blocco e `buf` vuoto; 3) dati in 7 pezzi da 1000 byte → 2 blocchi;
 4) i valori del blocco corrispondono ai byte inseriti (usa `numpy.arange(..., dtype=numpy.int16).tobytes()`).
 
 ### W3 – cervello

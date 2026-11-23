@@ -25,6 +25,8 @@ from .llm_locale import CARTELLA_LLM, attivo
 
 LIMITE = re.compile(r"usage limit|limit reached|rate.?limit|exceeded.*(quota|limit)|out of (extra )?usage|"
                     r"overloaded|credit balance|429|529", re.I)
+CONNESSIONE = re.compile(r"connection|network|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|getaddrinfo|"
+                         r"socket hang up|fetch failed|unable to connect", re.I)
 VOCE_PIPER = Path(__file__).resolve().parent.parent / "jarvis-dati" / "piper" / "it_IT-paola-medium.onnx"
 
 
@@ -183,7 +185,15 @@ class Emergenza:
         self.blocco = threading.Lock()
 
     def errore_claude(self, testo):
-        """Chiamato con il testo di un errore di Claude: se parla di limiti, si passa all'emergenza per 30 minuti."""
+        """Chiamato con il testo di un errore di Claude: se parla di limiti si passa all'emergenza per 30 minuti; se
+        parla di rete si controlla subito Internet (senza aspettare il giro di 20 s). True se ci pensa l'emergenza."""
+        if testo and CONNESSIONE.search(testo) and self.j.imp.get("emergenza", "auto") == "auto":
+            if not internet():
+                self.offline = max(self.offline, 2)
+                self.log("Claude irraggiungibile e Internet assente:", testo[:120])
+                threading.Thread(target=self.valuta, daemon=True).start()
+                return True
+            return False
         if testo and LIMITE.search(testo) and self.j.imp.get("emergenza", "auto") == "auto":
             self.limite_fino = time.time() + 30 * 60
             self.log("Claude fuori dai limiti:", testo[:160])

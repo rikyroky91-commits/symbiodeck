@@ -89,7 +89,7 @@ def _breve(s, n=120):
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def chiedi_a_jarvis(descrizione, attesa=60):
+def chiedi_a_jarvis(descrizione, attesa=110):
     """True se l'utente conferma. Senza Jarvis raggiungibile: no (più prudente)."""
     porta = os.environ.get("JARVIS_PORTA", "47802")
     chiave = os.environ.get("JARVIS_INTERNO", "")
