@@ -15,6 +15,7 @@ from pathlib import Path
 from .trame import descrivi_azione
 
 QUI = Path(__file__).resolve().parent
+PROGETTO = QUI.parent.parent   # la cartella pc-panel: le sessioni di Jarvis stanno sotto questo progetto nell'app
 SENZA_FINESTRA = 0x08000000  # CREATE_NO_WINDOW
 
 
@@ -54,6 +55,9 @@ class Esecutore:
         self.file_storia = dati / "conversazioni.json"
         self.sessione = self._leggi_file(self.file_sessione).strip() or None
         self._domanda = ""
+        self._domande_note = None  # domande nella sessione dopo l'ultima risposta di Jarvis (per accorgersi dell'app)
+        if self.sessione and not self.registro().exists():
+            self._cambia_sessione(None)   # era in un'altra cartella di lavoro: si riparte da una nuova
         self._blocco = threading.Lock()
         self._su_testo = self._su_azione = self._su_fine = lambda *a: None
         self._modello_avviato = None
@@ -104,7 +108,7 @@ class Esecutore:
         env = dict(os.environ, JARVIS_PORTA=str(self.porta), JARVIS_INTERNO=self.chiave_interna,
                    JARVIS_CONFIG=str(self.file_config), JARVIS_DELEGA="1")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                     cwd=str(Path.home()), env=env, creationflags=SENZA_FINESTRA)
+                                     cwd=str(self.cartella()), env=env, creationflags=SENZA_FINESTRA)
         self._modello_avviato = self._firma()
         threading.Thread(target=self._leggi, args=(self.proc,), daemon=True).start()
         threading.Thread(target=self._scarta_errori, args=(self.proc,), daemon=True).start()
@@ -131,6 +135,7 @@ class Esecutore:
             self._cambia_sessione(None)
             self.occupato = False
             self.sottofondo.clear()
+            self._domande_note = None
 
     # ------------------------------------------------------------ conversazioni salvate
     @staticmethod
@@ -147,6 +152,73 @@ class Esecutore:
                 self.file_sessione.write_text(nuova, encoding="utf-8")
             elif self.file_sessione.exists():
                 self.file_sessione.unlink()
+        except OSError:
+            pass
+
+    def cartella(self):
+        """Dove lavora Claude Code: decide sotto quale progetto compaiono le sessioni nell'app Claude."""
+        scelta = self.imp.get("cartella_lavoro") or ""
+        return Path(scelta) if scelta and Path(scelta).is_dir() else PROGETTO
+
+    def registro(self, sessione=None):
+        """Il file .jsonl della sessione (~/.claude/projects/<cartella>/<id>.jsonl)."""
+        return Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(self.cartella())) / \
+            f"{sessione or self.sessione}.jsonl"
+
+    def _righe(self):
+        try:
+            return self.registro().read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
+
+    def conta_domande(self):
+        """Le domande nel registro della sessione (messaggi dell'utente), senza gli avvisi interni di fine lavoro.
+        Si contano le domande e non le righe: quando l'app riprende una sessione riscrive anche le righe vecchie."""
+        n = 0
+        for riga in self._righe():
+            try:
+                d = json.loads(riga)
+            except ValueError:
+                continue
+            c = (d.get("message") or {}).get("content") if d.get("type") == "user" else None
+            if isinstance(c, str) and not c.lstrip().startswith("<task-notification>"):
+                n += 1
+        return n
+
+    def continuata_nell_app(self):
+        """True se nella sessione c'è una domanda che Jarvis non ha fatto (l'utente l'ha ripresa nell'app Claude):
+        allora la conversazione è dell'app e Jarvis ne comincia una nuova."""
+        if not self.sessione or self._domande_note is None:
+            return False
+        return self.conta_domande() > self._domande_note
+
+    def mostra_nell_app(self):
+        """Fa comparire la conversazione in corso nell'app Claude (sotto il progetto pc-panel) senza lasciarla:
+        il comando rifiuta una sessione aperta, quindi si chiude un attimo il processo e la si riprende alla
+        richiesta successiva (--resume). L'app legge anche quello che Jarvis aggiunge dopo."""
+        with self._blocco:
+            if not self.sessione or self.occupato or self.lavora_in_sottofondo():
+                return None
+            self.ferma()
+            exe = trova_claude(self.imp.get("claude_exe", ""))
+            r = subprocess.run([exe, "--desktop", "--resume", self.sessione], timeout=60, cwd=str(self.cartella()),
+                               creationflags=SENZA_FINESTRA)
+            if r.returncode != 0:
+                raise RuntimeError(f"l'app Claude non ha preso la conversazione (codice {r.returncode})")
+            self._segna_nell_app(self.sessione)
+            return self.sessione
+
+    def nell_app(self, sessione=None):
+        sessione = sessione or self.sessione
+        return any(c.get("id") == sessione and c.get("nell_app") for c in self.conversazioni())
+
+    def _segna_nell_app(self, sessione):
+        storia = self.conversazioni()
+        for c in storia:
+            if c.get("id") == sessione:
+                c["nell_app"] = True
+        try:
+            self.file_storia.write_text(json.dumps(storia[:50], ensure_ascii=False, indent=1), encoding="utf-8")
         except OSError:
             pass
 
@@ -188,7 +260,7 @@ class Esecutore:
             if not exe:
                 raise RuntimeError("Claude Code non trovato sul PC")
             # --desktop rifiuta l'uscita rediretta: niente capture_output, una console nascosta tutta sua
-            r = subprocess.run([exe, "--desktop", "--resume", sessione], timeout=60, cwd=str(Path.home()),
+            r = subprocess.run([exe, "--desktop", "--resume", sessione], timeout=60, cwd=str(self.cartella()),
                                creationflags=SENZA_FINESTRA)
             if r.returncode != 0:
                 raise RuntimeError(f"l'app Claude non ha aperto la conversazione (codice {r.returncode})")
@@ -200,6 +272,10 @@ class Esecutore:
 
     # ------------------------------------------------------------ comandi
     def chiedi(self, testo):
+        if self.continuata_nell_app():
+            self.nuova_conversazione()   # l'utente l'ha ripresa nell'app: quella resta all'app
+        if self.sessione and self._domande_note is None:
+            self._domande_note = self.conta_domande()   # dopo un riavvio di Jarvis
         with self._blocco:
             if self._vivo() and self._modello_avviato != self._firma():
                 self.ferma()  # modello o impostazioni cambiate: si riparte dalla stessa conversazione
@@ -246,6 +322,7 @@ class Esecutore:
         if tipo == "result" and self.sessione:
             self._ricorda(self.sessione)  # la conversazione esiste davvero (c'è stato un turno)
             self._domanda = ""
+            self._domande_note = self.conta_domande()
         if tipo == "stream_event":
             ev = d.get("event") or {}
             if ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta" \
@@ -288,7 +365,7 @@ class Esecutore:
         dall'uscita della voce)."""
         if not self.sessione:
             return []
-        cartella = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(Path.home())) /             self.sessione / "subagents"
+        cartella = self.registro().with_suffix("") / "subagents"
         azioni = []
         try:
             registri = sorted(cartella.glob("agent-*.jsonl"), key=lambda f: f.stat().st_mtime)[-2:]

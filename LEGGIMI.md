@@ -225,10 +225,16 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   ha l'effetto `AcousticEchoCanceler` ("AEC non disponibile"), da misurare se la modalità chiamata riduce comunque
   l'eco (`jarvis.log`: "eco della voce" dopo ogni frase, efficace sotto 0,15). La parola chiave resta sempre attiva
   per interromperlo. **Non provato dal vivo.**
-- **Conversazioni nell'app Claude in automatico**: dopo 10 minuti senza parlargli (impostazione), senza lavori in
-  corso e senza una finestra a schermo intero davanti, Jarvis apre la conversazione nell'app Claude (`claude
-  --desktop --resume`) e alla richiesta successiva ne comincia una nuova. Si trovano nell'elenco dell'app sotto la
-  cartella `C:\Users\rikyr`, senza titolo.
+- **Conversazioni nell'app Claude, progetto pc-panel** (2026-11-23): Claude Code di Jarvis lavora nella cartella
+  pc-panel (impostazione `cartella_lavoro`, vuota = pc-panel), quindi le sessioni stanno sotto questo progetto. Le
+  sessioni di `claude -p` non compaiono da sole nell'app: appena c'è la prima risposta e Jarvis è fermo (niente
+  lavori in sottofondo, niente gioco a schermo intero davanti), Jarvis chiude un attimo il suo processo (il comando
+  rifiuta una sessione aperta: provato, codice 1), esegue `claude --desktop --resume <id>` e alla richiesta dopo
+  riprende la stessa sessione con `--resume`. L'app legge anche quello che Jarvis aggiunge dopo (provato: secondo
+  turno visibile nell'app; l'orario nell'elenco però non si aggiorna). Se l'utente scrive nella sessione dall'app,
+  Jarvis se ne accorge (nel registro ci sono più domande di quelle che ha fatto lui; si contano le domande perché
+  l'app riscrive le righe vecchie) e alla richiesta dopo comincia una conversazione nuova. Provato con un
+  messaggio mandato alla sessione dall'app. Le sessioni restano "Untitled" nell'elenco.
 - **Haiku o Sonnet per la voce**: misurato a processo già avviato, Sonnet comincia a parlare in 1,1–1,3 s e Haiku
   in 1,7–2,1 s (fine in ~5 s per entrambi): Sonnet resta il predefinito, Haiku si può scegliere nel pannello.
 - **Personalità** (`persona.md`): dà del tu, niente "signore", simpatica, ironica, dice la sua. Una conversazione

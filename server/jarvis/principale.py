@@ -57,8 +57,8 @@ PREDEFINITE = {
     "accendi_schermo": False,
     "interrompibile": True,        # mentre parla continua ad ascoltare: se gli parli sopra si ferma
     "eco": True,                   # cancellazione dell'eco sul tablet (modalità "chiamata" di Android)
-    "consegna_app": True,          # conversazione finita (ferma da N minuti) -> compare nell'app Claude
-    "consegna_dopo": 10,           # minuti di inattività prima di consegnarla
+    "consegna_app": True,          # ogni conversazione compare subito nell'app Claude (progetto pc-panel)
+    "cartella_lavoro": "",         # dove lavora Claude Code (vuoto: la cartella pc-panel)
     "aggiornamenti": True,         # mentre l'esecutore lavora in silenzio, ogni tanto dice a che punto è
     "aggiornamenti_ogni": 30,      # secondi di silenzio prima di un aggiornamento
     "claude_exe": "",
@@ -493,28 +493,26 @@ class Jarvis:
 
     # ------------------------------------------------------------ conversazioni nell'app Claude
     def ciclo_consegna(self):
-        """Le sessioni di `claude -p` non compaiono da sole nell'app Claude: quando una conversazione è finita
-        (Jarvis fermo da qualche minuto, niente lavori in corso) la si apre nell'app, così ogni conversazione con
-        Jarvis diventa una sessione dell'app da riprendere quando si vuole. Mai con un gioco a schermo intero
-        davanti: l'app potrebbe venire in primo piano."""
+        """Ogni conversazione di Jarvis compare nell'app Claude sotto il progetto pc-panel, appena c'è stata la
+        prima risposta e Jarvis è fermo: da lì la si segue e la si riprende. Mai con un gioco a schermo intero
+        davanti (l'app potrebbe venire in primo piano): si aspetta che non ci sia più."""
         while True:
-            time.sleep(30)
-            if not self.imp.get("consegna_app") or not self.claude.sessione:
+            time.sleep(5)
+            c = self.claude
+            if not self.imp.get("consegna_app") or not c.sessione or c.nell_app():
                 continue
-            fermo = time.time() - max(self.fine_parlato, self.ultima_attivita)
-            if fermo < 60 * max(1, int(self.imp.get("consegna_dopo", 10))):
+            if c.occupato or c.lavora_in_sottofondo() or self.uscita.parla or not self.da_dire.empty():
                 continue
-            if self.claude.occupato or self.claude.lavora_in_sottofondo() or self.stato not in ("riposo", "spento"):
-                continue
-            if schermo_intero():
+            if self.stato not in ("riposo", "seguito", "spento") or schermo_intero():
                 continue
             try:
-                sessione = self.claude.apri_nell_app()
-                log("conversazione consegnata all'app Claude:", sessione)
-                self.evento(consegnata=sessione)
+                sessione = c.mostra_nell_app()
+                if sessione:
+                    log("conversazione visibile nell'app Claude:", sessione)
+                    self.evento(nell_app=sessione)
             except Exception as e:
-                log("consegna all'app non riuscita:", repr(e))
-                self.ultima_attivita = time.time()  # si riprova più tardi
+                log("conversazione non mostrata nell'app:", repr(e))
+                time.sleep(60)
 
     def di(self, testo):
         self.evento(jarvis=testo)

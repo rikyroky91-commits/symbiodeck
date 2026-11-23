@@ -130,7 +130,7 @@
     if (d.conferma !== undefined) mostraConferma(d.conferma);
     if (d.impostazioni) { imp = d.impostazioni; disegnaImpostazioni(); }
     if (d.nuova) { $("j-chat").innerHTML = ""; corrente = null; }
-    if (d.consegnata) { messaggio("azione", "Conversazione spostata nell'app Claude sul PC: la prossima ne apre una nuova"); corrente = null; }
+    if (d.nell_app) { messaggio("azione", "Conversazione visibile nell'app Claude sul PC (progetto pc-panel)"); corrente = null; }
   }
 
   function impostaStato(s) {
@@ -330,10 +330,8 @@
     c.appendChild(riga("Ragionamento dei compiti", "più alto: più accurato ma più lento", scelte("effort_compiti", LIVELLI)));
     c.appendChild(riga("Interrompibile", "mentre parla ti ascolta: se gli parli sopra si ferma", interruttore("interrompibile")));
     c.appendChild(riga("Cancellazione dell'eco", "sul tablet, come il vivavoce: serve per interromperlo", interruttore("eco")));
-    c.appendChild(riga("Conversazioni nell'app Claude", "a conversazione finita la sposta nell'app Claude del PC",
+    c.appendChild(riga("Conversazioni nell'app Claude", "ogni conversazione compare subito nell'app del PC, progetto pc-panel",
       interruttore("consegna_app")));
-    if (imp.consegna_app) c.appendChild(riga("Dopo quanto", "minuti senza parlargli",
-      cursore("consegna_dopo", 2, 60, 1, function (v) { return v + " min"; })));
     c.appendChild(riga("Aggiornamenti mentre lavora", "se l'esecutore lavora in silenzio, ogni tanto ti dice a che punto è",
       interruttore("aggiornamenti")));
     if (imp.aggiornamenti) c.appendChild(riga("Ogni quanto", "secondi di silenzio prima di un aggiornamento",
