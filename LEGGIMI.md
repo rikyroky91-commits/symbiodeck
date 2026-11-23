@@ -225,6 +225,42 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   ha l'effetto `AcousticEchoCanceler` ("AEC non disponibile"), da misurare se la modalità chiamata riduce comunque
   l'eco (`jarvis.log`: "eco della voce" dopo ogni frase, efficace sotto 0,15). La parola chiave resta sempre attiva
   per interromperlo. **Non provato dal vivo.**
+- **Modalità gioco** (2026-11-24, richiesta dell'utente: è un PC da gioco, scheda video e processore non vanno tenuti
+  occupati). Misurato a riposo: Jarvis usa ~0,4% del processore e 85 MB di RAM (parola chiave e rilevamento della voce
+  sulla CPU, leggerissimi); il peso è Whisper large-v3-turbo sulla scheda video (2-3 GB). Ogni 5 s `rileva_gioco()`
+  guarda i dati del pannello (`/api/stato`): FPS di RivaTuner presenti = gioco; altrimenti finestra a schermo intero
+  con la GPU oltre il 40%, o GPU oltre il 70% (ma non se a caricarla è llama-server). Entra dopo 2 rilevamenti di fila,
+  esce dopo un minuto senza gioco. In gioco: Whisper passa alla CPU (`small`, ~2 s a frase) e la scheda resta tutta al
+  gioco; il modello locale dell'emergenza non si accende ("lo accendo quando finisci") e, se era acceso da Jarvis, si
+  spegne. Impostazione `modalita_gioco` (pannello: "Modalità gioco"). **Non provato con un gioco vero.**
+- **Modalità emergenza** (2026-11-24, `server/jarvis/emergenza.py`): senza Internet (2 controlli di fila falliti
+  verso api.anthropic.com e 1.1.1.1, ogni 20 s) o quando Claude risponde con un errore di limite d'uso (per 30
+  minuti, poi riprova) Jarvis passa al cervello locale e lo dice a voce; torna a Claude da solo quando è possibile.
+  Impostazioni: `emergenza` auto | sempre | mai, `modello_emergenza` 27b | 27b-mtp.
+  - Cervello: Qwen 3.8 27B del worker su llama-server (`C:\Users\<utente>\llm\start-server.ps1`, porta 8099). Scelto
+    il profilo "27b" (32K di contesto, 40-46 token/s): è lo stesso modello del profilo MTP (~93 token/s) ma con il
+    doppio di memoria, che per un agente con strumenti conta più della velocità. Lo spegne quando esce, se l'ha
+    acceso lui.
+  - Un solo `claude --bare -p` (`EsecutoreLocale`) fa voce ed esecutore, puntato al server locale con le stesse
+    variabili del worker; strumenti essenziali, guardia, schermo; personalità in `persona_locale.md`.
+  - Voce: Piper (`piper-tts`, voce `it_IT-paola-medium` in `server/jarvis-dati/piper/`, ~60 MB, fuori da git): pronta
+    in 0,04-0,15 s dopo il primo caricamento. Usata anche quando edge-tts non risponde.
+  - Scheda video: quando gira llama-server (worker o emergenza) Whisper passa da solo alla CPU (`small`) e torna
+    sulla GPU dopo; prima il worker restava senza VRAM ed era lentissimo.
+  **Provato**: voce Piper; cervello locale (con il modello MoE del worker: "quanti file ci sono in tests?" → PowerShell
+  e risposta in italiano in 42 s); entrata e uscita con un Jarvis finto (`tests/test_jarvis_emergenza.py`). Non
+  ancora provata la commutazione automatica dal vivo (Internet staccato o limite vero).
+- **Accesso da iPhone, Apple Watch e app esterne**: `POST /jarvis/chiedi` (testo → prima risposta della voce, attende
+  fino a 60 s) e `GET /jarvis/eventi?dopo=N` (messaggi successivi, per l'esito dei lavori lunghi), con il token del
+  pannello. Accettati anche gli indirizzi Tailscale (100.64.0.0/10) oltre alla rete locale, così da fuori casa basta
+  Tailscale sul PC e sull'iPhone (il firewall di Windows deve consentire Python anche su quella rete).
+- **App per iPhone e Apple Watch** (`apple/`, SwiftUI): sull'iPhone conversazione, pulsante per parlare
+  (riconoscimento italiano di iOS), risposta letta ad alta voce, impostazioni (indirizzo del PC e chiave del pannello);
+  sull'Apple Watch "Parla a Jarvis" (dettatura dell'orologio), risposta letta dall'orologio e, per 10 minuti, l'esito
+  dei lavori lunghi. Indirizzo e chiave passano dall'iPhone all'orologio (WatchConnectivity). Il progetto Xcode si
+  genera con XcodeGen e lo compila GitHub Actions su macOS (`.github/workflows/jarvis-ios.yml`, come Moonlight XR):
+  IPA non firmato nelle release `jarvis-ios-N` (non "latest"), da installare con Sideloadly, AltStore o SideStore.
+  L'icona dell'orologio per ora è quella standard (il formato a 1024 px non passava actool).
 - **Token: voce e esecutore in due processi** (2026-11-23, `server/jarvis/cervello.py`). Misurato: con un solo
   Claude Code ogni turno della voce si portava dietro ~44.600 token di istruzioni (strumenti, skill, plugin) che la
   voce non usa, e ogni aggiornamento ~18.000. Limitare gli strumenti nello stesso processo non va (provato:
@@ -241,6 +277,11 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     Haiku con prompt minimo (~900 token invece di ~18.000).
   Provato: "Quanto spazio libero c'è sul disco C?" → la voce risponde subito, l'esecutore usa PowerShell, la voce
   racconta l'esito con un'opinione (18 s in tutto). La delega obbligata della guardia (`JARVIS_DELEGA`) non serve più.
+  Prova del Jarvis intero su una porta a parte (`/jarvis/chiedi`): risposta veloce in 5 s, esito in 14 s.
+  Errore trovato e corretto: un file `server/jarvis/locale.py` copriva il modulo `locale` di Python e i server MCP
+  (avviati da quella cartella) non partivano; la voce allora scriveva la chiamata come testo e Jarvis la leggeva ad
+  alta voce. Ora il file è `llm_locale.py`, i tag non vengono mai letti e una chiamata scritta come testo viene
+  eseguita lo stesso.
 - **Ascolto continuo** (2026-11-23): Jarvis partiva prima che l'utente finisse di parlare (frase chiusa dopo 0,8 s
   di silenzio) e poi non ascoltava più mentre lavorava. Ora: la frase si chiude dopo 1,4 s di silenzio (impostazione
   "Pausa per finire la frase", 0,6-3 s; simulato: un'esitazione di 0,7 s non spezza più la frase, una di 1 s o più
@@ -313,4 +354,4 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.9.1 (2026-11-23, Jarvis interrompibile).
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.9.1 (2026-11-23, Jarvis interrompibile); app iPhone/Watch: `jarvis-ios-N`.

@@ -102,13 +102,16 @@ class Esecutore:
         if not exe:
             raise RuntimeError("Claude Code non trovato sul PC")
         cmd = self._comando(exe)
-        env = dict(os.environ, JARVIS_PORTA=str(self.porta), JARVIS_INTERNO=self.chiave_interna,
+        env = dict(self._ambiente(), JARVIS_PORTA=str(self.porta), JARVIS_INTERNO=self.chiave_interna,
                    JARVIS_CONFIG=str(self.file_config))
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      cwd=str(self.cartella()), env=env, creationflags=SENZA_FINESTRA)
         self._modello_avviato = self._firma()
         threading.Thread(target=self._leggi, args=(self.proc,), daemon=True).start()
         threading.Thread(target=self._scarta_errori, args=(self.proc,), daemon=True).start()
+
+    def _ambiente(self):
+        return dict(os.environ)
 
     def _firma(self):
         return tuple(self.imp.get(k) for k in ("modello_compiti", "effort_compiti", "chrome"))

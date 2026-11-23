@@ -12,7 +12,7 @@
     lavoro: "Al lavoro", parlo: "Parlo", conferma: "Conferma", seguito: "Ti ascolto" };
 
   var stato = "riposo", imp = {}, livello = 0, livelloVisto = 0, aperto = false, collegato = false;
-  var corrente = null, confermaId = null, dispositivi = null, sottofondo = false;
+  var corrente = null, confermaId = null, dispositivi = null, sottofondo = false, emergenza = false;
 
   // ------------------------------------------------------------ struttura
   var radice = document.createElement("div");
@@ -102,6 +102,7 @@
       var s = d.tutto;
       imp = s.impostazioni || {};
       sottofondo = !!s.sottofondo;
+      emergenza = !!(s.emergenza && s.emergenza.attiva);
       impostaStato(s.stato);
       mostraConferma(s.conferma);
       $("j-azione").textContent = s.azione || "";
@@ -130,6 +131,14 @@
     if (d.conferma !== undefined) mostraConferma(d.conferma);
     if (d.impostazioni) { imp = d.impostazioni; disegnaImpostazioni(); }
     if (d.nuova) { $("j-chat").innerHTML = ""; corrente = null; }
+    if (d.emergenza !== undefined && d.emergenza !== null) {
+      emergenza = !!d.emergenza.attiva;
+      messaggio("azione", emergenza ? "Modalità emergenza: " + d.emergenza.motivo + " (cervello locale)" : "Torno a Claude");
+      aggiornaChip();
+    }
+    if (d.gioco !== undefined) {
+      messaggio("azione", d.gioco ? "Modalità gioco: scheda video libera, ascolto con il processore" : "Fine partita: torno a usare la scheda video");
+    }
     if (d.nell_app) { messaggio("azione", "Conversazione visibile nell'app Claude sul PC (progetto pc-panel)"); corrente = null; }
   }
 
@@ -149,12 +158,15 @@
     c.textContent = testo;
     c.className = "j-chip " + (ok === undefined ? "" : ok ? "ok" : "no");
   }
+  var ultimoTablet = null;
   function aggiornaChip(tablet) {
+    if (tablet) ultimoTablet = tablet; else tablet = ultimoTablet;
     var mic = imp.microfono === "pc" ? "MIC PC" : "MIC TABLET";
     var micOk = imp.microfono === "pc" ? true : (tablet ? tablet.microfono : false);
     if (nativo && nativo.microfono && imp.microfono !== "pc" && !nativo.microfono()) { mic = "MIC: PERMESSO"; micOk = false; }
     chip("j-chip-mic", mic + (micOk ? " ✓" : " ✕"), micOk);
-    chip("j-chip-modo", "VOCE " + String(imp.modello_voce || "").toUpperCase() + " · COMPITI " +
+    if (emergenza) chip("j-chip-modo", "EMERGENZA · CERVELLO LOCALE", false);
+    else chip("j-chip-modo", "VOCE " + String(imp.modello_voce || "").toUpperCase() + " · COMPITI " +
       String(imp.modello_compiti || "").toUpperCase());
   }
   setInterval(function () {
@@ -374,6 +386,13 @@
       tendina("stt", [["auto", "Automatico"], ["small", "Piccolo (veloce)"], ["medium", "Medio"],
         ["large-v3-turbo", "Grande turbo"], ["large-v3", "Grande (lento)"]])));
 
+    gruppo(c, "Emergenza");
+    c.appendChild(riga("Modalità emergenza", "senza Internet o fuori dai limiti di Claude usa il modello locale sulla GPU",
+      scelte("emergenza", [["auto", "Automatica"], ["sempre", "Sempre"], ["mai", "Mai"]])));
+    c.appendChild(riga("Modalità gioco", "quando giochi lascia libera la scheda video e non accende il modello locale",
+      interruttore("modalita_gioco")));
+    c.appendChild(riga("Modello locale", "27B: più memoria per i compiti · MTP: il doppio più veloce, meno memoria",
+      scelte("modello_emergenza", [["27b", "27B"], ["27b-mtp", "27B MTP"]])));
     gruppo(c, "Conversazioni");
     c.appendChild(riga("Ricomincia da capo", "Jarvis dimentica la conversazione in corso",
       pulsante("↺ Nuova conversazione", function () { $("j-nuova").onclick(); })));

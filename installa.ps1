@@ -27,6 +27,10 @@ $jarvis = Read-Host "Installare anche Jarvis, i comandi vocali ('Hey Jarvis')? S
 if ($jarvis -match '^[sSyY]') {
     & python.exe -m pip install --user --quiet --disable-pip-version-check -r (Join-Path $qui "requirements-jarvis.txt")
     & python.exe -c "import openwakeword.utils as u; u.download_models(model_names=['hey_jarvis'])"
+    # voce italiana per la modalità emergenza (senza Internet)
+    $piper = Join-Path $server "jarvis-dati\piper"
+    New-Item -ItemType Directory -Force $piper | Out-Null
+    & python.exe -m piper.download_voices --download-dir $piper it_IT-paola-medium
     if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-Path "$env:USERPROFILE\.local\bin\claude.exe")) {
         Write-Host "      Claude Code non trovato: installalo da https://claude.com/claude-code e poi esegui 'claude auth login'" -ForegroundColor Yellow
     }

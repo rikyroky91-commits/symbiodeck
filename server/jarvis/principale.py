@@ -23,8 +23,9 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import audio, locale
+from . import audio, llm_locale
 from .cervello import Cervello
+from .emergenza import CervelloLocale, Emergenza, SintesiLocale
 from .esecutore import trova_claude
 from .trame import Frasi, Interruzione, si_o_no
 from .voce_claude import MODELLI_STT, VOCI, Sintesi, Trascrittore
@@ -59,6 +60,9 @@ PREDEFINITE = {
     "accendi_schermo": False,
     "interrompibile": True,        # mentre parla continua ad ascoltare: se gli parli sopra si ferma
     "eco": True,                   # cancellazione dell'eco sul tablet (modalità "chiamata" di Android)
+    "emergenza": "auto",           # auto (senza Internet o fuori dai limiti) | sempre | mai
+    "modello_emergenza": "27b",    # 27b (32K di contesto) | 27b-mtp (più veloce, 16K)
+    "modalita_gioco": True,        # quando giochi: scheda video libera, niente modello locale
     "consegna_app": True,          # ogni conversazione compare subito nell'app Claude (progetto pc-panel)
     "cartella_lavoro": "",         # dove lavora Claude Code (vuoto: la cartella pc-panel)
     "aggiornamenti": True,         # mentre l'esecutore lavora in silenzio, ogni tanto dice a che punto è
@@ -69,7 +73,8 @@ SCELTE = {
     "modello_voce": ["opus", "sonnet", "haiku"], "modello_compiti": ["opus", "sonnet", "haiku"],
     "effort_voce": ["low", "medium", "high", "xhigh", "max"], "effort_compiti": ["low", "medium", "high", "xhigh", "max"],
     "microfono": ["tablet", "pc"], "casse": ["tablet", "pc"], "conferme": ["irreversibili", "sempre", "mai"],
-    "stt": MODELLI_STT, "voce": VOCI,
+    "stt": MODELLI_STT, "voce": VOCI, "emergenza": ["auto", "sempre", "mai"],
+    "modello_emergenza": ["27b", "27b-mtp"],
 }
 
 
@@ -126,8 +131,11 @@ class Jarvis:
         self.uscita = audio.Uscita(self.casse_pc, self.tablet)
         self.stt = Trascrittore(self.imp, log)
         self.tts = Sintesi(self.imp, log)
-        self.claude = Cervello(DATI, self.imp, PORTA, self.chiave_interna, CONFIG, log)
-        self.claude.ascoltatori(self._claude_testo, self._claude_azione, self._claude_fine)
+        self.emergenza = Emergenza(self, log)
+        self.tts_locale = SintesiLocale(log)
+        self.claude = None
+        self.blocco_cervello = threading.Lock()
+        self.cambia_cervello(locale=False)
         self.frasi = Frasi()
         self.da_dire = queue.Queue()
         self.richieste = queue.Queue()
@@ -147,6 +155,7 @@ class Jarvis:
         self.pronte = queue.Queue(maxsize=2)
         self.ultima_attivita = time.time()  # ultima richiesta o parola chiave
         self.conversazione = False          # dopo "Hey Jarvis": ascolta sempre finché la conversazione è viva
+        self.in_gioco = False               # modalità gioco (ciclo_gpu)
         self.inizio_turno = 0.0             # quando è partita l'ultima richiesta a Claude
 
     # ------------------------------------------------------------ eventi per il pannello
@@ -167,7 +176,9 @@ class Jarvis:
                 "tablet": {"altoparlante": self.tablet.collegato(), "microfono": self.tablet.microfono_attivo()},
                 "conferma": self.conferma and {"id": self.conferma["id"], "descrizione": self.conferma["descrizione"]},
                 "claude": bool(trova_claude(self.imp.get("claude_exe", ""))),
-                "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo()}
+                "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo(),
+                "emergenza": {"attiva": self.emergenza.attiva, "motivo": self.emergenza.motivo},
+                "gioco": self.in_gioco}
 
     def impostazioni_pubbliche(self):
         imp = dict(self.imp)
@@ -463,6 +474,10 @@ class Jarvis:
             return
         for f in self.frasi.fine():
             self.da_dire.put(f)
+        if errore and self.emergenza.errore_claude(errore):
+            self.evento(fine=True)
+            self.da_dire.put(None)
+            return
         if errore:
             log("claude:", errore)
             if "login" in errore.lower() or "logged in" in errore.lower():
@@ -513,8 +528,8 @@ class Jarvis:
                    "ironico, che dica a che punto sei. Non ripetere gli aggiornamenti già detti, non dire che hai "
                    "quasi finito, niente nomi di comandi o file lunghi. Solo la frase.")
         # 1) il modello locale, se è già acceso (worker o emergenza): zero token Claude
-        if locale.attivo():
-            frase = locale.frase(sistema, richiesta)
+        if llm_locale.attivo():
+            frase = llm_locale.frase(sistema, richiesta)
             if frase and 3 < len(frase) < 220:
                 return frase
         # 2) Haiku con il prompt minimo: ~900 token invece dei ~18.000 del prompt completo di Claude Code
@@ -532,6 +547,35 @@ class Jarvis:
             log("aggiornamento non generato:", repr(e))
         ultima = recenti[-1][0].lower() + recenti[-1][1:] if recenti else ""
         return f"Ci sto ancora lavorando{': ' + ultima if ultima else ''}."
+
+    def ciclo_emergenza(self):
+        self.emergenza.ciclo()
+
+    def ciclo_gpu(self):
+        """Ogni 5 secondi: modalità gioco (entra dopo 2 rilevamenti di fila, esce dopo un minuto senza gioco) e
+        scheda video: Whisper la lascia al gioco o al modello locale (worker, emergenza)."""
+        si, no = 0, 0
+        while True:
+            time.sleep(5)
+            gioco = self.imp.get("modalita_gioco", True) and rileva_gioco()
+            si, no = (si + 1, 0) if gioco else (0, no + 1)
+            if not self.in_gioco and si >= 2:
+                self._cambia_gioco(True)
+            elif self.in_gioco and no >= 12:
+                self._cambia_gioco(False)
+            self.stt.in_gioco = self.in_gioco
+            self.stt.libera_gpu_se_serve()
+
+    def _cambia_gioco(self, gioco):
+        self.in_gioco = gioco
+        log("modalità gioco:", "sì" if gioco else "no")
+        self.evento(gioco=gioco)
+        if gioco and self.emergenza.attiva and self.emergenza.server_nostro:
+            # il modello locale occupa quasi tutta la scheda video: si spegne, la partita viene prima
+            self.emergenza.valuta()
+            self.emergenza.ferma_server()
+        elif not gioco and self.emergenza.rimandata:
+            self.emergenza.valuta()   # finita la partita: se serve ancora, ora si accende
 
     # ------------------------------------------------------------ conversazioni nell'app Claude
     def ciclo_consegna(self):
@@ -556,6 +600,29 @@ class Jarvis:
                 log("conversazione non mostrata nell'app:", repr(e))
                 time.sleep(60)
 
+    def cambia_cervello(self, locale):
+        """Claude (voce leggera + esecutore) oppure il cervello locale della modalità emergenza."""
+        with self.blocco_cervello:
+            vecchio = self.claude
+            if vecchio is not None:
+                if getattr(vecchio, "locale", False) == locale:
+                    return
+                vecchio.ferma()
+            classe = CervelloLocale if locale else Cervello
+            nuovo = classe(DATI, self.imp, PORTA, self.chiave_interna, CONFIG, log)
+            nuovo.ascoltatori(self._claude_testo, self._claude_azione, self._claude_fine)
+            if not locale:
+                nuovo.su_errore = self.emergenza.errore_claude
+            self.claude = nuovo
+        self.evento(cervello="locale" if locale else "claude")
+
+    def di_subito(self, testo):
+        """Una frase di servizio (es. cambio di cervello), detta anche se Jarvis era a riposo."""
+        self.uscita.riprendi()
+        self.evento(jarvis=testo)
+        self.da_dire.put(testo)
+        self.da_dire.put(None)
+
     def di(self, testo):
         self.evento(jarvis=testo)
         self.da_dire.put(testo)
@@ -572,11 +639,18 @@ class Jarvis:
                 if f is None:
                     pronte.put(None)
                     continue
-                try:
-                    pcm = self.tts.pcm(f)
-                except Exception as e:
-                    log("sintesi vocale non riuscita:", repr(e))
-                    pcm = audio.suono("errore")
+                pcm = None
+                if not self.emergenza.attiva:
+                    try:
+                        pcm = self.tts.pcm(f)
+                    except Exception as e:
+                        log("sintesi vocale online non riuscita, uso Piper:", repr(e)[:120])
+                if pcm is None:
+                    try:
+                        pcm = self.tts_locale.pcm(f)
+                    except Exception as e:
+                        log("sintesi vocale locale non riuscita:", repr(e))
+                        pcm = audio.suono("errore")
                 if gen == self.gen_voce:  # nel frattempo è stato interrotto: la frase non si dice
                     pronte.put((f, pcm, gen))
         threading.Thread(target=sintetizza, daemon=True, name="sintesi").start()
@@ -653,6 +727,52 @@ class Jarvis:
         self.uscita.riprendi()
         self.richieste.put(("testo", testo))
 
+    def novita(self, dopo):
+        """Messaggi di Jarvis e dell'utente dopo l'evento `dopo` (testi completi, non i pezzi)."""
+        with self.cond:
+            eventi = [(n, e) for n, e in self.eventi if n > dopo]
+            ultimo = self.n_evento
+        messaggi, pezzi = [], []
+        for _n, e in eventi:
+            if e.get("utente"):
+                messaggi.append({"chi": "utente", "testo": e["utente"]})
+            if e.get("jarvis_pezzo"):
+                pezzi.append(e["jarvis_pezzo"])
+            if e.get("jarvis"):
+                messaggi.append({"chi": "jarvis", "testo": e["jarvis"]})
+                pezzi = []
+            elif e.get("fine") and pezzi:
+                messaggi.append({"chi": "jarvis", "testo": "".join(pezzi).strip()})
+                pezzi = []
+            if e.get("azione"):
+                messaggi.append({"chi": "azione", "testo": e["azione"]})
+        return {"ultimo": ultimo, "messaggi": messaggi, "stato": self.stato,
+                "lavoro": self.claude.lavora_in_sottofondo(), "emergenza": self.emergenza.attiva}
+
+    def chiedi_e_aspetta(self, testo, attesa=30):
+        """Per Apple Watch e iPhone: manda la richiesta e aspetta la prima risposta della voce (di solito pochi
+        secondi; un lavoro lungo continua e il suo esito si legge poi con /jarvis/eventi)."""
+        with self.cond:
+            inizio = self.n_evento
+        self.scrivi(testo)
+        limite = time.time() + attesa
+        pezzi, risposta = [], ""
+        visto = inizio
+        while time.time() < limite and not risposta:
+            with self.cond:
+                self.cond.wait(timeout=1)
+                nuovi = [(n, e) for n, e in self.eventi if n > visto]
+            for n, e in nuovi:
+                visto = n
+                if e.get("jarvis_pezzo"):
+                    pezzi.append(e["jarvis_pezzo"])
+                if e.get("jarvis"):
+                    risposta = e["jarvis"]
+                elif e.get("fine") and pezzi:
+                    risposta = "".join(pezzi).strip()
+        return {"risposta": risposta or "".join(pezzi).strip(), "ultimo": visto,
+                "lavoro": self.claude.lavora_in_sottofondo()}
+
     def tocca(self):
         self._attivato()
 
@@ -666,7 +786,8 @@ class Jarvis:
 
     def avvia(self):
         self._applica()
-        for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce", "ciclo_aggiornamenti", "ciclo_consegna"):
+        for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce", "ciclo_aggiornamenti", "ciclo_consegna",
+                     "ciclo_gpu", "ciclo_emergenza"):
             threading.Thread(target=self._protetto, args=(getattr(self, nome),), daemon=True, name=nome).start()
         threading.Thread(target=self._prepara_stt, daemon=True).start()
 
@@ -680,6 +801,27 @@ class Jarvis:
 
 
 # ---------------------------------------------------------------- server HTTP per il tablet
+
+def rileva_gioco():
+    """Si sta giocando? Con i dati che il pannello legge ogni secondo: FPS di RivaTuner (un gioco agganciato),
+    oppure una finestra a schermo intero con la scheda video carica, oppure la scheda video molto carica."""
+    import urllib.request
+    tablet, _pc = token_pannello()
+    try:
+        r = urllib.request.Request("http://127.0.0.1:47800/api/stato", headers={"X-Token": tablet})
+        with urllib.request.urlopen(r, timeout=3) as risposta:
+            d = json.loads(risposta.read())
+    except (OSError, ValueError):
+        return schermo_intero()
+    fps = (d.get("fps") or {}).get("ora")
+    carico = (d.get("gpu") or {}).get("carico") or 0
+    if fps and fps > 0:
+        return True
+    from .voce_claude import llm_locale_acceso
+    if llm_locale_acceso():
+        return False   # la scheda la sta usando il modello locale (worker, emergenza), non un gioco
+    return (schermo_intero() and carico > 40) or carico > 70
+
 
 def schermo_intero():
     """True se in primo piano c'è una finestra a schermo intero (un gioco, un video): non va disturbata."""
@@ -704,10 +846,13 @@ def schermo_intero():
     return r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
 
 
+TAILSCALE = ipaddress.ip_network("100.64.0.0/10")   # rete privata di Tailscale: iPhone e Watch da fuori casa
+
+
 def rete_locale(ip):
     try:
         a = ipaddress.ip_address(ip)
-        return a.is_private or a.is_loopback
+        return a.is_private or a.is_loopback or a in TAILSCALE
     except ValueError:
         return False
 
@@ -795,6 +940,9 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, {"ingressi": [], "uscite": [], "errore": str(e)})
         if u.path == "/jarvis/altoparlante":
             return self.altoparlante()
+        if u.path == "/jarvis/eventi":
+            dopo = int((q.get("dopo") or ["0"])[0] or 0)
+            return self.manda(200, self.j.novita(dopo))
         if u.path == "/jarvis/conversazioni":
             return self.manda(200, {"attuale": self.j.claude.sessione, "conversazioni": self.j.claude.conversazioni()})
         return self.manda(404, {"errore": "non trovato"})
@@ -826,6 +974,12 @@ class Gestore(BaseHTTPRequestHandler):
                     raise ValueError("testo vuoto")
                 j.scrivi(testo)
                 return self.manda(200, {"ok": True})
+            if u.path == "/jarvis/chiedi":
+                testo = str(d.get("testo", "")).strip()[:2000]
+                if not testo:
+                    raise ValueError("testo vuoto")
+                attesa = max(3, min(60, int(d.get("attesa", 30))))
+                return self.manda(200, j.chiedi_e_aspetta(testo, attesa))
             if u.path == "/jarvis/tocca":
                 j.tocca()
                 return self.manda(200, {"ok": True})

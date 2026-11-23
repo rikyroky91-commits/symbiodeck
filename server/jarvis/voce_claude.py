@@ -28,6 +28,15 @@ def _librerie_cuda():
                     pass
 
 
+def llm_locale_acceso():
+    """True se gira llama-server (worker o modalità emergenza): anche mentre carica il modello."""
+    try:
+        import psutil
+        return any((pr.info.get("name") or "").lower() == "llama-server.exe" for pr in psutil.process_iter(["name"]))
+    except Exception:
+        return False
+
+
 class Trascrittore:
     """Carica il modello una volta sola (in un thread, all'avvio) e lo tiene in memoria."""
 
@@ -38,6 +47,7 @@ class Trascrittore:
         self.caricato = None
         self.dispositivo = None
         self.blocco = threading.Lock()
+        self.in_gioco = False   # lo imposta Jarvis (modalità gioco): Whisper resta sulla CPU
 
     def _scelta(self):
         scelto = self.imp.get("stt") or "auto"
@@ -46,6 +56,10 @@ class Trascrittore:
             gpu = ctranslate2.get_cuda_device_count() > 0
         except Exception:
             gpu = False
+        if gpu and self.serve_cpu():
+            gpu = False   # la scheda serve al gioco o al modello locale (worker, emergenza): si ascolta con la CPU
+            if scelto == "auto":
+                return "small", "cpu"
         if scelto == "auto":
             return ("large-v3-turbo", "cuda") if gpu else ("small", "cpu")
         return scelto, ("cuda" if gpu else "cpu")
@@ -53,7 +67,7 @@ class Trascrittore:
     def prepara(self):
         with self.blocco:
             nome, disp = self._scelta()
-            if self.caricato == nome and self.modello:
+            if self.caricato == nome and self.dispositivo == disp and self.modello:
                 return
             from faster_whisper import WhisperModel
             _librerie_cuda()
@@ -73,6 +87,28 @@ class Trascrittore:
             self.modello = WhisperModel(nome, device="cpu", compute_type="int8")
             self.caricato, self.dispositivo = nome, "cpu"
             self.log("stt pronto", nome, "cpu", f"{time.time() - t0:.1f}s")
+
+    def serve_cpu(self):
+        return self.in_gioco or llm_locale_acceso()
+
+    def libera_gpu_se_serve(self):
+        """Il modello locale sta partendo o gira: si toglie Whisper dalla scheda video (sennò il modello non ci sta
+        e finisce nella RAM, lentissimo). Quando il modello locale si spegne, Whisper torna sulla scheda."""
+        acceso = self.serve_cpu()
+        if acceso and self.dispositivo == "cuda":
+            with self.blocco:
+                self.modello, self.caricato, self.dispositivo = None, None, None
+            import gc
+            gc.collect()
+            self.log("stt: scheda video lasciata libera (gioco o modello locale)")
+            self.prepara()
+        elif not acceso and self.dispositivo == "cpu" and (self.imp.get("stt") or "auto") == "auto":
+            try:
+                import ctranslate2
+                if ctranslate2.get_cuda_device_count() > 0:
+                    self.prepara()   # torna sulla scheda video
+            except Exception:
+                pass
 
     def trascrivi(self, pcm16k):
         """pcm16k: array int16 a 16 kHz. Restituisce il testo (vuoto se non ha capito niente)."""

@@ -1240,10 +1240,27 @@ TIPI = {".html": "text/html; charset=utf-8", ".js": "application/javascript; cha
         ".woff2": "font/woff2", ".json": "application/json", ".jpg": "image/jpeg"}
 
 
+TAILSCALE = ipaddress.ip_network("100.64.0.0/10")   # rete privata di Tailscale (iPhone e Watch da fuori casa)
+
+
+def indirizzi_del_pc():
+    """Indirizzi IPv4 del PC in rete locale e su Tailscale (100.x), per l'app su iPhone."""
+    import socket
+    trovati = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip not in trovati and not ip.startswith("127.") and not ip.startswith("169.254."):
+                trovati.append(ip)
+    except OSError:
+        pass
+    return sorted(trovati, key=lambda ip: (not ip.startswith("192.168."), ip))
+
+
 def rete_locale(ip):
     try:
         a = ipaddress.ip_address(ip)
-        return a.is_private or a.is_loopback
+        return a.is_private or a.is_loopback or a in TAILSCALE
     except ValueError:
         return False
 
@@ -1328,7 +1345,9 @@ class Gestore(BaseHTTPRequestHandler):
             ora = time.time()
             return self.manda(200, {"tablet": [{"ip": ip, "secondi_fa": round(ora - t)}
                                                for ip, t in self.server.tablet.items() if ora - t < 30],
-                                    "porta": PORTA, "abbinamento": Abbinamento.secondi_rimasti()})
+                                    "porta": PORTA, "abbinamento": Abbinamento.secondi_rimasti(),
+                                    # per l'app Jarvis su iPhone e Apple Watch (solo dal PC stesso)
+                                    "app_jarvis": {"indirizzi": indirizzi_del_pc(), "chiave": cfg["token"]}})
         return self.manda(404, {"errore": "non trovato"})
 
     def icona(self, target):

@@ -43,7 +43,9 @@ _UNITA = [(r"(\d)\s*TB\b", r"\1 tera"), (r"(\d)\s*GB\b", r"\1 giga"), (r"(\d)\s*
 def pulisci_per_voce(testo):
     """Rende il testo dicibile: niente simboli letti alla lettera ("cancelletto", "asterisco"), niente codice,
     link o emoji; elenchi e tabelle diventano frasi. Pensato per la sintesi vocale italiana."""
-    t = re.sub(r"```.*?(```|$)", " ", testo, flags=re.S)                 # blocchi di codice
+    t = re.sub(r"<(invoke|parameter|function_calls)\b[^>]*>.*?(</\1>|$)", " ", testo, flags=re.S)  # chiamate scritte come testo
+    t = re.sub(r"</?[A-Za-z][\w:-]*[^>]*>", " ", t)                       # altri tag
+    t = re.sub(r"```.*?(```|$)", " ", t, flags=re.S)                      # blocchi di codice
     t = re.sub(r"`([^`]*)`", r"\1", t)                                    # codice in linea: resta il testo
     t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)                      # [testo](link) e immagini
     t = re.sub(r"https?://\S+|www\.\S+", "il link", t)

@@ -9,6 +9,7 @@
 Quando l'esecutore finisce, l'esito arriva alla voce come messaggio e la voce lo racconta.
 Verso principale.py il Cervello ha la stessa interfaccia di prima (chiedi, occupato, interrompi, ...)."""
 import json
+import re
 import sys
 import threading
 import time
@@ -80,6 +81,9 @@ class Cervello:
         self.richiesta_lavoro = ""
         self.inizio_lavoro = 0.0
         self._ultima_frase = ""
+        self._affidato_nel_turno = False
+        self.su_errore = lambda testo: False   # True se l'errore fa partire la modalità emergenza
+        self.locale = False
 
     def ascoltatori(self, testo, azione, fine):
         self._testo, self._azione, self._fine = testo, azione, fine
@@ -146,10 +150,19 @@ class Cervello:
         self._testo(pezzo)
 
     def _v_fine(self, risultato, errore):
+        # rete di sicurezza: se la voce ha scritto la chiamata come testo invece di farla (strumenti non pronti),
+        # il compito si passa lo stesso all'esecutore
+        if not errore and not self._affidato_nel_turno:
+            for richiesta in re.findall(r'<invoke name="esegui">\s*<parameter name="richiesta">(.*?)</parameter>',
+                                        risultato or "", flags=re.S)[:1]:
+                self.log("la voce ha scritto la chiamata invece di farla: la eseguo lo stesso")
+                self._affida(richiesta.strip())
+        self._affidato_nel_turno = False
         self._fine(risultato, errore)
 
     def _v_strumento(self, nome, ingresso):
         if nome.endswith("__esegui"):
+            self._affidato_nel_turno = True
             self._affida(str(ingresso.get("richiesta", "")))
 
     def _affida(self, richiesta):
@@ -177,6 +190,8 @@ class Cervello:
         self._azione(descrizione)
 
     def _e_fine(self, risultato, errore):
+        if errore and self.su_errore(errore):
+            return   # fuori dai limiti: ci pensa la modalità emergenza
         esito = f"Errore: {errore}" if errore else (risultato.strip() or "Fatto, senza altri dettagli.")
         self.log("esito dell'esecutore:", esito[:200])
         self.voce.chiedi(f"[{adesso()}] [Esito del lavoro «{self.richiesta_lavoro[:200]}»]\n{esito[:6000]}\n"

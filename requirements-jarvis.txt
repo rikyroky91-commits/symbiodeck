@@ -11,6 +11,9 @@ miniaudio>=1.59
 mcp>=2.0
 mss>=9.0
 pillow>=10.0
+# modalità emergenza: voce italiana sul PC (senza Internet)
+piper-tts>=1.2
+psutil>=5.9
 # riconoscimento vocale sulla scheda video NVIDIA (se manca: CPU, più lento)
 nvidia-cublas-cu12; sys_platform == "win32"
 nvidia-cudnn-cu12>=9,<10; sys_platform == "win32"

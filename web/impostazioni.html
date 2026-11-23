@@ -116,6 +116,8 @@
       <span>ragionamento</span>
       <button data-chiave="effort_compiti" data-valore="medium">medio</button><button data-chiave="effort_compiti" data-valore="high">alto</button><button data-chiave="effort_compiti" data-valore="xhigh">molto</button><button data-chiave="effort_compiti" data-valore="max">max</button>
     </div>
+    <h2 style="margin-top:14px">App Jarvis per iPhone e Apple Watch <small>inserisci questi dati nell'app sull'iPhone (l'orologio li riceve da lì)</small></h2>
+    <p class="nota" id="j-app-dati">…</p>
     <h2 style="margin-top:14px">Conversazioni di Jarvis <small>aprile nell'app Claude per continuarle qui sul PC</small></h2>
     <div id="j-conversazioni"></div>
     <p class="nota">Jarvis usa Claude Code di questo PC con il tuo abbonamento Claude (accesso una volta sola con <code>claude auth login</code>).</p>
@@ -410,6 +412,11 @@
     }, function () {});
   }
   api("/jarvis/stato").then(function (s) { mostra(s); conversazioni(); }, errore);
+  fetch("/api/pc/stato", { headers: { "X-Token": token } }).then(function (r) { return r.json(); }).then(function (d) {
+    var a = d.app_jarvis || {};
+    $("j-app-dati").textContent = "Indirizzo: " + (a.indirizzi || []).join(" oppure ") +
+      " (da fuori casa: l'indirizzo Tailscale del PC, 100.x.y.z) · Chiave: " + (a.chiave || "?");
+  }, function () {});
 })();
 </script>
 </body>
