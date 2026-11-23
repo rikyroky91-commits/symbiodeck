@@ -214,6 +214,21 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - **Riavviare Jarvis da amministratore**: un processo senza privilegi non può fermarlo. `POST /jarvis/riavvia`
   (token del pannello) lo fa chiudere da solo con codice 3; lo fa ripartire l'attività o `pannello.py` (entro un
   minuto). Prima di questa versione: rieseguire `server\jarvis-amministratore.ps1`, che lo ferma e lo riavvia.
+- **Interromperlo mentre parla** (2026-11-23, app 1.9.1): mentre Jarvis parla il microfono resta in ascolto; se una
+  voce supera di 1,6 volte l'eco attesa per ~400 ms, Jarvis si zittisce, butta il resto della risposta (anche le frasi
+  già sintetizzate: contatore `gen_voce`) e ascolta la frase dall'inizio (800 ms tenuti da parte). L'eco attesa è
+  il volume di quello che Jarvis sta facendo uscire (massimo dell'ultimo secondo) per un rapporto imparato nei primi
+  480 ms di ogni frase (`Interruzione` in `trame.py`). Simulato con voci sintetiche, eco al 10-90% e ritardi di
+  150-350 ms: mai scattato sulla sola eco; con eco debole (10%) si ferma 0,4-0,8 s dopo che la persona parla, con
+  eco forte (35% e oltre) la persona non viene distinta. Per questo il tablet usa la modalità "chiamata"
+  (`VOICE_COMMUNICATION`, `MODE_IN_COMMUNICATION`, impostazione "Cancellazione dell'eco"): lo SHIELD Tablet **non**
+  ha l'effetto `AcousticEchoCanceler` ("AEC non disponibile"), da misurare se la modalità chiamata riduce comunque
+  l'eco (`jarvis.log`: "eco della voce" dopo ogni frase, efficace sotto 0,15). La parola chiave resta sempre attiva
+  per interromperlo. **Non provato dal vivo.**
+- **Conversazioni nell'app Claude in automatico**: dopo 10 minuti senza parlargli (impostazione), senza lavori in
+  corso e senza una finestra a schermo intero davanti, Jarvis apre la conversazione nell'app Claude (`claude
+  --desktop --resume`) e alla richiesta successiva ne comincia una nuova. Si trovano nell'elenco dell'app sotto la
+  cartella `C:\Users\rikyr`, senza titolo.
 - **Haiku o Sonnet per la voce**: misurato a processo già avviato, Sonnet comincia a parlare in 1,1–1,3 s e Haiku
   in 1,7–2,1 s (fine in ~5 s per entrambi): Sonnet resta il predefinito, Haiku si può scegliere nel pannello.
 - **Personalità** (`persona.md`): dà del tu, niente "signore", simpatica, ironica, dice la sua. Una conversazione
@@ -268,4 +283,4 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.9.0 (2026-11-23, Jarvis).
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.9.1 (2026-11-23, Jarvis interrompibile).
