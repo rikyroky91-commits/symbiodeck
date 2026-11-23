@@ -7,6 +7,10 @@ onnxruntime>=1.16
 faster-whisper>=1.0
 edge-tts>=7.0
 miniaudio>=1.59
+# server MCP "schermo": Jarvis vede lo schermo e usa mouse e tastiera
+mcp>=2.0
+mss>=9.0
+pillow>=10.0
 # riconoscimento vocale sulla scheda video NVIDIA (se manca: CPU, più lento)
 nvidia-cublas-cu12; sys_platform == "win32"
 nvidia-cudnn-cu12>=9,<10; sys_platform == "win32"

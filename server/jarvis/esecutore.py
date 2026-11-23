@@ -67,24 +67,39 @@ class Esecutore:
         f.write_text(json.dumps(imp, indent=2), encoding="utf-8")
         return f
 
+    def _file_mcp(self):
+        """Server MCP in più rispetto al Claude Code normale: "schermo" (vedere lo schermo, mouse e tastiera), che
+        la riga di comando su Windows non ha e l'app Claude sì."""
+        python = str(Path(sys.executable).with_name("python.exe"))  # stdio: serve la console, non pythonw
+        mcp = {"mcpServers": {"schermo": {"command": python, "args": [str(QUI / "schermo_mcp.py")]}}}
+        f = self.dati / "mcp-jarvis.json"
+        f.write_text(json.dumps(mcp, indent=2), encoding="utf-8")
+        return f
+
     def _avvia(self):
         exe = trova_claude(self.imp.get("claude_exe", ""))
         if not exe:
             raise RuntimeError("Claude Code non trovato sul PC")
-        modello = self.imp.get("modello_claude") or "sonnet"
+        modello = self.imp.get("modello_claude") or "opus"
         cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--permission-mode", "bypassPermissions",
                "--append-system-prompt-file", str(QUI / "persona.md"),
-               "--settings", str(self._file_impostazioni()), "--model", modello]
+               "--settings", str(self._file_impostazioni()), "--mcp-config", str(self._file_mcp()),
+               "--model", modello, "--effort", self.imp.get("effort") or "high"]
+        if self.imp.get("chrome", True):
+            cmd.append("--chrome")
         if self.sessione:
             cmd += ["--resume", self.sessione]
         env = dict(os.environ, JARVIS_PORTA=str(self.porta), JARVIS_INTERNO=self.chiave_interna,
                    JARVIS_CONFIG=str(self.file_config))
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      cwd=str(Path.home()), env=env, creationflags=SENZA_FINESTRA)
-        self._modello_avviato = modello
+        self._modello_avviato = self._firma()
         threading.Thread(target=self._leggi, args=(self.proc,), daemon=True).start()
         threading.Thread(target=self._scarta_errori, args=(self.proc,), daemon=True).start()
+
+    def _firma(self):
+        return (self.imp.get("modello_claude"), self.imp.get("effort"), self.imp.get("chrome", True))
 
     def _vivo(self):
         return self.proc is not None and self.proc.poll() is None
@@ -173,8 +188,8 @@ class Esecutore:
     # ------------------------------------------------------------ comandi
     def chiedi(self, testo):
         with self._blocco:
-            if self._vivo() and self._modello_avviato != (self.imp.get("modello_claude") or "sonnet"):
-                self.ferma()  # modello cambiato: si riparte dalla stessa conversazione
+            if self._vivo() and self._modello_avviato != self._firma():
+                self.ferma()  # modello o impostazioni cambiate: si riparte dalla stessa conversazione
             if not self._vivo():
                 self._avvia()
             self.occupato = True
@@ -242,9 +257,9 @@ class Esecutore:
 def prova(testo):
     """python -m jarvis.esecutore "domanda": prova a riga di comando senza voce (stampa la risposta)."""
     fatto = threading.Event()
-    dati = QUI.parent / "jarvis-dati"
-    dati.mkdir(exist_ok=True)
-    e = Esecutore(dati, {"modello_claude": "sonnet"}, 47802, "", QUI.parent / "jarvis.json")
+    dati = QUI.parent / "jarvis-dati" / "prova"  # le prove non toccano la conversazione di Jarvis
+    dati.mkdir(parents=True, exist_ok=True)
+    e = Esecutore(dati, {"modello_claude": "sonnet", "effort": "low"}, 47802, "", QUI.parent / "jarvis.json")
     t0 = time.time()
     e.ascoltatori(lambda p: print(p, end="", flush=True),
                   lambda a: print(f"\n[{time.time() - t0:.1f}s] {a}", flush=True),

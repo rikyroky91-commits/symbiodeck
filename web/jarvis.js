@@ -313,8 +313,11 @@
     c.innerHTML = "";
     gruppo(c, "Generale");
     c.appendChild(riga("Jarvis attivo", "spento: non ascolta e non risponde", interruttore("attivo")));
-    c.appendChild(riga("Modello di Claude", "Sonnet: veloce · Opus: il più capace · Haiku: rapidissimo",
-      scelte("modello_claude", [["sonnet", "Sonnet"], ["opus", "Opus"], ["haiku", "Haiku"]])));
+    c.appendChild(riga("Modello di Claude", "Opus: il più capace, come Claude Code nell'app · Sonnet: più veloce",
+      scelte("modello_claude", [["opus", "Opus"], ["sonnet", "Sonnet"], ["haiku", "Haiku"]])));
+    c.appendChild(riga("Ragionamento", "più alto: più accurato ma più lento a rispondere",
+      scelte("effort", [["low", "Basso"], ["medium", "Medio"], ["high", "Alto"], ["xhigh", "Molto"], ["max", "Max"]])));
+    c.appendChild(riga("Claude in Chrome", "naviga e usa i siti nel tuo Chrome", interruttore("chrome")));
     c.appendChild(riga("Conferme", "quando chiedere \"Confermi?\" prima di agire",
       scelte("conferme", [["irreversibili", "Irreversibili"], ["sempre", "Sempre"], ["mai", "Mai"]])));
 

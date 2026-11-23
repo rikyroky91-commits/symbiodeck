@@ -192,6 +192,18 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - Impostazioni in `server/jarvis.json` (fuori da git), registro in `server/jarvis.log`.
   Si disattiva del tutto con `"jarvis": false` in `config.json`. Dipendenze: `requirements-jarvis.txt` (~3 GB con
   i modelli; `installa.ps1` lo chiede). Claude Code deve aver fatto l'accesso: `claude auth login`.
+- **Sostituto completo di Claude Code** (richiesta dell'utente, 2026-11-23: "non deve fare niente di meno"). Il
+  Claude Code di Jarvis ha già skill, plugin, sotto-agenti, ricerca in rete e attività programmate come quello
+  dell'app; mancavano gli strumenti che l'app aggiunge da sé. Ora:
+  - modello **Opus** e ragionamento **alto** come predefiniti (`--model`, `--effort`; si cambiano dal pannello:
+    Opus/alto risponde in ~20 s, Sonnet è più veloce);
+  - **schermo** (`server/jarvis/schermo_mcp.py`, server MCP passato con `--mcp-config`): screenshot (anche di una
+    zona), clic, trascina, scorri, scrivi, tasti, finestre. Il computer use ufficiale di Claude Code a riga di
+    comando esiste solo su macOS e non in modalità `-p`, quindi è fatto in casa (mss + SendInput). Provato:
+    "che programma ho davanti?" → screenshot → risposta giusta;
+  - **Claude in Chrome** con `--chrome` (impostazione "Claude in Chrome"): gli strumenti compaiono anche in `-p`
+    (provato che ci sono, non ancora usati per navigare).
+  Restano fuori solo gli strumenti propri dell'app (gestione delle sessioni dell'app, browser integrato dell'app).
 - **Come amministratore** (dal 2026-11-23): senza privilegi Claude Code non può scrivere in Program Files (es.
   `C:\Program Files\Apollo\config`). `server/jarvis-amministratore.ps1` (tasto destro > Esegui con PowerShell,
   chiede da solo l'UAC, una volta sola) registra l'attività `Pannello PC - Jarvis` (all'accesso, privilegi più alti,

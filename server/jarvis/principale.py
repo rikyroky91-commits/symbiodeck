@@ -36,7 +36,9 @@ PORTA = 47802
 
 PREDEFINITE = {
     "attivo": True,
-    "modello_claude": "sonnet",    # sonnet | opus | haiku
+    "modello_claude": "opus",      # opus | sonnet | haiku (opus: come Claude Code nell'app)
+    "effort": "high",              # low | medium | high | xhigh | max
+    "chrome": True,                # Claude in Chrome (--chrome): navigare e usare siti nel Chrome dell'utente
     "microfono": "tablet",         # tablet | pc
     "microfono_pc": "",
     "casse": "tablet",             # tablet | pc
@@ -53,7 +55,7 @@ PREDEFINITE = {
     "claude_exe": "",
 }
 SCELTE = {
-    "modello_claude": ["sonnet", "opus", "haiku"],
+    "modello_claude": ["opus", "sonnet", "haiku"], "effort": ["low", "medium", "high", "xhigh", "max"],
     "microfono": ["tablet", "pc"], "casse": ["tablet", "pc"], "conferme": ["irreversibili", "sempre", "mai"],
     "stt": MODELLI_STT, "voce": VOCI,
 }
