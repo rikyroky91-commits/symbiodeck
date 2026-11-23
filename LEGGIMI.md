@@ -192,11 +192,18 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - Impostazioni in `server/jarvis.json` (fuori da git), registro in `server/jarvis.log`.
   Si disattiva del tutto con `"jarvis": false` in `config.json`. Dipendenze: `requirements-jarvis.txt` (~3 GB con
   i modelli; `installa.ps1` lo chiede). Claude Code deve aver fatto l'accesso: `claude auth login`.
+- **Voce e compiti separati** (2026-11-23): la sessione principale di Claude Code è la *voce* (predefinito
+  Sonnet, ragionamento basso: risponde subito) e i compiti li fa il sotto-agente *esecutore* (`--agents`, prompt in
+  `server/jarvis/esecutore.md`; predefinito Opus, ragionamento alto). La separazione è obbligata dalla guardia: con
+  `JARVIS_DELEGA=1` ogni strumento chiamato dalla voce (hook senza `agent_type`) viene rifiutato con l'invito ad
+  affidarlo all'esecutore. Modelli e ragionamento si impostano a parte nel pannello e sul PC. Provato: la voce ha
+  provato Bash, è stata respinta, ha passato il compito, l'esecutore (Opus) l'ha fatto e la voce ha riassunto.
+- **Personalità** (`persona.md`): dà del tu, niente "signore", simpatica, ironica, dice la sua. Una conversazione
+  vecchia ne imita lo stile: dopo il cambio si riparte con "Nuova conversazione".
 - **Sostituto completo di Claude Code** (richiesta dell'utente, 2026-11-23: "non deve fare niente di meno"). Il
   Claude Code di Jarvis ha già skill, plugin, sotto-agenti, ricerca in rete e attività programmate come quello
   dell'app; mancavano gli strumenti che l'app aggiunge da sé. Ora:
-  - modello **Opus** e ragionamento **alto** come predefiniti (`--model`, `--effort`; si cambiano dal pannello:
-    Opus/alto risponde in ~20 s, Sonnet è più veloce);
+  - modello **Opus** e ragionamento **alto** per i compiti (vedi sopra);
   - **schermo** (`server/jarvis/schermo_mcp.py`, server MCP passato con `--mcp-config`): screenshot (anche di una
     zona), clic, trascina, scorri, scrivi, tasti, finestre. Il computer use ufficiale di Claude Code a riga di
     comando esiste solo su macOS e non in modalità `-p`, quindi è fatto in casa (mss + SendInput). Provato:

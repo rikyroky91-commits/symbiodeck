@@ -52,6 +52,7 @@ def test_descrivi_azione():
     assert descrivi_azione("Read", {"file_path": "C:\\a\\b\\nota.txt"}) == "Leggo nota.txt"
     assert descrivi_azione("Bash", {"command": "ls", "description": "Elenco file"}) == "Eseguo: Elenco file"
     assert descrivi_azione("mcp__gmail__send_email", {}).startswith("Uso gmail")
+    assert descrivi_azione("Agent", {"description": "x"}).startswith("Passo")
     assert descrivi_azione("ToolSearch", {"query": "x"}) is None
 
 
@@ -112,6 +113,18 @@ def test_guardia_sovrascrittura():
         assert valuta("Write", {"file_path": f.name + ".nuovo", "content": "x"}) is None
     finally:
         os.remove(f.name)
+
+
+def test_voce_delega_all_esecutore():
+    from jarvis.guardia import solo_esecutore
+    os.environ["JARVIS_DELEGA"] = "1"
+    try:
+        assert solo_esecutore({"tool_name": "PowerShell"}) is not None           # la voce non lavora
+        assert solo_esecutore({"tool_name": "Agent"}) is None                    # ma può affidare il compito
+        assert solo_esecutore({"tool_name": "PowerShell", "agent_type": "esecutore"}) is None
+    finally:
+        del os.environ["JARVIS_DELEGA"]
+    assert solo_esecutore({"tool_name": "PowerShell"}) is None                   # fuori da Jarvis: nessun vincolo
 
 
 if __name__ == "__main__":

@@ -116,7 +116,7 @@ def descrivi_azione(nome, ingresso):
     if nome == "WebFetch":
         return "Leggo una pagina web"
     if nome in ("Task", "Agent"):
-        return f"Affido un compito: {_breve(i.get('description', ''), 50)}"
+        return f"Passo all'esecutore: {_breve(i.get('description', ''), 50)}"
     if nome.startswith("mcp__"):
         parti = nome.split("__")
         return f"Uso {parti[1] if len(parti) > 1 else nome}: {parti[-1].replace('_', ' ')}"

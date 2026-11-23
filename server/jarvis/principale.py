@@ -36,8 +36,10 @@ PORTA = 47802
 
 PREDEFINITE = {
     "attivo": True,
-    "modello_claude": "opus",      # opus | sonnet | haiku (opus: come Claude Code nell'app)
-    "effort": "high",              # low | medium | high | xhigh | max
+    "modello_voce": "sonnet",      # chi parla: risponde subito (opus | sonnet | haiku)
+    "effort_voce": "low",          # low | medium | high | xhigh | max
+    "modello_compiti": "opus",     # l'esecutore dei compiti veri (sotto-agente): come Claude Code nell'app
+    "effort_compiti": "high",
     "chrome": True,                # Claude in Chrome (--chrome): navigare e usare siti nel Chrome dell'utente
     "microfono": "tablet",         # tablet | pc
     "microfono_pc": "",
@@ -55,7 +57,8 @@ PREDEFINITE = {
     "claude_exe": "",
 }
 SCELTE = {
-    "modello_claude": ["opus", "sonnet", "haiku"], "effort": ["low", "medium", "high", "xhigh", "max"],
+    "modello_voce": ["opus", "sonnet", "haiku"], "modello_compiti": ["opus", "sonnet", "haiku"],
+    "effort_voce": ["low", "medium", "high", "xhigh", "max"], "effort_compiti": ["low", "medium", "high", "xhigh", "max"],
     "microfono": ["tablet", "pc"], "casse": ["tablet", "pc"], "conferme": ["irreversibili", "sempre", "mai"],
     "stt": MODELLI_STT, "voce": VOCI,
 }
@@ -79,6 +82,11 @@ def carica_impostazioni():
     imp = dict(PREDEFINITE)
     try:
         salvate = json.loads(CONFIG.read_text(encoding="utf-8"))
+        # impostazioni di prima della divisione voce/compiti
+        if "modello_claude" in salvate:
+            salvate.setdefault("modello_compiti", salvate["modello_claude"])
+        if "effort" in salvate:
+            salvate.setdefault("effort_compiti", salvate["effort"])
         imp.update({k: v for k, v in salvate.items() if k in PREDEFINITE})  # chiavi vecchie ignorate
     except (OSError, ValueError):
         pass
@@ -723,7 +731,7 @@ def main():
     srv = ServerUnico(("0.0.0.0", PORTA), Gestore)
     srv.jarvis = j
     j.avvia()
-    log("jarvis in ascolto sulla porta", PORTA, "- modello", j.imp["modello_claude"])
+    log("jarvis in ascolto sulla porta", PORTA, "- voce", j.imp["modello_voce"], "- compiti", j.imp["modello_compiti"])
     if "--scrivi" in sys.argv:
         testo = sys.argv[sys.argv.index("--scrivi") + 1]
         threading.Thread(target=srv.serve_forever, daemon=True).start()

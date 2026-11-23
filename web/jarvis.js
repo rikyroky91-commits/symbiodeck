@@ -150,7 +150,8 @@
     var micOk = imp.microfono === "pc" ? true : (tablet ? tablet.microfono : false);
     if (nativo && nativo.microfono && imp.microfono !== "pc" && !nativo.microfono()) { mic = "MIC: PERMESSO"; micOk = false; }
     chip("j-chip-mic", mic + (micOk ? " ✓" : " ✕"), micOk);
-    chip("j-chip-modo", "CLAUDE " + String(imp.modello_claude || "").toUpperCase());
+    chip("j-chip-modo", "VOCE " + String(imp.modello_voce || "").toUpperCase() + " · COMPITI " +
+      String(imp.modello_compiti || "").toUpperCase());
   }
   setInterval(function () {
     if (aperto && collegato) api("/jarvis/stato").then(function (s) { aggiornaChip(s.tablet); }, function () {});
@@ -313,10 +314,16 @@
     c.innerHTML = "";
     gruppo(c, "Generale");
     c.appendChild(riga("Jarvis attivo", "spento: non ascolta e non risponde", interruttore("attivo")));
-    c.appendChild(riga("Modello di Claude", "Opus: il più capace, come Claude Code nell'app · Sonnet: più veloce",
-      scelte("modello_claude", [["opus", "Opus"], ["sonnet", "Sonnet"], ["haiku", "Haiku"]])));
-    c.appendChild(riga("Ragionamento", "più alto: più accurato ma più lento a rispondere",
-      scelte("effort", [["low", "Basso"], ["medium", "Medio"], ["high", "Alto"], ["xhigh", "Molto"], ["max", "Max"]])));
+    var MODELLI = [["opus", "Opus"], ["sonnet", "Sonnet"], ["haiku", "Haiku"]];
+    var LIVELLI = [["low", "Basso"], ["medium", "Medio"], ["high", "Alto"], ["xhigh", "Molto"], ["max", "Max"]];
+    gruppo(c, "Voce: chi ti risponde");
+    c.appendChild(riga("Modello della voce", "risponde subito e conversa · Sonnet o Haiku per la velocità",
+      scelte("modello_voce", MODELLI)));
+    c.appendChild(riga("Ragionamento della voce", "basso: risposte più rapide", scelte("effort_voce", LIVELLI)));
+    gruppo(c, "Compiti: chi lavora sul PC");
+    c.appendChild(riga("Modello dei compiti", "esegue tutto sul PC · Opus: come Claude Code nell'app",
+      scelte("modello_compiti", MODELLI)));
+    c.appendChild(riga("Ragionamento dei compiti", "più alto: più accurato ma più lento", scelte("effort_compiti", LIVELLI)));
     c.appendChild(riga("Claude in Chrome", "naviga e usa i siti nel tuo Chrome", interruttore("chrome")));
     c.appendChild(riga("Conferme", "quando chiedere \"Confermi?\" prima di agire",
       scelte("conferme", [["irreversibili", "Irreversibili"], ["sempre", "Sempre"], ["mai", "Mai"]])));

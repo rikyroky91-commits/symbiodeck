@@ -122,10 +122,34 @@ def _leggi_ingresso():
         pezzi.append(p)
 
 
+# strumenti che la voce (sessione principale) può usare da sola: tutto il resto lo fa l'esecutore
+_DELLA_VOCE = {"Agent", "Task", "ToolSearch", "TodoWrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+               "TaskStop", "SendMessage", "ListAgents"}
+
+
+def solo_esecutore(dati):
+    """Con JARVIS_DELEGA=1 la voce non usa strumenti: i compiti li fa il sotto-agente "esecutore", con il suo
+    modello e il suo livello di ragionamento (impostati a parte nel pannello). Restituisce il rifiuto o None."""
+    if os.environ.get("JARVIS_DELEGA") != "1" or dati.get("agent_type") or dati.get("agent_id"):
+        return None
+    if dati.get("tool_name", "") in _DELLA_VOCE:
+        return None
+    return {"hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "permissionDecision": "deny",
+        "permissionDecisionReason": ("Tu sei la voce: non usare strumenti. Affida questo compito al sotto-agente "
+                                     "esecutore (strumento Agent, subagent_type \"esecutore\") con istruzioni "
+                                     "complete, e intanto di' una frase breve all'utente."),
+    }}
+
+
 def main():
     try:
         dati = json.loads(_leggi_ingresso().decode("utf-8") or "{}")
     except (ValueError, OSError):
+        return
+    rifiuto = solo_esecutore(dati)
+    if rifiuto:
+        os.write(1, json.dumps(rifiuto, ensure_ascii=False).encode("utf-8"))
         return
     descrizione = valuta(dati.get("tool_name", ""), dati.get("tool_input") or {}, _livello())
     if not descrizione:

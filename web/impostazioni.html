@@ -104,9 +104,17 @@
     <h2>🎙️ Jarvis <small>comandi vocali: "Ehi Jarvis" vicino al tablet · tutte le impostazioni anche sul tablet (scorri dal bordo sinistro)</small></h2>
     <p class="nota" id="j-stato">…</p>
     <div class="barra">
-      <span>Modello di Claude:</span>
-      <button data-modello="opus">Opus (il più capace)</button><button data-modello="sonnet">Sonnet (veloce)</button><button data-modello="haiku">Haiku (rapidissimo)</button>
+      <span style="min-width:150px">Voce (chi risponde):</span>
+      <button data-chiave="modello_voce" data-valore="opus">Opus</button><button data-chiave="modello_voce" data-valore="sonnet">Sonnet</button><button data-chiave="modello_voce" data-valore="haiku">Haiku</button>
+      <span>ragionamento</span>
+      <button data-chiave="effort_voce" data-valore="low">basso</button><button data-chiave="effort_voce" data-valore="medium">medio</button><button data-chiave="effort_voce" data-valore="high">alto</button>
       <button id="j-prova">▶ Prova la voce</button>
+    </div>
+    <div class="barra">
+      <span style="min-width:150px">Compiti (chi lavora):</span>
+      <button data-chiave="modello_compiti" data-valore="opus">Opus</button><button data-chiave="modello_compiti" data-valore="sonnet">Sonnet</button><button data-chiave="modello_compiti" data-valore="haiku">Haiku</button>
+      <span>ragionamento</span>
+      <button data-chiave="effort_compiti" data-valore="medium">medio</button><button data-chiave="effort_compiti" data-valore="high">alto</button><button data-chiave="effort_compiti" data-valore="xhigh">molto</button><button data-chiave="effort_compiti" data-valore="max">max</button>
     </div>
     <h2 style="margin-top:14px">Conversazioni di Jarvis <small>aprile nell'app Claude per continuarle qui sul PC</small></h2>
     <div id="j-conversazioni"></div>
@@ -372,14 +380,14 @@
     var i = s.impostazioni;
     $("j-stato").textContent = "Stato: " + s.stato + " · microfono " + i.microfono + " · casse " + i.casse +
       " · Claude Code " + (s.claude ? "trovato" : "NON trovato");
-    Array.prototype.forEach.call(document.querySelectorAll("[data-modello]"), function (b) {
-      b.className = b.getAttribute("data-modello") === i.modello_claude ? "primario" : "";
+    Array.prototype.forEach.call(document.querySelectorAll("[data-chiave]"), function (b) {
+      b.className = i[b.getAttribute("data-chiave")] === b.getAttribute("data-valore") ? "primario" : "";
     });
   }
   function errore() { $("j-stato").textContent = "Jarvis non è in esecuzione (installa requirements-jarvis.txt e riavvia il pannello)."; }
   function cambia(d) { api("/jarvis/impostazioni", d).then(mostra, function (e) { $("j-stato").textContent = e.message; }); }
-  Array.prototype.forEach.call(document.querySelectorAll("[data-modello]"), function (b) {
-    b.onclick = function () { cambia({ modello_claude: b.getAttribute("data-modello") }); };
+  Array.prototype.forEach.call(document.querySelectorAll("[data-chiave]"), function (b) {
+    b.onclick = function () { var d = {}; d[b.getAttribute("data-chiave")] = b.getAttribute("data-valore"); cambia(d); };
   });
   $("j-prova").onclick = function () { api("/jarvis/prova-voce", {}).catch(errore); };
   function conversazioni() {

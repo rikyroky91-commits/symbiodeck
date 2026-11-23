@@ -80,18 +80,26 @@ class Esecutore:
         exe = trova_claude(self.imp.get("claude_exe", ""))
         if not exe:
             raise RuntimeError("Claude Code non trovato sul PC")
-        modello = self.imp.get("modello_claude") or "opus"
+        # due modelli: la voce (sessione principale, risponde subito) e l'esecutore (sotto-agente per i compiti)
+        esecutore = {"esecutore": {
+            "description": "Esegue sul PC qualsiasi compito vero (file, programmi, configurazioni, codice, ricerche, "
+                           "schermo, browser) e riporta l'esito. Usalo per tutto ciò che va oltre un comando singolo.",
+            "prompt": (QUI / "esecutore.md").read_text(encoding="utf-8"),
+            "model": self.imp.get("modello_compiti") or "opus",
+            "effort": self.imp.get("effort_compiti") or "high",
+        }}
         cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--permission-mode", "bypassPermissions",
                "--append-system-prompt-file", str(QUI / "persona.md"),
                "--settings", str(self._file_impostazioni()), "--mcp-config", str(self._file_mcp()),
-               "--model", modello, "--effort", self.imp.get("effort") or "high"]
+               "--agents", json.dumps(esecutore, ensure_ascii=False),
+               "--model", self.imp.get("modello_voce") or "sonnet", "--effort", self.imp.get("effort_voce") or "low"]
         if self.imp.get("chrome", True):
             cmd.append("--chrome")
         if self.sessione:
             cmd += ["--resume", self.sessione]
         env = dict(os.environ, JARVIS_PORTA=str(self.porta), JARVIS_INTERNO=self.chiave_interna,
-                   JARVIS_CONFIG=str(self.file_config))
+                   JARVIS_CONFIG=str(self.file_config), JARVIS_DELEGA="1")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      cwd=str(Path.home()), env=env, creationflags=SENZA_FINESTRA)
         self._modello_avviato = self._firma()
@@ -99,7 +107,8 @@ class Esecutore:
         threading.Thread(target=self._scarta_errori, args=(self.proc,), daemon=True).start()
 
     def _firma(self):
-        return (self.imp.get("modello_claude"), self.imp.get("effort"), self.imp.get("chrome", True))
+        return tuple(self.imp.get(k) for k in ("modello_voce", "effort_voce", "modello_compiti", "effort_compiti",
+                                                "chrome"))
 
     def _vivo(self):
         return self.proc is not None and self.proc.poll() is None
@@ -239,8 +248,7 @@ class Esecutore:
                     and not d.get("parent_tool_use_id"):
                 self._su_testo(ev["delta"].get("text", ""))
         elif tipo == "assistant":
-            if d.get("parent_tool_use_id"):
-                return  # strumenti dei sotto-agenti: non si annunciano
+            # anche gli strumenti dell'esecutore (sotto-agente) compaiono sul pannello: si vede cosa sta facendo
             for blocco in (d.get("message") or {}).get("content") or []:
                 if blocco.get("type") == "tool_use":
                     descrizione = descrivi_azione(blocco.get("name", ""), blocco.get("input"))
@@ -259,7 +267,8 @@ def prova(testo):
     fatto = threading.Event()
     dati = QUI.parent / "jarvis-dati" / "prova"  # le prove non toccano la conversazione di Jarvis
     dati.mkdir(parents=True, exist_ok=True)
-    e = Esecutore(dati, {"modello_claude": "sonnet", "effort": "low"}, 47802, "", QUI.parent / "jarvis.json")
+    e = Esecutore(dati, {"modello_voce": "sonnet", "effort_voce": "low", "modello_compiti": "sonnet",
+                         "effort_compiti": "low"}, 47802, "", QUI.parent / "jarvis.json")
     t0 = time.time()
     e.ascoltatori(lambda p: print(p, end="", flush=True),
                   lambda a: print(f"\n[{time.time() - t0:.1f}s] {a}", flush=True),
