@@ -181,14 +181,15 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   - `guardia.py`: hook PreToolUse di Claude Code. Azioni irreversibili (cancellare, spegnere, registro,
     disinstallare, `git push`, inviare messaggi…) → Jarvis chiede "Confermi?" a voce (o Sì/No sul tablet), 45 s
     senza risposta = no. Livelli: irreversibili (predefinito), sempre, mai;
-  - `voce_gemini.py`: modalità Gemini (Gemini Live parla, Claude Code esegue con lo strumento `esegui_sul_pc`).
-    Serve una chiave di Google AI Studio: **l'abbonamento Gemini non include l'API**.
+- **Solo Claude** (deciso il 2026-11-23): la modalità Gemini Live è stata tolta. L'abbonamento Google AI Pro alza i
+  limiti dell'app Gemini, di AI Studio sul web e di Gemini CLI, ma non dà quota API a un programma: servirebbe una
+  chiave a parte, gratuita con limiti o a pagamento. Jarvis usa solo Claude Code con l'abbonamento Claude.
 - **Tablet** (`JarvisServizio.java`): servizio in primo piano (notifica "Jarvis") nel processo persistente; manda il
   microfono al PC (PCM 16 kHz) e suona la voce che arriva (trame `[tipo][lunghezza][dati]`, vedi `trame.py`).
   Wakelock parziale e Wi-Fi ad alte prestazioni mentre il PC è collegato, anche a batteria; fuori da Doze
   (`allow-in-power-save` in `privapp-permissions-pannello.xml` e `dumpsys deviceidle whitelist`). Permesso del
   microfono concesso dall'installazione (`pm grant`).
-- Impostazioni in `server/jarvis.json` (fuori da git: contiene la chiave Gemini), registro in `server/jarvis.log`.
+- Impostazioni in `server/jarvis.json` (fuori da git), registro in `server/jarvis.log`.
   Si disattiva del tutto con `"jarvis": false` in `config.json`. Dipendenze: `requirements-jarvis.txt` (~3 GB con
   i modelli; `installa.ps1` lo chiede). Claude Code deve aver fatto l'accesso: `claude auth login`.
 - Il microfono predefinito del PC di casa (Virtual Desktop) si blocca all'apertura: i dispositivi del PC si aprono
@@ -197,8 +198,8 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   conferma della guardia con un file di prova sul Desktop (no → il file resta, sì → cancellato); voce dal tablet;
   microfono del tablet collegato via USB; riconoscimento italiano su GPU e CPU; parola chiave con voci sintetiche;
   pannello Jarvis in anteprima 960x600. **Non ancora provato**: parola chiave detta da una persona vera al tablet,
-  tablet a schermo spento e a batteria per ore (Doze), Wi-Fi invece dell'USB, modalità Gemini (manca la chiave),
-  casse e microfono del PC.
+  tablet a schermo spento e a batteria per ore (Doze), casse e microfono del PC. Dopo un riavvio del tablet si è
+  ricollegato a Jarvis da solo in Wi-Fi (microfono compreso).
 
 ## Abbinamento automatico (APK generico, dal 2026-11-15)
 - `python android/costruisci.py --generico` crea in `android/build-generico/` un APK senza IP né chiave: è quello

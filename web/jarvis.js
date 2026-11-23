@@ -22,7 +22,7 @@
       '<div class="j-logo">JARVIS<small>ASSISTENTE VOCALE DEL PC</small></div>' +
       '<span class="j-chip" id="j-chip-pc">PC</span>' +
       '<span class="j-chip" id="j-chip-mic">MIC</span>' +
-      '<span class="j-chip" id="j-chip-modo">CLAUDE</span>' +
+      '<span class="j-chip" id="j-chip-modo">CLAUDE CODE</span>' +
       '<span class="j-spazio"></span>' +
       '<button class="j-btn j-chiudi" id="j-chiudi" aria-label="Chiudi">✕</button>' +
     '</div>' +
@@ -149,7 +149,7 @@
     var micOk = imp.microfono === "pc" ? true : (tablet ? tablet.microfono : false);
     if (nativo && nativo.microfono && imp.microfono !== "pc" && !nativo.microfono()) { mic = "MIC: PERMESSO"; micOk = false; }
     chip("j-chip-mic", mic + (micOk ? " ✓" : " ✕"), micOk);
-    chip("j-chip-modo", imp.modalita === "gemini" ? "GEMINI + CLAUDE" : "CLAUDE");
+    chip("j-chip-modo", "CLAUDE " + String(imp.modello_claude || "").toUpperCase());
   }
   setInterval(function () {
     if (aperto && collegato) api("/jarvis/stato").then(function (s) { aggiornaChip(s.tablet); }, function () {});
@@ -221,7 +221,6 @@
 
   var VOCI = [["it-IT-DiegoNeural", "Diego (uomo)"], ["it-IT-GiuseppeMultilingualNeural", "Giuseppe (uomo)"],
     ["it-IT-ElsaNeural", "Elsa (donna)"], ["it-IT-IsabellaNeural", "Isabella (donna)"]];
-  var VOCI_GEMINI = ["Charon", "Orus", "Fenrir", "Puck", "Kore", "Aoede", "Zephyr", "Leda"];
 
   function riga(titolo, nota, controllo) {
     var r = document.createElement("div");
@@ -293,8 +292,6 @@
     c.innerHTML = "";
     gruppo(c, "Generale");
     c.appendChild(riga("Jarvis attivo", "spento: non ascolta e non risponde", interruttore("attivo")));
-    c.appendChild(riga("Modalità", imp.modalita === "gemini" ? "Gemini conversa, Claude Code esegue sul PC" :
-      "Claude Code ascolta, esegue e risponde", scelte("modalita", [["claude", "Claude"], ["gemini", "Gemini"]])));
     c.appendChild(riga("Modello di Claude", "Sonnet: veloce · Opus: il più capace · Haiku: rapidissimo",
       scelte("modello_claude", [["sonnet", "Sonnet"], ["opus", "Opus"], ["haiku", "Haiku"]])));
     c.appendChild(riga("Conferme", "quando chiedere \"Confermi?\" prima di agire",
@@ -323,7 +320,7 @@
       cursore("seguito", 0, 20, 1, function (v) { return v + " s"; })));
     c.appendChild(riga("Accendi lo schermo", "quando lo chiami a tablet spento", interruttore("accendi_schermo")));
 
-    gruppo(c, imp.modalita === "gemini" ? "Voce (modalità Claude)" : "Voce");
+    gruppo(c, "Voce");
     c.appendChild(riga("Voce", "", tendina("voce", VOCI)));
     c.appendChild(riga("Velocità", "", cursore("velocita", -20, 40, 5, function (v) { return (v > 0 ? "+" : "") + v + "%"; })));
     c.appendChild(riga("Tono", "", cursore("tono", -15, 15, 1, function (v) { return (v > 0 ? "+" : "") + v + " Hz"; })));
@@ -331,16 +328,6 @@
     c.appendChild(riga("Riconoscimento vocale", "auto: sulla scheda video se c'è",
       tendina("stt", [["auto", "Automatico"], ["small", "Piccolo (veloce)"], ["medium", "Medio"],
         ["large-v3-turbo", "Grande turbo"], ["large-v3", "Grande (lento)"]])));
-
-    gruppo(c, "Gemini");
-    var chiave = document.createElement("div");
-    chiave.style.display = "flex"; chiave.style.gap = "6px";
-    var campo = document.createElement("input");
-    campo.type = "password"; campo.placeholder = imp.gemini_chiave || "incolla la chiave";
-    chiave.appendChild(campo);
-    chiave.appendChild(pulsante("Salva", function () { if (campo.value.trim()) cambia("gemini_chiave", campo.value.trim()); }));
-    c.appendChild(riga("Chiave API", "gratuita da aistudio.google.com (l'abbonamento Gemini non la include)", chiave));
-    c.appendChild(riga("Voce di Gemini", "", tendina("gemini_voce", VOCI_GEMINI.map(function (v) { return [v, v]; }))));
 
     gruppo(c, "Conversazione");
     c.appendChild(riga("Ricomincia da capo", "Jarvis dimentica la conversazione in corso",

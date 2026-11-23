@@ -36,7 +36,6 @@ PORTA = 47802
 
 PREDEFINITE = {
     "attivo": True,
-    "modalita": "claude",          # claude | gemini
     "modello_claude": "sonnet",    # sonnet | opus | haiku
     "microfono": "tablet",         # tablet | pc
     "microfono_pc": "",
@@ -50,14 +49,11 @@ PREDEFINITE = {
     "seguito": 6,                  # secondi in cui ascolta ancora dopo aver risposto
     "conferme": "irreversibili",   # irreversibili | sempre | mai
     "stt": "auto",
-    "gemini_chiave": "",
-    "gemini_modello": "",
-    "gemini_voce": "Charon",
     "accendi_schermo": False,
     "claude_exe": "",
 }
 SCELTE = {
-    "modalita": ["claude", "gemini"], "modello_claude": ["sonnet", "opus", "haiku"],
+    "modello_claude": ["sonnet", "opus", "haiku"],
     "microfono": ["tablet", "pc"], "casse": ["tablet", "pc"], "conferme": ["irreversibili", "sempre", "mai"],
     "stt": MODELLI_STT, "voce": VOCI,
 }
@@ -80,7 +76,8 @@ def log(*parti):
 def carica_impostazioni():
     imp = dict(PREDEFINITE)
     try:
-        imp.update(json.loads(CONFIG.read_text(encoding="utf-8")))
+        salvate = json.loads(CONFIG.read_text(encoding="utf-8"))
+        imp.update({k: v for k, v in salvate.items() if k in PREDEFINITE})  # chiavi vecchie ignorate
     except (OSError, ValueError):
         pass
     return imp
@@ -118,13 +115,10 @@ class Jarvis:
         self.conferma = None       # {"id", "descrizione", "esito": Event, "ok"}
         self.livello = 0.0
         self.parola = None
-        self.gemini = None
         self.risposta = ""
         self.ultima_azione = ""
         self.fine_turno = threading.Event()
         self.domanda = False       # l'ultima frase detta era una domanda
-        self.silenzioso = None     # modalità Gemini: raccoglie l'esito di Claude invece di dirlo
-        self.blocco_silenzioso = threading.Lock()
 
     # ------------------------------------------------------------ eventi per il pannello
     def evento(self, **d):
@@ -148,7 +142,6 @@ class Jarvis:
 
     def impostazioni_pubbliche(self):
         imp = dict(self.imp)
-        imp["gemini_chiave"] = "••••" + imp["gemini_chiave"][-4:] if imp.get("gemini_chiave") else ""
         return imp
 
     # ------------------------------------------------------------ impostazioni
@@ -158,8 +151,6 @@ class Jarvis:
                 continue
             if k in SCELTE and v not in SCELTE[k]:
                 raise ValueError(f"valore non valido per {k}: {v}")
-            if k == "gemini_chiave" and str(v).startswith("••••"):
-                continue  # il pannello rimanda la chiave mascherata: non cambia
             tipo = type(PREDEFINITE[k])
             self.imp[k] = tipo(v) if tipo is not bool else bool(v)
         self.imp["volume"] = max(0, min(150, int(self.imp["volume"])))
@@ -261,11 +252,6 @@ class Jarvis:
                 vad.reset_states()
                 continue
 
-            # modalità Gemini con sessione aperta: l'audio va a Gemini (che ha il suo rilevamento del parlato)
-            if self.gemini and self.gemini.aperta() and self.stato != "conferma":
-                if not self.uscita.parla:
-                    self.gemini.audio(blocco)
-                continue
             if self.stato not in ("ascolto", "seguito", "conferma"):
                 continue
             if self.uscita.parla:
@@ -307,11 +293,6 @@ class Jarvis:
         threading.Thread(target=self.uscita.riproduci, args=(audio.suono(nome),), daemon=True).start()
 
     def _attivato(self):
-        if self.imp["modalita"] == "gemini" and self.gemini:
-            self.uscita.taci()
-            self.uscita.riprendi()
-            self.gemini.attiva()
-            return
         if self.conferma:
             return
         if self.stato == "parlo" or self.claude.occupato:
@@ -363,8 +344,6 @@ class Jarvis:
 
     def _claude_testo(self, pezzo):
         self.risposta += pezzo
-        if self.silenzioso:
-            return  # modalità Gemini: il testo torna a Gemini, che lo dice con la sua voce
         self.evento(jarvis_pezzo=pezzo)
         for f in self.frasi.aggiungi(pezzo):
             self.da_dire.put(f)
@@ -372,17 +351,11 @@ class Jarvis:
     def _claude_azione(self, descrizione):
         self.ultima_azione = descrizione
         self.evento(azione=descrizione)
-        if self.silenzioso:
-            return
         # la frase in corso prima dello strumento si dice subito ("Do un'occhiata.")
         for f in self.frasi.fine():
             self.da_dire.put(f)
 
     def _claude_fine(self, risultato, errore):
-        if self.silenzioso:
-            self.silenzioso["esito"] = (errore and "Errore: " + errore) or self.risposta.strip() or risultato
-            self.silenzioso["fatto"].set()
-            return
         for f in self.frasi.fine():
             self.da_dire.put(f)
         if errore:
@@ -394,25 +367,6 @@ class Jarvis:
         # il testo è già arrivato a pezzi (jarvis_pezzo): si manda solo la fine del turno
         self.evento(fine=True) if self.risposta.strip() else self.evento(jarvis=risultato or "Fatto.", fine=True)
         self.da_dire.put(None)  # segnale di fine turno
-
-    def esegui_silenzioso(self, richiesta, attesa=600):
-        """Modalità Gemini: Claude Code esegue e restituisce l'esito come testo, senza parlare."""
-        with self.blocco_silenzioso:
-            self.risposta, self.ultima_azione = "", ""
-            self.silenzioso = {"fatto": threading.Event(), "esito": ""}
-            stato_prima = self.stato
-            self.imposta_stato("lavoro")
-            try:
-                self.claude.chiedi("[Richiesta passata dall'assistente vocale Gemini: esegui e rispondi con un "
-                                   "resoconto breve e fattuale, senza formattazione.]\n" + richiesta)
-                if not self.silenzioso["fatto"].wait(attesa):
-                    self.claude.interrompi()
-                    return "Il compito sta richiedendo troppo tempo: interrotto."
-                return self.silenzioso["esito"] or "Fatto."
-            finally:
-                self.silenzioso = None
-                if self.stato == "lavoro":
-                    self.imposta_stato("seguito" if stato_prima != "spento" else stato_prima)
 
     def di(self, testo):
         self.evento(jarvis=testo)
@@ -455,7 +409,6 @@ class Jarvis:
         c = {"id": secrets.token_hex(4), "descrizione": descrizione, "esito": threading.Event(), "ok": False}
         self.conferma = c
         self.evento(conferma={"id": c["id"], "descrizione": descrizione})
-        # anche in modalità Gemini la domanda la fa Jarvis con la sua voce: più sicuro di passarla a Gemini
         self.uscita.riprendi()
         # a voce solo cosa (senza il comando: illeggibile), il dettaglio è sul pannello
         self.da_dire.put(f"Signore, devo {descrizione.split(':')[0]}. Confermi?")
@@ -509,8 +462,6 @@ class Jarvis:
 
     def nuova_conversazione(self):
         self.claude.nuova_conversazione()
-        if self.gemini:
-            self.gemini.chiudi()
         self.evento(nuova=True)
 
     def prova_voce(self):
@@ -522,11 +473,6 @@ class Jarvis:
         for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce"):
             threading.Thread(target=self._protetto, args=(getattr(self, nome),), daemon=True, name=nome).start()
         threading.Thread(target=self._prepara_stt, daemon=True).start()
-        try:
-            from .voce_gemini import Gemini
-            self.gemini = Gemini(self, log)
-        except Exception as e:
-            log("modalità Gemini non disponibile:", repr(e))
 
     def _protetto(self, f):
         while True:
@@ -768,7 +714,7 @@ def main():
     srv = ServerUnico(("0.0.0.0", PORTA), Gestore)
     srv.jarvis = j
     j.avvia()
-    log("jarvis in ascolto sulla porta", PORTA, "- modalità", j.imp["modalita"])
+    log("jarvis in ascolto sulla porta", PORTA, "- modello", j.imp["modello_claude"])
     if "--scrivi" in sys.argv:
         testo = sys.argv[sys.argv.index("--scrivi") + 1]
         threading.Thread(target=srv.serve_forever, daemon=True).start()
