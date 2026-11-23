@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 from jarvis.guardia import valuta  # noqa: E402
-from jarvis.trame import (TRAMA_AUDIO, TRAMA_COMANDO, Frasi, descrivi_azione, leggi_trame,  # noqa: E402
-                          pulisci_per_voce, si_o_no, trama)
+from jarvis.trame import (TRAMA_AUDIO, TRAMA_COMANDO, Frasi, Interruzione, descrivi_azione,  # noqa: E402
+                          leggi_trame, pulisci_per_voce, si_o_no, trama)
 
 
 # ------------------------------------------------------------ trame audio
@@ -141,6 +141,22 @@ def test_voce_delega_all_esecutore():
     finally:
         del os.environ["JARVIS_DELEGA"]
     assert solo_esecutore({"tool_name": "PowerShell"}) is None                   # fuori da Jarvis: nessun vincolo
+
+
+def test_interruzione_ignora_la_sua_eco():
+    i = Interruzione()
+    for n in range(200):                     # Jarvis parla, la sua voce rientra al 10-25%
+        rif = 0.08 + 0.06 * (n % 7) / 7
+        assert not i.passo(0.95, rif * (0.10 + 0.15 * (n % 3) / 3), rif, 1.6), n
+
+
+def test_interruzione_sente_chi_gli_parla_sopra():
+    i = Interruzione()
+    for n in range(30):
+        i.passo(0.95, 0.012, 0.1, 1.6)       # impara l'eco
+    scatti = [i.passo(0.98, 0.07, 0.1, 1.6) for _ in range(10)]   # una persona più forte dell'eco
+    assert True in scatti and scatti.index(True) <= 6
+    assert not Interruzione().passo(0.99, 0.5, 0.0, 1.6)          # la sua voce non è ancora partita
 
 
 if __name__ == "__main__":

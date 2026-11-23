@@ -9,6 +9,8 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFormat;
+import android.media.AudioManager;
+import android.media.audiofx.AcousticEchoCanceler;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
@@ -47,6 +49,9 @@ public class JarvisServizio extends Service {
     private volatile boolean vivo = true;
     private volatile boolean microfonoVoluto = false;
     private volatile boolean accendiSchermo = false;
+    // cancellazione dell'eco (come il vivavoce): il microfono non sente la voce di Jarvis che esce dalle casse
+    // del tablet, così lo si può interrompere parlandogli sopra
+    private volatile boolean eco = true;
     private volatile String base = null;       // http://host:47802 del PC che risponde
     private volatile String token = "";
     private Thread altoparlante, microfono;
@@ -175,6 +180,10 @@ public class JarvisServizio extends Service {
         try {
             JSONObject o = new JSONObject(json);
             if (o.has("accendi_schermo")) accendiSchermo = o.getBoolean("accendi_schermo");
+            if (o.has("eco") && o.getBoolean("eco") != eco) {
+                eco = o.getBoolean("eco");
+                fermaTraccia();   // la voce riparte con il tipo di flusso giusto; il microfono si riapre da solo
+            }
             if (o.has("microfono")) {
                 microfonoVoluto = o.getBoolean("microfono");
                 if (microfonoVoluto) avviaMicrofono();
@@ -201,7 +210,7 @@ public class JarvisServizio extends Service {
             int min = AudioTrack.getMinBufferSize(FREQ_OUT, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
             traccia = new AudioTrack.Builder()
                     .setAudioAttributes(new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                            .setUsage(eco ? AudioAttributes.USAGE_VOICE_COMMUNICATION : AudioAttributes.USAGE_ASSISTANT)
                             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
                     .setAudioFormat(new AudioFormat.Builder().setSampleRate(FREQ_OUT)
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
@@ -251,12 +260,28 @@ public class JarvisServizio extends Service {
 
     private void inviaMicrofono(String indirizzo, String t) throws IOException {
         int min = AudioRecord.getMinBufferSize(FREQ_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-        AudioRecord rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, FREQ_IN,
+        final boolean conEco = eco;
+        AudioManager am = (AudioManager) getSystemService(AUDIO_SERVICE);
+        if (conEco) {
+            // modalità "chiamata": Android sottrae dal microfono quello che esce dalle casse
+            am.setMode(AudioManager.MODE_IN_COMMUNICATION);
+            am.setSpeakerphoneOn(true);
+        }
+        AudioRecord rec = new AudioRecord(conEco ? MediaRecorder.AudioSource.VOICE_COMMUNICATION
+                : MediaRecorder.AudioSource.VOICE_RECOGNITION, FREQ_IN,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, 2560 * 4));
+        AcousticEchoCanceler aec = null;
+        if (conEco && AcousticEchoCanceler.isAvailable()) {
+            aec = AcousticEchoCanceler.create(rec.getAudioSessionId());
+            if (aec != null) aec.setEnabled(true);
+        }
+        boolean aecAttivo = aec != null && aec.getEnabled();
+        Log.i(TAG, "microfono: eco " + (conEco ? "on" : "off") + ", AEC " + (aecAttivo ? "attivo" : "non disponibile"));
         HttpURLConnection c = null;
         try {
             rec.startRecording();
-            c = (HttpURLConnection) new URL(indirizzo + "/jarvis/microfono?t=" + Uri.encode(t)).openConnection();
+            c = (HttpURLConnection) new URL(indirizzo + "/jarvis/microfono?t=" + Uri.encode(t)
+                    + "&aec=" + (aecAttivo ? 1 : 0) + "&eco=" + (conEco ? 1 : 0)).openConnection();
             c.setConnectTimeout(3000);
             c.setDoOutput(true);
             c.setRequestMethod("POST");
@@ -265,7 +290,7 @@ public class JarvisServizio extends Service {
             OutputStream out = c.getOutputStream();
             byte[] buf = new byte[2560];   // 80 ms
             Log.i(TAG, "microfono collegato a Jarvis");
-            while (vivo && microfonoVoluto && indirizzo.equals(base)) {
+            while (vivo && microfonoVoluto && indirizzo.equals(base) && conEco == eco) {
                 int n = rec.read(buf, 0, buf.length);
                 if (n < 0) throw new IOException("AudioRecord: " + n);
                 if (n > 0) { out.write(buf, 0, n); out.flush(); }
@@ -275,7 +300,9 @@ public class JarvisServizio extends Service {
             while (in.read() >= 0) { /* risposta finale del PC */ }
         } finally {
             try { rec.stop(); } catch (Exception e) { /* non partito */ }
+            if (aec != null) aec.release();
             rec.release();
+            if (conEco) am.setMode(AudioManager.MODE_NORMAL);
             if (c != null) c.disconnect();
             Log.i(TAG, "microfono fermato");
         }

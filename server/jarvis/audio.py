@@ -145,6 +145,7 @@ class Tablet:
         self.comandi = {}
         self.ingresso = Blocchi(su_blocco)
         self.ultimo_microfono = 0.0
+        self.aec = False   # il tablet ha la cancellazione dell'eco attiva
         self.ultimo_altoparlante = 0.0
 
     # -- uscita
@@ -215,6 +216,13 @@ class Uscita:
         self.volume = 1.0
         self.interrotta = threading.Event()
         self.parla = False
+        self.livelli = []   # (ora, volume) dei pezzi mandati alle casse: serve a riconoscere l'eco
+
+    def livello_uscita(self, finestra=1.0):
+        """Il volume più alto di quello che è uscito dalle casse nell'ultimo secondo (copre il ritardo dell'eco)."""
+        ora = time.monotonic()
+        recenti = [v for t, v in self.livelli if ora - t <= finestra]
+        return max(recenti) if recenti else 0.0
 
     def _destinazione(self):
         return self.tablet if self.dove == "tablet" else self.casse_pc
@@ -235,6 +243,8 @@ class Uscita:
                     return False
                 pezzo = campioni[i:i + self.PEZZO]
                 dest.scrivi(pezzo.tobytes())
+                self.livelli.append((time.monotonic(), float(np.sqrt(np.mean((pezzo.astype(np.float32) / 32768) ** 2)))))
+                del self.livelli[:-30]
                 inviati += len(pezzo)
                 ritardo = inizio + inviati / FREQ_OUT - self.ANTICIPO - time.monotonic()
                 if ritardo > 0:

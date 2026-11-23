@@ -25,7 +25,7 @@ import numpy as np
 
 from . import audio
 from .esecutore import Esecutore, trova_claude
-from .trame import Frasi, si_o_no
+from .trame import Frasi, Interruzione, si_o_no
 from .voce_claude import MODELLI_STT, VOCI, Sintesi, Trascrittore
 
 SERVER = Path(__file__).resolve().parent.parent
@@ -55,6 +55,10 @@ PREDEFINITE = {
     "conferme": "irreversibili",   # irreversibili | sempre | mai
     "stt": "auto",
     "accendi_schermo": False,
+    "interrompibile": True,        # mentre parla continua ad ascoltare: se gli parli sopra si ferma
+    "eco": True,                   # cancellazione dell'eco sul tablet (modalità "chiamata" di Android)
+    "consegna_app": True,          # conversazione finita (ferma da N minuti) -> compare nell'app Claude
+    "consegna_dopo": 10,           # minuti di inattività prima di consegnarla
     "aggiornamenti": True,         # mentre l'esecutore lavora in silenzio, ogni tanto dice a che punto è
     "aggiornamenti_ogni": 30,      # secondi di silenzio prima di un aggiornamento
     "claude_exe": "",
@@ -136,6 +140,10 @@ class Jarvis:
         self.azioni = []           # (ora, descrizione) delle azioni del turno in corso
         self.fine_parlato = 0.0    # quando Jarvis ha smesso di parlare l'ultima volta
         self.detti = []            # aggiornamenti già detti in questo turno
+        self.gen_voce = 0          # cresce a ogni interruzione: le frasi già pronte di prima si buttano
+        self.scarta = False        # turno interrotto: il resto della risposta di Claude non si dice
+        self.pronte = queue.Queue(maxsize=2)
+        self.ultima_attivita = time.time()  # ultima richiesta o parola chiave
 
     # ------------------------------------------------------------ eventi per il pannello
     def evento(self, **d):
@@ -182,7 +190,7 @@ class Jarvis:
     def _applica(self):
         self.uscita.dove = self.imp["casse"]
         self.uscita.volume = self.imp["volume"] / 100
-        self.tablet.comando(accendi_schermo=self.imp["accendi_schermo"])
+        self.tablet.comando(accendi_schermo=self.imp["accendi_schermo"], eco=self.imp["eco"])
         if not self.imp["attivo"]:
             self.imposta_stato("spento")
         elif self.stato == "spento":
@@ -244,6 +252,7 @@ class Jarvis:
         vad = VAD()
         frase, parlato, silenzio, inizio_ascolto, ultimo_livello = [], False, 0, 0.0, 0.0
         dopo_attivazione = 0.0
+        sopra_voce, interruzione = [], Interruzione()
         while True:
             try:
                 blocco = self.blocchi.get(timeout=1)
@@ -258,8 +267,9 @@ class Jarvis:
 
             # parola chiave (anche mentre parla o lavora: "Ehi Jarvis" lo interrompe)
             punteggio = self.parola.predict(blocco).get("hey_jarvis", 0)
+            # mentre parla la parola chiave è più severa, se la sua voce rientra dal microfono (senza cancellazione)
             soglia = self.imp["sensibilita"] + (0.25 if self.uscita.parla and self.imp["microfono"] ==
-                                                self.imp["casse"] else 0)
+                                                self.imp["casse"] and not self.tablet.aec else 0)
             if punteggio >= soglia and ora - dopo_attivazione > 1.5 and self.stato != "spento":
                 dopo_attivazione = ora
                 self.parola.reset()
@@ -269,10 +279,24 @@ class Jarvis:
                 vad.reset_states()
                 continue
 
+            # mentre Jarvis parla si continua ad ascoltare: una voce vera, più forte dell'eco, lo interrompe
+            if self.stato == "parlo" and self.uscita.parla and self.imp.get("interrompibile", True):
+                prob = float(vad.predict(blocco, frame_size=640))
+                sopra_voce.append(blocco)
+                del sopra_voce[:-10]                    # 800 ms: l'inizio della frase non si perde
+                if interruzione.passo(prob, rms, self.uscita.livello_uscita(), self._fattore_eco()):
+                    log("interrotto mentre parlava", f"(voce {rms:.3f}, eco {interruzione.eco:.3f})")
+                    self._interrompi_voce()
+                    frase, parlato, silenzio, inizio_ascolto = list(sopra_voce), True, 0, ora
+                    sopra_voce = []
+                continue
+            if interruzione.blocchi > 10:   # ha appena finito di parlare: quanto della sua voce è rientrato
+                log(f"eco della voce: {interruzione.eco:.3f} (microfono/uscita; con cancellazione efficace < 0,15)")
+            interruzione.azzera()
             if self.stato not in ("ascolto", "seguito", "conferma"):
                 continue
             if self.uscita.parla:
-                continue  # mezzo-duplex: non si ascolta la propria voce
+                continue  # suoni brevi (attivazione, conferma): non si ascoltano
             if not inizio_ascolto:
                 inizio_ascolto = ora
             voce = vad.predict(blocco, frame_size=640) > 0.5
@@ -305,6 +329,26 @@ class Jarvis:
                     self.imposta_stato("penso")
                     self._suona("capito")
                     self.richieste.put(("voce", pcm))
+
+    def _fattore_eco(self):
+        """Quanto più forte dell'eco deve essere una voce per interrompere. Con la cancellazione dell'eco del
+        tablet (microfono e casse sullo stesso tablet) basta meno."""
+        # simulato con voci vere (2026-11-23): 1,6 non scatta mai sulla sola eco, né con né senza la
+        # cancellazione del tablet; con la cancellazione si ferma 0,4-0,8 s dopo che la persona parla
+        return 1.6
+
+    def _interrompi_voce(self):
+        self.gen_voce += 1
+        self.uscita.taci()
+        self._svuota(self.da_dire)
+        self._svuota(self.pronte)
+        self.frasi = Frasi()
+        if self.claude.occupato:          # stava ancora scrivendo la risposta: il resto non serve
+            self.scarta = True
+            self.claude.interrompi()
+        self.uscita.riprendi()
+        self.imposta_stato("ascolto")
+        self.evento(interrotto=True)
 
     def _suona(self, nome):
         threading.Thread(target=self.uscita.riproduci, args=(audio.suono(nome),), daemon=True).start()
@@ -354,6 +398,7 @@ class Jarvis:
                 self.fine_turno.clear()
                 self.imposta_stato("lavoro")
                 self.richiesta, self.azioni, self.detti = testo, [], []
+                self.ultima_attivita = time.time()
                 self.fine_parlato = time.time()
                 self.claude.chiedi(testo)
             except Exception as e:
@@ -362,6 +407,8 @@ class Jarvis:
                 self.di("Mi scusi signore, qualcosa è andato storto: " + str(e)[:120])
 
     def _claude_testo(self, pezzo):
+        if self.scarta:
+            return
         self.risposta += pezzo
         self.evento(jarvis_pezzo=pezzo)
         for f in self.frasi.aggiungi(pezzo):
@@ -376,6 +423,11 @@ class Jarvis:
             self.da_dire.put(f)
 
     def _claude_fine(self, risultato, errore):
+        if self.scarta:                    # turno interrotto dall'utente: niente resto, niente errore
+            self.scarta = False
+            self.frasi = Frasi()
+            self.evento(fine=True)
+            return
         for f in self.frasi.fine():
             self.da_dire.put(f)
         if errore:
@@ -439,6 +491,31 @@ class Jarvis:
         ultima = recenti[-1][0].lower() + recenti[-1][1:] if recenti else ""
         return f"Ci sto ancora lavorando{': ' + ultima if ultima else ''}."
 
+    # ------------------------------------------------------------ conversazioni nell'app Claude
+    def ciclo_consegna(self):
+        """Le sessioni di `claude -p` non compaiono da sole nell'app Claude: quando una conversazione è finita
+        (Jarvis fermo da qualche minuto, niente lavori in corso) la si apre nell'app, così ogni conversazione con
+        Jarvis diventa una sessione dell'app da riprendere quando si vuole. Mai con un gioco a schermo intero
+        davanti: l'app potrebbe venire in primo piano."""
+        while True:
+            time.sleep(30)
+            if not self.imp.get("consegna_app") or not self.claude.sessione:
+                continue
+            fermo = time.time() - max(self.fine_parlato, self.ultima_attivita)
+            if fermo < 60 * max(1, int(self.imp.get("consegna_dopo", 10))):
+                continue
+            if self.claude.occupato or self.claude.lavora_in_sottofondo() or self.stato not in ("riposo", "spento"):
+                continue
+            if schermo_intero():
+                continue
+            try:
+                sessione = self.claude.apri_nell_app()
+                log("conversazione consegnata all'app Claude:", sessione)
+                self.evento(consegnata=sessione)
+            except Exception as e:
+                log("consegna all'app non riuscita:", repr(e))
+                self.ultima_attivita = time.time()  # si riprova più tardi
+
     def di(self, testo):
         self.evento(jarvis=testo)
         self.da_dire.put(testo)
@@ -446,22 +523,27 @@ class Jarvis:
 
     def ciclo_voce(self):
         """Dice le frasi in ordine; prepara la sintesi della successiva mentre suona quella corrente."""
-        pronte = queue.Queue(maxsize=2)
+        pronte = self.pronte
 
         def sintetizza():
             while True:
                 f = self.da_dire.get()
+                gen = self.gen_voce
                 if f is None:
                     pronte.put(None)
                     continue
                 try:
-                    pronte.put((f, self.tts.pcm(f)))
+                    pcm = self.tts.pcm(f)
                 except Exception as e:
                     log("sintesi vocale non riuscita:", repr(e))
-                    pronte.put((f, audio.suono("errore")))
+                    pcm = audio.suono("errore")
+                if gen == self.gen_voce:  # nel frattempo è stato interrotto: la frase non si dice
+                    pronte.put((f, pcm, gen))
         threading.Thread(target=sintetizza, daemon=True, name="sintesi").start()
         while True:
             voce = pronte.get()
+            if voce is not None and voce[2] != self.gen_voce:
+                continue
             if voce is None:
                 if not self.claude.occupato and self.stato in ("parlo", "lavoro", "penso"):
                     self.imposta_stato("seguito" if self.imp["seguito"] else "riposo")
@@ -544,7 +626,7 @@ class Jarvis:
 
     def avvia(self):
         self._applica()
-        for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce", "ciclo_aggiornamenti"):
+        for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce", "ciclo_aggiornamenti", "ciclo_consegna"):
             threading.Thread(target=self._protetto, args=(getattr(self, nome),), daemon=True, name=nome).start()
         threading.Thread(target=self._prepara_stt, daemon=True).start()
 
@@ -558,6 +640,29 @@ class Jarvis:
 
 
 # ---------------------------------------------------------------- server HTTP per il tablet
+
+def schermo_intero():
+    """True se in primo piano c'è una finestra a schermo intero (un gioco, un video): non va disturbata."""
+    import ctypes
+    import ctypes.wintypes as wt
+    u = ctypes.windll.user32
+    h = u.GetForegroundWindow()
+    if not h:
+        return False
+    classe = ctypes.create_unicode_buffer(64)
+    u.GetClassNameW(h, classe, 64)
+    if classe.value in ("Progman", "WorkerW", "Shell_TrayWnd") or u.IsZoomed(h):
+        return False  # desktop, barra, finestre solo ingrandite (i loro bordi escono dallo schermo)
+    r = wt.RECT()
+    u.GetWindowRect(h, ctypes.byref(r))
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+    mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+    u.GetMonitorInfoW(u.MonitorFromWindow(h, 2), ctypes.byref(mi))
+    m = mi.rcMonitor
+    return r.left <= m.left and r.top <= m.top and r.right >= m.right and r.bottom >= m.bottom
+
 
 def rete_locale(ip):
     try:
@@ -757,7 +862,10 @@ class Gestore(BaseHTTPRequestHandler):
     def microfono(self):
         """Corpo a pezzi (Transfer-Encoding: chunked) con PCM 16 kHz, finché il tablet lo manda."""
         self.close_connection = True
-        log("microfono del tablet collegato:", self.client_address[0])
+        q = parse_qs(urlparse(self.path).query)
+        self.j.tablet.aec = (q.get("aec") or ["0"])[0] == "1"
+        log("microfono del tablet collegato:", self.client_address[0], "- cancellazione eco:",
+            "sì" if self.j.tablet.aec else "no")
         try:
             if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
                 while True:

@@ -164,3 +164,60 @@ def si_o_no(testo):
     if si:
         return True
     return None
+
+
+# ---------------------------------------------------------------- interruzione mentre Jarvis parla
+
+class Interruzione:
+    """Decide se mentre Jarvis parla c'è una persona che gli parla sopra. Per ogni blocco di 80 ms riceve:
+    la probabilità di voce (VAD), il volume del microfono e `rif`, il volume di quello che Jarvis sta facendo
+    uscire dalle casse (il massimo dell'ultimo secondo, per coprire il ritardo). Impara il rapporto eco/uscita
+    (quanto della sua voce rientra dal microfono) e interrompe solo se il microfono sente almeno `fattore` volte
+    più di quanto spiegherebbe l'eco, con voce, per ~400 ms di fila. I primi blocchi di ogni frase servono solo
+    a imparare."""
+
+    BLOCCHI = 5        # 400 ms di voce sopra la sua
+    RISCALDAMENTO = 6  # 480 ms all'inizio di ogni frase: solo per imparare l'eco
+
+    def __init__(self):
+        self.k = None      # rapporto microfono / uscita dovuto all'eco
+        self.sopra = 0
+        self.blocchi = 0
+
+    @property
+    def eco(self):
+        return self.k or 0.0
+
+    def passo(self, prob, rms, rif, fattore):
+        if rif < 0.02 and self.k is None:
+            return False        # la sua voce non è ancora partita: niente da imparare né da confrontare
+        self.blocchi += 1
+        rif = max(rif, 0.02)    # pause tra le parole: si confronta con un'uscita minima, non con il rumore
+        rapporto = rms / rif
+        # k segue i picchi dell'eco (sale in fretta, scende piano): una media lo sottostimerebbe e i picchi
+        # della sua stessa voce sembrerebbero una persona. Quello che supera di molto l'eco non si impara.
+        # All'inizio di ogni frase (riscaldamento) si impara in fretta; dopo, k si muove piano, così una persona
+        # che parla non lo "trascina" su fino a non essere più sentita.
+        if self.k is None:
+            self.k = rapporto
+        elif self.blocchi <= self.RISCALDAMENTO:
+            self.k = max(self.k * 0.9, rapporto) if rapporto > self.k else self.k * 0.97 + rapporto * 0.03
+        elif rapporto <= self.k:
+            self.k = self.k * 0.995 + rapporto * 0.005
+        elif rapporto <= self.k * fattore:
+            self.k += (rapporto - self.k) * 0.02
+        if self.blocchi <= self.RISCALDAMENTO:
+            return False
+        if prob >= 0.5 and rms > max(0.01, fattore * self.k * rif):
+            self.sopra += 1
+        else:
+            self.sopra = max(0, self.sopra - 1)
+        if self.sopra >= self.BLOCCHI:
+            self.sopra = 0
+            return True
+        return False
+
+    def azzera(self):
+        """Jarvis ha smesso di parlare: alla prossima frase si ricomincia con il riscaldamento (k resta)."""
+        self.sopra = 0
+        self.blocchi = 0
