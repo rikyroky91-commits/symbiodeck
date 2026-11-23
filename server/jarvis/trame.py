@@ -31,20 +31,42 @@ def leggi_trame(buf):
 
 # ---------------------------------------------------------------- testo da dire
 
-_FINE_FRASE = re.compile(r"([.!?…;:])(\s+|$)|\n+")
+_FINE_FRASE = re.compile(r"([.!?…;])(\s+|$)|\n+")
+
+
+_UNITA = [(r"(\d)\s*TB\b", r"\1 tera"), (r"(\d)\s*GB\b", r"\1 giga"), (r"(\d)\s*MB\b", r"\1 mega"),
+          (r"(\d)\s*KB\b", r"\1 kilobyte"), (r"(\d)\s*GHz\b", r"\1 gigahertz"), (r"(\d)\s*MHz\b", r"\1 megahertz"),
+          (r"(\d)\s*°C\b", r"\1 gradi"), (r"(\d)\s*W\b", r"\1 watt"), (r"(\d)\s*ms\b", r"\1 millisecondi"),
+          (r"(\d)\s*[x×]\s*(\d)", r"\1 per \2"), (r"\bfps\b", "f p s")]
 
 
 def pulisci_per_voce(testo):
-    """Toglie quello che non si legge ad alta voce: blocchi di codice, markdown, link, emoji."""
-    t = re.sub(r"```.*?(```|$)", " ", testo, flags=re.S)
-    t = re.sub(r"`([^`]*)`", r"\1", t)
-    t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", t)                 # [testo](link) -> testo
-    t = re.sub(r"https?://\S+", "il link", t)
-    t = re.sub(r"^\s{0,3}(#{1,6}|[-*+>]|\d+[.)])\s+", "", t, flags=re.M)  # titoli, elenchi, citazioni
-    t = re.sub(r"(\*\*|__|\*|_|~~)(.+?)\1", r"\2", t)
-    t = re.sub(r"[|]", " ", t)
-    t = re.sub(r"[\U0001F000-\U0001FAFF☀-➿️]", "", t)
-    return re.sub(r"[ \t]+", " ", t).strip()
+    """Rende il testo dicibile: niente simboli letti alla lettera ("cancelletto", "asterisco"), niente codice,
+    link o emoji; elenchi e tabelle diventano frasi. Pensato per la sintesi vocale italiana."""
+    t = re.sub(r"```.*?(```|$)", " ", testo, flags=re.S)                 # blocchi di codice
+    t = re.sub(r"`([^`]*)`", r"\1", t)                                    # codice in linea: resta il testo
+    t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)                      # [testo](link) e immagini
+    t = re.sub(r"https?://\S+|www\.\S+", "il link", t)
+    t = re.sub(r"^[ \t]*[-|: \t]{3,}$", "", t, flags=re.M)                # righe di separazione delle tabelle
+    t = re.sub(r"^[ \t]*\|(.*)\|[ \t]*$", lambda m: ", ".join(c.strip() for c in m.group(1).split("|") if c.strip()) + ".",
+               t, flags=re.M)                                             # righe di tabella -> elenco parlato
+    t = re.sub(r"^[ \t]{0,3}(#{1,6}|>+|[-*+•·▪►]|\d{1,2}[.)])[ \t]+", "", t, flags=re.M)  # titoli, citazioni, elenchi
+    t = re.sub(r"\b([CF])#", r"\1 sharp", t)                              # C#, F#
+    t = re.sub(r"\s*(->|=>|→|⇒)\s*", ", poi ", t)
+    t = re.sub(r"\s*(<-|←)\s*", ", da ", t)
+    t = t.replace("&", " e ").replace("≈", "circa ").replace("~", "circa ").replace("±", "più o meno ")
+    t = re.sub(r"[*_#|<>^`\\]+", " ", t)                                  # simboli rimasti: mai letti
+    t = re.sub(r"(\w)/(\w)", r"\1 \2", t)                                 # e/o, A/B
+    for regola, sostituto in _UNITA:
+        t = re.sub(regola, sostituto, t)
+    t = re.sub(r"[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE0F\u2B00-\u2BFF\u2190-\u21FF\u2700-\u27BF\u2500-\u25FF]", "", t)
+    # ogni riga (es. voce di un elenco) finisce con una pausa
+    righe = [r.strip(" ,;") for r in t.splitlines()]
+    t = " ".join(r if re.search(r"[.!?…:;]$", r) else r + "." for r in righe if r)
+    t = re.sub(r"\s+([,.;:!?])", r"\1", t)
+    t = re.sub(r"([,;:])\1+", r"\1", t)
+    t = re.sub(r"\.{2,}(?!\.)", ".", t) if "..." not in t else t
+    return re.sub(r"\s{2,}", " ", t).strip(" ,;")
 
 
 class Frasi:

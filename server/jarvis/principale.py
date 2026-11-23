@@ -472,6 +472,7 @@ class Jarvis:
             if self.stato in ("lavoro", "penso", "riposo", "seguito"):
                 self.imposta_stato("parlo")
             self.domanda = voce[0].rstrip().endswith("?")
+            log("detto:", voce[0])
             self.uscita.riproduci(voce[1])
             self.fine_parlato = time.time()
             if self.claude.occupato and self.stato == "parlo":
@@ -694,6 +695,13 @@ class Gestore(BaseHTTPRequestHandler):
                 log("conversazione aperta nell'app Claude:", uscita)
                 j.evento(nuova=True)
                 return self.manda(200, {"ok": True, "messaggio": uscita})
+            if u.path == "/jarvis/riavvia":
+                # Jarvis da amministratore non si può fermare da fuori senza privilegi: si chiude da solo con un
+                # codice di errore, e l'attività pianificata (o pannello.py) lo fa ripartire con il codice nuovo
+                log("riavvio richiesto")
+                j.claude.ferma()
+                threading.Timer(0.5, lambda: os._exit(3)).start()
+                return self.manda(200, {"ok": True})
             if u.path == "/jarvis/prova-voce":
                 j.prova_voce()
                 return self.manda(200, {"ok": True})

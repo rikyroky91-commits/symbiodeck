@@ -31,21 +31,37 @@ def test_frasi_a_pezzi():
 def test_frasi_corte_si_uniscono():
     f = Frasi(minimo=12)
     assert f.aggiungi("Sì. Fatto. Ho aperto il blocco note. Altro") == ["Sì. Fatto. Ho aperto il blocco note."]
-    assert f.fine() == ["Altro"]
+    assert f.fine() == ["Altro."]
 
 
 def test_codice_non_si_legge():
     f = Frasi(minimo=5)
     assert f.aggiungi("Ecco:\n```\nGet-Date\n") == ["Ecco:"]
-    assert f.aggiungi("```\nFatto, signore.") == ["Fatto, signore."]
+    assert f.aggiungi("```\nFatto.") == ["Fatto."]
     assert f.fine() == []
 
 
+def test_elenchi_diventano_frasi():
+    f = Frasi()
+    pezzi = []
+    for p in ["Io toglierei:\n- **Samsung", " Magician**: serve solo\n- Adobe", " Acrobat\n\nFatto."]:
+        pezzi += f.aggiungi(p)
+    assert pezzi + f.fine() == ["Io toglierei:", "Samsung Magician: serve solo.", "Adobe Acrobat.", "Fatto."]
+
+
 def test_pulisci_per_voce():
-    assert pulisci_per_voce("**ciao** [link](http://x.it)") == "ciao link"
-    assert pulisci_per_voce("# Titolo") == "Titolo"
-    assert pulisci_per_voce("- voce") == "voce"
-    assert pulisci_per_voce("vedi https://example.com ora") == "vedi il link ora"
+    assert pulisci_per_voce("**ciao** [link](http://x.it)") == "ciao link."
+    assert pulisci_per_voce("# Titolo") == "Titolo."
+    assert pulisci_per_voce("- voce") == "voce."
+    assert pulisci_per_voce("vedi https://example.com ora") == "vedi il link ora."
+    # nessun simbolo letto alla lettera
+    assert pulisci_per_voce("#cosa ti propongo#") == "cosa ti propongo."
+    for simbolo in "#*_|`<>":
+        assert simbolo not in pulisci_per_voce("a " + simbolo * 2 + " b " + simbolo + "c" + simbolo)
+    assert pulisci_per_voce("| Disco | Liberi |\n|---|---|\n| C: | 105 GB |") == "Disco, Liberi. C:, 105 giga."
+    assert pulisci_per_voce("CPU a 72°C ~ 120 W") == "CPU a 72 gradi circa 120 watt."
+    assert pulisci_per_voce("Adobe → aggiornalo a mano") == "Adobe, poi aggiornalo a mano."
+    assert pulisci_per_voce("3840x2160 in C# e/o Python 😀") == "3840 per 2160 in C sharp e o Python."
 
 
 def test_descrivi_azione():

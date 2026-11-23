@@ -205,6 +205,15 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   (impostazione "Ogni quanto"), una frase di aggiornamento scritta al volo da Haiku (`claude -p --model haiku
   --tools ""`, ~6 s), con una frase fissa di riserva. Il pannello mostra "Lavoro in corso". Provato: servizi
   automatici fermi, ~1 minuto di lavoro, un aggiornamento e poi il risultato.
+- **Testo dicibile** (2026-11-23): la sintesi vocale leggeva i simboli alla lettera ("#cosa ti propongo#" →
+  "cancelletto…"). `pulisci_per_voce` (`trame.py`) ora toglie ogni simbolo di formattazione, trasforma elenchi e
+  tabelle in frasi (una pausa per voce), frecce in "poi", unità in parole ("37 GB" → "37 giga", "72°C" → "72
+  gradi", "3840x2160" → "3840 per 2160"), e i due punti non spezzano più la frase. In più la persona chiede alla
+  voce di raccontare i risultati invece di leggerli (le due o tre cose che contano, il resto su richiesta).
+  Il registro `jarvis.log` ora contiene ogni frase detta (`detto:`).
+- **Riavviare Jarvis da amministratore**: un processo senza privilegi non può fermarlo. `POST /jarvis/riavvia`
+  (token del pannello) lo fa chiudere da solo con codice 3; lo fa ripartire l'attività o `pannello.py` (entro un
+  minuto). Prima di questa versione: rieseguire `server\jarvis-amministratore.ps1`, che lo ferma e lo riavvia.
 - **Haiku o Sonnet per la voce**: misurato a processo già avviato, Sonnet comincia a parlare in 1,1–1,3 s e Haiku
   in 1,7–2,1 s (fine in ~5 s per entrambi): Sonnet resta il predefinito, Haiku si può scegliere nel pannello.
 - **Personalità** (`persona.md`): dà del tu, niente "signore", simpatica, ironica, dice la sua. Una conversazione
