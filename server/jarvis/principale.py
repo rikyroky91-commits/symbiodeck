@@ -12,6 +12,7 @@ import json
 import os
 import queue
 import secrets
+import subprocess
 import sys
 import threading
 import time
@@ -54,6 +55,8 @@ PREDEFINITE = {
     "conferme": "irreversibili",   # irreversibili | sempre | mai
     "stt": "auto",
     "accendi_schermo": False,
+    "aggiornamenti": True,         # mentre l'esecutore lavora in silenzio, ogni tanto dice a che punto è
+    "aggiornamenti_ogni": 30,      # secondi di silenzio prima di un aggiornamento
     "claude_exe": "",
 }
 SCELTE = {
@@ -129,6 +132,10 @@ class Jarvis:
         self.ultima_azione = ""
         self.fine_turno = threading.Event()
         self.domanda = False       # l'ultima frase detta era una domanda
+        self.richiesta = ""        # ultima richiesta dell'utente (per gli aggiornamenti)
+        self.azioni = []           # (ora, descrizione) delle azioni del turno in corso
+        self.fine_parlato = 0.0    # quando Jarvis ha smesso di parlare l'ultima volta
+        self.detti = []            # aggiornamenti già detti in questo turno
 
     # ------------------------------------------------------------ eventi per il pannello
     def evento(self, **d):
@@ -148,7 +155,7 @@ class Jarvis:
                 "tablet": {"altoparlante": self.tablet.collegato(), "microfono": self.tablet.microfono_attivo()},
                 "conferma": self.conferma and {"id": self.conferma["id"], "descrizione": self.conferma["descrizione"]},
                 "claude": bool(trova_claude(self.imp.get("claude_exe", ""))),
-                "azione": self.ultima_azione}
+                "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo()}
 
     def impostazioni_pubbliche(self):
         imp = dict(self.imp)
@@ -346,6 +353,8 @@ class Jarvis:
                 self.risposta, self.ultima_azione = "", ""
                 self.fine_turno.clear()
                 self.imposta_stato("lavoro")
+                self.richiesta, self.azioni, self.detti = testo, [], []
+                self.fine_parlato = time.time()
                 self.claude.chiedi(testo)
             except Exception as e:
                 log("errore richiesta:", traceback.format_exc())
@@ -359,6 +368,7 @@ class Jarvis:
             self.da_dire.put(f)
 
     def _claude_azione(self, descrizione):
+        self.azioni = (self.azioni + [(time.time(), descrizione)])[-30:]
         self.ultima_azione = descrizione
         self.evento(azione=descrizione)
         # la frase in corso prima dello strumento si dice subito ("Do un'occhiata.")
@@ -377,6 +387,57 @@ class Jarvis:
         # il testo è già arrivato a pezzi (jarvis_pezzo): si manda solo la fine del turno
         self.evento(fine=True) if self.risposta.strip() else self.evento(jarvis=risultato or "Fatto.", fine=True)
         self.da_dire.put(None)  # segnale di fine turno
+
+    # ------------------------------------------------------------ aggiornamenti durante il lavoro
+    def ciclo_aggiornamenti(self):
+        """Se l'esecutore lavora e Jarvis tace da un po', una frase su a che punto è (scritta da Haiku, veloce)."""
+        while True:
+            time.sleep(1)
+            lavora = self.claude.occupato or self.claude.lavora_in_sottofondo()
+            if not self.imp.get("aggiornamenti") or not lavora or self.stato not in ("lavoro", "riposo"):
+                continue
+            if self.uscita.parla or not self.da_dire.empty() or self.conferma:
+                continue
+            ogni = max(15, int(self.imp.get("aggiornamenti_ogni", 30)))
+            if time.time() - self.fine_parlato < ogni:
+                continue
+            frase = self._frase_aggiornamento()
+            # nel frattempo può aver finito: allora l'aggiornamento non serve più
+            ancora = self.claude.occupato or self.claude.lavora_in_sottofondo()
+            if frase and ancora and self.stato in ("lavoro", "riposo") and not self.uscita.parla:
+                self.detti.append(frase)
+                log("aggiornamento:", frase)
+                self.evento(jarvis=frase, sottofondo=self.claude.lavora_in_sottofondo())
+                self.da_dire.put(frase)
+                self.da_dire.put(None)  # fine dell'aggiornamento: lo stato torna libero
+            self.fine_parlato = time.time()
+
+    def _frase_aggiornamento(self):
+        recenti = ([d for t, d in self.claude.progressi if t > self.fine_parlato - 5][-3:]
+                   + self.claude.ultime_azioni_esecutore(self.fine_parlato - 5))
+        recenti = recenti or [d for t, d in self.azioni if t > self.fine_parlato - 5][-8:] \
+            or [d for _t, d in self.azioni][-3:]
+        minuti = (time.time() - (self.azioni[0][0] if self.azioni else self.fine_parlato)) / 60
+        richiesta = (f"L'utente ha chiesto: {self.richiesta[:400]}\n"
+                     f"Ci stai lavorando da {minuti:.0f} minuti. Le ultime cose che hai fatto: "
+                     f"{'; '.join(recenti) or 'sta ancora ragionando, nessuna azione nuova'}.\n"
+                     f"Aggiornamenti già detti: {' | '.join(self.detti[-3:]) or 'nessuno'}.\n"
+                     "Sei Jarvis, l'assistente vocale del PC. Scrivi UNA frase parlata in italiano, in prima persona "
+                     "(\"sto...\", \"ho trovato...\"), massimo 20 parole, dando del tu all'utente, tono naturale e un "
+                     "po' ironico, che dica a che punto sei. Non ripetere gli aggiornamenti già detti, non dire che "
+                     "hai quasi finito, niente nomi di comandi o file lunghi. Solo la frase.")
+        try:
+            exe = trova_claude(self.imp.get("claude_exe", ""))
+            r = subprocess.run([exe, "-p", richiesta, "--model", "haiku", "--effort", "low", "--tools", "",
+                                "--no-session-persistence"], capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=20, cwd=str(DATI), creationflags=0x08000000)
+            frase = r.stdout.strip().strip('"').splitlines()[0] if r.stdout.strip() else ""
+            if 3 < len(frase) < 220:
+                return frase
+        except (OSError, subprocess.TimeoutExpired, IndexError) as e:
+            log("aggiornamento non generato:", repr(e))
+        ultima = recenti[-1][0].lower() + recenti[-1][1:] if recenti else ""
+        return f"Ci sto ancora lavorando{': ' + ultima if ultima else ''}."
 
     def di(self, testo):
         self.evento(jarvis=testo)
@@ -404,6 +465,7 @@ class Jarvis:
             if voce is None:
                 if not self.claude.occupato and self.stato in ("parlo", "lavoro", "penso"):
                     self.imposta_stato("seguito" if self.imp["seguito"] else "riposo")
+                    self.evento(sottofondo=self.claude.lavora_in_sottofondo())
                 continue
             if self.uscita.interrotta.is_set():
                 continue  # frase vecchia di prima dell'interruzione
@@ -411,6 +473,7 @@ class Jarvis:
                 self.imposta_stato("parlo")
             self.domanda = voce[0].rstrip().endswith("?")
             self.uscita.riproduci(voce[1])
+            self.fine_parlato = time.time()
             if self.claude.occupato and self.stato == "parlo":
                 self.imposta_stato("lavoro")
 
@@ -480,7 +543,7 @@ class Jarvis:
 
     def avvia(self):
         self._applica()
-        for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce"):
+        for nome in ("ciclo_ascolto", "ciclo_richieste", "ciclo_voce", "ciclo_aggiornamenti"):
             threading.Thread(target=self._protetto, args=(getattr(self, nome),), daemon=True, name=nome).start()
         threading.Thread(target=self._prepara_stt, daemon=True).start()
 

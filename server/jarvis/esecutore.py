@@ -3,6 +3,7 @@ uscita), così la conversazione continua da un comando vocale all'altro e la ris
 frase per frase. Ogni strumento passa prima dalla guardia (guardia.py, hook PreToolUse)."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,8 @@ class Esecutore:
         self.file_config = file_config
         self.proc = None
         self.occupato = False
+        self.sottofondo = {}   # lavori dell'esecutore in sottofondo: task_id -> ora di partenza
+        self.progressi = []    # (ora, descrizione) da task_progress di Claude Code
         # conversazione in corso: sopravvive ai riavvii di Jarvis (e del PC)
         self.file_sessione = dati / "sessione.txt"
         self.file_storia = dati / "conversazioni.json"
@@ -127,6 +130,7 @@ class Esecutore:
             self.ferma()
             self._cambia_sessione(None)
             self.occupato = False
+            self.sottofondo.clear()
 
     # ------------------------------------------------------------ conversazioni salvate
     @staticmethod
@@ -254,12 +258,62 @@ class Esecutore:
                     descrizione = descrivi_azione(blocco.get("name", ""), blocco.get("input"))
                     if descrizione:
                         self._su_azione(descrizione)
+        elif tipo == "system":
+            sotto = d.get("subtype")
+            if sotto == "background_tasks_changed":     # elenco completo dei lavori in sottofondo
+                prima = self.sottofondo
+                self.sottofondo = {t.get("task_id"): prima.get(t.get("task_id"), time.time())
+                                   for t in d.get("tasks") or []}
+            elif sotto == "task_notification":         # un lavoro è finito
+                self.sottofondo.pop(d.get("task_id"), None)
+            elif sotto == "task_progress" and d.get("description"):
+                self.progressi = (self.progressi + [(time.time(), d["description"])])[-20:]
         elif tipo == "result":
             self.occupato = False
             errore = None
             if d.get("is_error"):
                 errore = d.get("result") or d.get("subtype") or "errore di Claude Code"
             self._su_fine(d.get("result") or "", errore)
+
+
+    def lavora_in_sottofondo(self):
+        # un lavoro "dimenticato" (notifica persa) non deve tenere Jarvis occupato per sempre
+        for k, t in list(self.sottofondo.items()):
+            if time.time() - t > 3 * 3600:
+                self.sottofondo.pop(k, None)
+        return bool(self.sottofondo)
+
+    def ultime_azioni_esecutore(self, dopo=0.0, quante=8):
+        """Le ultime azioni dei sotto-agenti, lette dal loro registro (i lavori in sottofondo non passano
+        dall'uscita della voce)."""
+        if not self.sessione:
+            return []
+        cartella = Path.home() / ".claude" / "projects" / re.sub(r"[^A-Za-z0-9]", "-", str(Path.home())) /             self.sessione / "subagents"
+        azioni = []
+        try:
+            registri = sorted(cartella.glob("agent-*.jsonl"), key=lambda f: f.stat().st_mtime)[-2:]
+        except OSError:
+            return []
+        for f in registri:
+            if f.stat().st_mtime < dopo:
+                continue
+            try:
+                righe = f.read_text(encoding="utf-8", errors="replace").splitlines()[-60:]
+            except OSError:
+                continue
+            for riga in righe:
+                try:
+                    d = json.loads(riga)
+                except ValueError:
+                    continue
+                if d.get("type") != "assistant":
+                    continue
+                for b in (d.get("message") or {}).get("content") or []:
+                    if b.get("type") == "tool_use":
+                        descrizione = descrivi_azione(b.get("name", ""), b.get("input"))
+                        if descrizione:
+                            azioni.append(descrizione)
+        return azioni[-quante:]
 
 
 def prova(testo):

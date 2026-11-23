@@ -198,6 +198,15 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   `JARVIS_DELEGA=1` ogni strumento chiamato dalla voce (hook senza `agent_type`) viene rifiutato con l'invito ad
   affidarlo all'esecutore. Modelli e ragionamento si impostano a parte nel pannello e sul PC. Provato: la voce ha
   provato Bash, è stata respinta, ha passato il compito, l'esecutore (Opus) l'ha fatto e la voce ha riassunto.
+- **Lavori in sottofondo e aggiornamenti** (2026-11-23): l'esecutore parte in sottofondo, la voce resta libera
+  (si può continuare a parlarle) e riporta da sola il risultato quando arriva. Jarvis segue i lavori con gli eventi
+  `background_tasks_changed` / `task_progress` / `task_notification` di Claude Code (stream-json) e legge le ultime
+  azioni dal registro del sotto-agente (`<sessione>/subagents/agent-*.jsonl`). Se lavora e Jarvis tace da 30 s
+  (impostazione "Ogni quanto"), una frase di aggiornamento scritta al volo da Haiku (`claude -p --model haiku
+  --tools ""`, ~6 s), con una frase fissa di riserva. Il pannello mostra "Lavoro in corso". Provato: servizi
+  automatici fermi, ~1 minuto di lavoro, un aggiornamento e poi il risultato.
+- **Haiku o Sonnet per la voce**: misurato a processo già avviato, Sonnet comincia a parlare in 1,1–1,3 s e Haiku
+  in 1,7–2,1 s (fine in ~5 s per entrambi): Sonnet resta il predefinito, Haiku si può scegliere nel pannello.
 - **Personalità** (`persona.md`): dà del tu, niente "signore", simpatica, ironica, dice la sua. Una conversazione
   vecchia ne imita lo stile: dopo il cambio si riparte con "Nuova conversazione".
 - **Sostituto completo di Claude Code** (richiesta dell'utente, 2026-11-23: "non deve fare niente di meno"). Il

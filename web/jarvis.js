@@ -12,7 +12,7 @@
     lavoro: "Al lavoro", parlo: "Parlo", conferma: "Conferma", seguito: "Ti ascolto" };
 
   var stato = "riposo", imp = {}, livello = 0, livelloVisto = 0, aperto = false, collegato = false;
-  var corrente = null, confermaId = null, dispositivi = null;
+  var corrente = null, confermaId = null, dispositivi = null, sottofondo = false;
 
   // ------------------------------------------------------------ struttura
   var radice = document.createElement("div");
@@ -101,6 +101,7 @@
     if (d.tutto) {
       var s = d.tutto;
       imp = s.impostazioni || {};
+      sottofondo = !!s.sottofondo;
       impostaStato(s.stato);
       mostraConferma(s.conferma);
       $("j-azione").textContent = s.azione || "";
@@ -109,6 +110,7 @@
       disegnaImpostazioni();
       return;
     }
+    if (d.sottofondo !== undefined) { sottofondo = !!d.sottofondo; impostaStato(stato); }
     if (d.stato) impostaStato(d.stato);
     if (d.livello !== undefined) livello = d.livello;
     if (d.utente) { chiudiCorrente(); messaggio("utente", d.utente); }
@@ -135,7 +137,8 @@
     radice.setAttribute("data-stato", stato);
     linguetta.setAttribute("data-stato", stato);
     linguetta.className = "";
-    $("j-stato").textContent = NOMI_STATO[stato] || stato;
+    $("j-stato").textContent = (stato === "riposo" || stato === "seguito") && sottofondo ? "Lavoro in corso" :
+      (NOMI_STATO[stato] || stato);
     if (stato === "riposo" || stato === "spento") $("j-azione").textContent = "";
     if (stato === "conferma" && !aperto && nativo) apri();
   }
@@ -324,6 +327,10 @@
     c.appendChild(riga("Modello dei compiti", "esegue tutto sul PC · Opus: come Claude Code nell'app",
       scelte("modello_compiti", MODELLI)));
     c.appendChild(riga("Ragionamento dei compiti", "più alto: più accurato ma più lento", scelte("effort_compiti", LIVELLI)));
+    c.appendChild(riga("Aggiornamenti mentre lavora", "se l'esecutore lavora in silenzio, ogni tanto ti dice a che punto è",
+      interruttore("aggiornamenti")));
+    if (imp.aggiornamenti) c.appendChild(riga("Ogni quanto", "secondi di silenzio prima di un aggiornamento",
+      cursore("aggiornamenti_ogni", 15, 120, 5, function (v) { return v + " s"; })));
     c.appendChild(riga("Claude in Chrome", "naviga e usa i siti nel tuo Chrome", interruttore("chrome")));
     c.appendChild(riga("Conferme", "quando chiedere \"Confermi?\" prima di agire",
       scelte("conferme", [["irreversibili", "Irreversibili"], ["sempre", "Sempre"], ["mai", "Mai"]])));
