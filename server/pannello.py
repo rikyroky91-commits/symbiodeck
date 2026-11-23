@@ -37,6 +37,7 @@ CONFIG = QUI / "config.json"
 ICONE = QUI / "cache-icone"
 REGISTRO = QUI / "pannello.log"
 PORTA = 47800
+PORTA_JARVIS = 47802
 SENZA_FINESTRA = 0x08000000  # CREATE_NO_WINDOW
 
 user32 = ctypes.windll.user32
@@ -1317,6 +1318,7 @@ class Gestore(BaseHTTPRequestHandler):
             return self.manda(200, {"app": cfg["app"], "scorciatoie": cfg["scorciatoie"],
                                     "monitor": bool(cfg.get("monitor")),
                                     "monitor_app": cfg.get("monitor_app", []),
+                                    "jarvis": {"porta": PORTA_JARVIS, "installato": self.server.jarvis},
                                     "versione": self.server.campionatore.versione_config})
         if u.path == "/api/elenco-app":
             return self.manda(200, catalogo())
@@ -1487,12 +1489,40 @@ def adb_reverse():
     if not adb:
         return
     while True:
-        try:
-            subprocess.run([adb, "reverse", f"tcp:{PORTA}", f"tcp:{PORTA}"], capture_output=True, timeout=10,
-                           creationflags=SENZA_FINESTRA)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+        for porta in (PORTA, PORTA_JARVIS):  # pannello e Jarvis (microfono e voce del tablet)
+            try:
+                subprocess.run([adb, "reverse", f"tcp:{porta}", f"tcp:{porta}"], capture_output=True, timeout=10,
+                               creationflags=SENZA_FINESTRA)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         time.sleep(15)
+
+
+# ---------------------------------------------------------------- Jarvis (comandi vocali)
+
+def jarvis_installato():
+    """Jarvis è facoltativo: serve requirements-jarvis.txt (installa.ps1 lo chiede)."""
+    import importlib.util
+    return all(importlib.util.find_spec(m) for m in ("openwakeword", "faster_whisper", "edge_tts", "sounddevice"))
+
+
+def custode_jarvis(cfg):
+    """Tiene in vita server/jarvis in un processo a parte (librerie pesanti: se cade, il pannello non ne
+    risente). python.exe e non pythonw: è quello consentito dal firewall sulla rete privata."""
+    if cfg.get("jarvis") is False or not jarvis_installato():
+        log("jarvis non attivo:", "disattivato in config.json" if cfg.get("jarvis") is False else "non installato")
+        return
+    while True:
+        inizio = time.time()
+        try:
+            p = subprocess.Popen([sys.executable, "-m", "jarvis"], cwd=str(QUI), creationflags=SENZA_FINESTRA,
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            log("jarvis avviato, pid", p.pid)
+            codice = p.wait()
+            log("jarvis terminato, codice", codice)
+        except OSError as e:
+            log("jarvis non avviato:", e)
+        time.sleep(10 if time.time() - inizio > 60 else 60)
 
 
 # ---------------------------------------------------------------- abbinamento del tablet
@@ -1608,6 +1638,8 @@ def main():
     CustodeGioco(cfg).start()
     srv.cfg = cfg
     srv.campionatore = camp
+    srv.jarvis = cfg.get("jarvis") is not False and jarvis_installato()
+    threading.Thread(target=custode_jarvis, args=(cfg,), daemon=True).start()
     log("pannello in ascolto sulla porta", PORTA)
     if "--stampa" in sys.argv:
         print(f"http://127.0.0.1:{PORTA}/?t={cfg['token']}")

@@ -22,6 +22,17 @@ Write-Host "[1/4] Python $versione trovato"
 & python.exe -m pip install --user --quiet --disable-pip-version-check -r (Join-Path $qui "requirements.txt")
 Write-Host "[2/4] Dipendenze installate"
 
+# 2b. Jarvis (facoltativo): comandi vocali con Claude Code, circa 3 GB di librerie e modelli
+$jarvis = Read-Host "Installare anche Jarvis, i comandi vocali ('Hey Jarvis')? Servono ~3 GB e Claude Code. [s/N]"
+if ($jarvis -match '^[sSyY]') {
+    & python.exe -m pip install --user --quiet --disable-pip-version-check -r (Join-Path $qui "requirements-jarvis.txt")
+    & python.exe -c "import openwakeword.utils as u; u.download_models(model_names=['hey_jarvis'])"
+    if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not (Test-Path "$env:USERPROFILE\.local\bin\claude.exe")) {
+        Write-Host "      Claude Code non trovato: installalo da https://claude.com/claude-code e poi esegui 'claude auth login'" -ForegroundColor Yellow
+    }
+    Write-Host "      Jarvis installato: parte con il pannello. Sul tablet: scorri dal bordo sinistro verso destra."
+}
+
 # 3. Avvio automatico all'accesso a Windows (attivita' pianificata dell'utente corrente)
 $azione = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$(Join-Path $server 'avvia-pannello.vbs')`"" -WorkingDirectory $server
 $quando = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME

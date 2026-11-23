@@ -160,6 +160,46 @@ normale). Un permesso privilegiato nuovo va prima aggiunto a `privapp-permission
 - "Apri Android" (in modalità modifica) apre il launcher normale; il tasto Home riporta al pannello.
 - Se lo schermo resta nero: Power premuto 15 secondi.
 
+## Jarvis: comandi vocali (dal 2026-11-23, app 1.9.0)
+Si dice **"Hey Jarvis"** vicino al tablet (anche a schermo spento), si sente un doppio suono, poi si parla:
+"apri Spotify", "quanto spazio c'è sul disco C?", "cancella i file temporanei"… Claude Code esegue sul PC e
+Jarvis risponde a voce dal tablet. Pannello di Jarvis sul tablet: **scorrimento dal bordo sinistro verso destra**
+(o la linguetta luminosa a sinistra), con la sfera animata, la conversazione, un campo per scrivere e le
+impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
+
+- **Pronuncia**: il modello della parola chiave (`hey_jarvis` di openWakeWord) è inglese. Detto all'inglese
+  ("Hei Giàrvis") scatta con punteggio 0,98–1,00; "Ehi Jarvis" letto all'italiana ("Iàrvis") solo 0,10 (prova con
+  voci sintetiche, 2026-11-23). Se non scatta: pronuncia inglese, oppure "Sensibilità" più alta nel pannello.
+- **Come è fatto** (`server/jarvis/`, processo a parte avviato e tenuto in vita da `pannello.py`, porta 47802,
+  stesso token del pannello; `adb reverse` inoltra anche la 47802):
+  - `principale.py`: stati (riposo, ascolto, penso, lavoro, parlo, conferma, seguito), parola chiave sempre
+    attiva (interrompe Jarvis mentre parla), rilevamento del parlato (Silero), server HTTP per il tablet;
+  - `voce_claude.py`: faster-whisper (large-v3-turbo sulla GPU con le DLL CUDA di pip, se no `small` sulla CPU:
+    ~2 s per una frase) e voce edge-tts (it-IT-DiegoNeural, serve Internet);
+  - `esecutore.py`: un processo `claude -p` sempre aperto (stream-json): la conversazione continua da un comando
+    all'altro, la risposta si dice frase per frase mentre arriva. Personalità in `persona.md`;
+  - `guardia.py`: hook PreToolUse di Claude Code. Azioni irreversibili (cancellare, spegnere, registro,
+    disinstallare, `git push`, inviare messaggi…) → Jarvis chiede "Confermi?" a voce (o Sì/No sul tablet), 45 s
+    senza risposta = no. Livelli: irreversibili (predefinito), sempre, mai;
+  - `voce_gemini.py`: modalità Gemini (Gemini Live parla, Claude Code esegue con lo strumento `esegui_sul_pc`).
+    Serve una chiave di Google AI Studio: **l'abbonamento Gemini non include l'API**.
+- **Tablet** (`JarvisServizio.java`): servizio in primo piano (notifica "Jarvis") nel processo persistente; manda il
+  microfono al PC (PCM 16 kHz) e suona la voce che arriva (trame `[tipo][lunghezza][dati]`, vedi `trame.py`).
+  Wakelock parziale e Wi-Fi ad alte prestazioni mentre il PC è collegato, anche a batteria; fuori da Doze
+  (`allow-in-power-save` in `privapp-permissions-pannello.xml` e `dumpsys deviceidle whitelist`). Permesso del
+  microfono concesso dall'installazione (`pm grant`).
+- Impostazioni in `server/jarvis.json` (fuori da git: contiene la chiave Gemini), registro in `server/jarvis.log`.
+  Si disattiva del tutto con `"jarvis": false` in `config.json`. Dipendenze: `requirements-jarvis.txt` (~3 GB con
+  i modelli; `installa.ps1` lo chiede). Claude Code deve aver fatto l'accesso: `claude auth login`.
+- Il microfono predefinito del PC di casa (Virtual Desktop) si blocca all'apertura: i dispositivi del PC si aprono
+  in un thread a parte e, se non rispondono in 4 s, Jarvis lo segnala invece di bloccarsi.
+- **Provato** (2026-11-23): richiesta scritta dal pannello → ricerca in rete → risposta mostrata e detta;
+  conferma della guardia con un file di prova sul Desktop (no → il file resta, sì → cancellato); voce dal tablet;
+  microfono del tablet collegato via USB; riconoscimento italiano su GPU e CPU; parola chiave con voci sintetiche;
+  pannello Jarvis in anteprima 960x600. **Non ancora provato**: parola chiave detta da una persona vera al tablet,
+  tablet a schermo spento e a batteria per ore (Doze), Wi-Fi invece dell'USB, modalità Gemini (manca la chiave),
+  casse e microfono del PC.
+
 ## Abbinamento automatico (APK generico, dal 2026-11-15)
 - `python android/costruisci.py --generico` crea in `android/build-generico/` un APK senza IP né chiave: è quello
   pubblicato nelle Release per chiunque. La build personale (`costruisci.py` senza opzioni) resta com'era.
@@ -176,4 +216,4 @@ normale). Un permesso privilegiato nuovo va prima aggiunto a `privapp-permission
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.8.1 (2026-11-15).
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.9.0 (2026-11-23, Jarvis).

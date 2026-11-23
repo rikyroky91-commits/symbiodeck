@@ -100,6 +100,21 @@
     <p class="nota">"Prova" preme la combinazione dopo 3 secondi, così hai il tempo di passare alla finestra giusta.
       Le scorciatoie non arrivano ai programmi avviati come amministratore.</p>
   </section>
+  <section class="largo" id="jarvis-sezione">
+    <h2>🎙️ Jarvis <small>comandi vocali: "Ehi Jarvis" vicino al tablet · tutte le impostazioni anche sul tablet (scorri dal bordo sinistro)</small></h2>
+    <p class="nota" id="j-stato">…</p>
+    <div class="barra">
+      <span>Modalità:</span>
+      <button id="j-claude">Claude</button><button id="j-gemini">Gemini + Claude</button>
+    </div>
+    <div class="barra">
+      <input type="password" id="j-chiave" placeholder="Chiave API di Gemini (gratuita da aistudio.google.com)" style="flex:1" autocomplete="off">
+      <button id="j-salva-chiave">Salva chiave</button>
+      <button id="j-prova">▶ Prova la voce</button>
+    </div>
+    <p class="nota">L'abbonamento Gemini (Google AI Pro) non include l'API: serve una chiave di Google AI Studio.
+      La modalità Claude usa Claude Code di questo PC (accesso con <code>claude auth login</code>).</p>
+  </section>
 </main>
 
 <div id="velo">
@@ -344,6 +359,32 @@
   if (!token) { avviso("Apri le impostazioni dal collegamento \"Pannello PC – Impostazioni\"", true); return; }
   api("/api/config").then(function (c) { config = c; disegna(); }, function (e) { avviso(e.message, true); });
   stato();
+})();
+</script>
+<script>
+/* Jarvis (server/jarvis, porta 47802): modalità e chiave Gemini dal PC */
+(function () {
+  var token = location.hash.slice(1), base = location.protocol + "//" + location.hostname + ":47802";
+  var $ = function (id) { return document.getElementById(id); };
+  function api(p, corpo) {
+    var o = { headers: { "X-Token": token } };
+    if (corpo !== undefined) { o.method = "POST"; o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(corpo); }
+    return fetch(base + p, o).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.errore || r.status); return j; }); });
+  }
+  function mostra(s) {
+    var i = s.impostazioni;
+    $("j-stato").textContent = "Stato: " + s.stato + " · microfono " + i.microfono + " · casse " + i.casse +
+      " · Claude Code " + (s.claude ? "trovato" : "NON trovato") + (i.gemini_chiave ? " · chiave Gemini " + i.gemini_chiave : "");
+    $("j-claude").className = i.modalita === "claude" ? "primario" : "";
+    $("j-gemini").className = i.modalita === "gemini" ? "primario" : "";
+  }
+  function errore() { $("j-stato").textContent = "Jarvis non è in esecuzione (installa requirements-jarvis.txt e riavvia il pannello)."; }
+  function cambia(d) { api("/jarvis/impostazioni", d).then(mostra, function (e) { $("j-stato").textContent = e.message; }); }
+  $("j-claude").onclick = function () { cambia({ modalita: "claude" }); };
+  $("j-gemini").onclick = function () { cambia({ modalita: "gemini" }); };
+  $("j-salva-chiave").onclick = function () { var k = $("j-chiave").value.trim(); if (k) { cambia({ gemini_chiave: k }); $("j-chiave").value = ""; } };
+  $("j-prova").onclick = function () { api("/jarvis/prova-voce", {}).catch(errore); };
+  api("/jarvis/stato").then(mostra, errore);
 })();
 </script>
 </body>

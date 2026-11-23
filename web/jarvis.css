@@ -1,0 +1,125 @@
+/* Pannello di Jarvis: entra da sinistra sopra il pannello del PC. Grafica HUD originale. */
+#jarvis {
+  --j-ciano: #39d5ff; --j-ciano-2: #8ff0ff; --j-ambra: #ffb341; --j-rosso: #ff5468; --j-verde: #4dffb8;
+  --j-colore: var(--j-ciano); --j-fondo: #03070d; --j-linea: rgba(57, 213, 255, .16);
+  position: fixed; inset: 0; z-index: 20; color: #dff6ff; overflow: hidden;
+  font-family: "Segoe UI", Roboto, system-ui, sans-serif;
+  background:
+    radial-gradient(520px 520px at 23% 52%, rgba(57, 213, 255, .10), transparent 70%),
+    repeating-linear-gradient(0deg, rgba(57, 213, 255, .035) 0 1px, transparent 1px 32px),
+    repeating-linear-gradient(90deg, rgba(57, 213, 255, .035) 0 1px, transparent 1px 32px),
+    var(--j-fondo);
+  transform: translateX(-102%); transition: transform .38s cubic-bezier(.2, .8, .2, 1);
+  display: flex; flex-direction: column;
+}
+#jarvis.aperto { transform: none; }
+#jarvis.trascina { transition: none; }
+#jarvis::after { /* righe di scansione */
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: repeating-linear-gradient(180deg, rgba(255, 255, 255, .018) 0 1px, transparent 1px 3px);
+}
+#jarvis[data-stato=ascolto], #jarvis[data-stato=seguito] { --j-colore: var(--j-ciano-2); }
+#jarvis[data-stato=penso], #jarvis[data-stato=lavoro] { --j-colore: var(--j-ambra); }
+#jarvis[data-stato=conferma] { --j-colore: var(--j-rosso); }
+#jarvis[data-stato=parlo] { --j-colore: var(--j-verde); }
+#jarvis[data-stato=spento] { --j-colore: #56606c; }
+
+/* intestazione */
+.j-testa { display: flex; align-items: center; gap: 14px; padding: 10px 16px 6px; position: relative; z-index: 1; }
+.j-logo { font: 600 18px/1 "Consolas", "Roboto Mono", monospace; letter-spacing: 7px; color: var(--j-ciano);
+  text-shadow: 0 0 12px rgba(57, 213, 255, .7); }
+.j-logo small { display: block; font-size: 9px; letter-spacing: 3px; color: rgba(143, 240, 255, .55); margin-top: 3px; }
+.j-chip { font: 11px "Consolas", monospace; letter-spacing: 1px; padding: 4px 8px; border-radius: 4px;
+  border: 1px solid var(--j-linea); color: rgba(223, 246, 255, .7); white-space: nowrap; }
+.j-chip.ok { border-color: rgba(77, 255, 184, .45); color: var(--j-verde); }
+.j-chip.no { border-color: rgba(255, 84, 104, .45); color: var(--j-rosso); }
+.j-spazio { flex: 1; }
+.j-btn { background: rgba(57, 213, 255, .06); border: 1px solid rgba(57, 213, 255, .35); color: #dff6ff;
+  border-radius: 8px; padding: 8px 14px; font: inherit; font-size: 14px; letter-spacing: .5px; }
+.j-btn:active { background: rgba(57, 213, 255, .22); }
+.j-btn.forte { background: var(--j-colore); color: #02131a; border-color: transparent; font-weight: 700; }
+.j-btn.rosso { border-color: rgba(255, 84, 104, .6); color: #ffd3d9; }
+.j-chiudi { width: 40px; height: 36px; padding: 0; font-size: 18px; }
+
+/* corpo: HUD a sinistra, schede a destra */
+.j-corpo { flex: 1; display: flex; gap: 14px; padding: 0 16px 14px; min-height: 0; position: relative; z-index: 1; }
+.j-hud { width: 420px; display: flex; flex-direction: column; align-items: center; position: relative; }
+#j-tela { width: 380px; height: 380px; }
+.j-stato { font: 600 15px "Consolas", monospace; letter-spacing: 5px; color: var(--j-colore);
+  text-shadow: 0 0 10px var(--j-colore); margin-top: -6px; text-transform: uppercase; transition: color .3s; }
+.j-azione { font: 12px "Consolas", monospace; color: rgba(223, 246, 255, .65); height: 16px; margin-top: 6px;
+  max-width: 400px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.j-comandi { display: flex; gap: 8px; margin-top: 10px; }
+.j-comandi .j-btn { min-width: 92px; }
+
+/* conferma */
+.j-conferma { position: absolute; left: 30px; right: 30px; top: 120px; padding: 16px; border-radius: 12px;
+  background: rgba(20, 4, 8, .92); border: 1px solid var(--j-rosso); box-shadow: 0 0 30px rgba(255, 84, 104, .35);
+  text-align: center; display: none; }
+.j-conferma.vista { display: block; animation: j-lampo 1.2s ease-in-out infinite alternate; }
+.j-conferma p { margin: 6px 0 14px; font-size: 15px; line-height: 1.35; }
+.j-conferma .j-titolo { font: 600 12px "Consolas", monospace; letter-spacing: 3px; color: var(--j-rosso); }
+@keyframes j-lampo { from { box-shadow: 0 0 14px rgba(255, 84, 104, .25); } to { box-shadow: 0 0 36px rgba(255, 84, 104, .6); } }
+
+/* schede */
+.j-lato { flex: 1; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--j-linea);
+  border-radius: 12px; background: rgba(3, 12, 20, .72); position: relative; }
+.j-lato::before, .j-lato::after { content: ""; position: absolute; width: 14px; height: 14px; border: 2px solid var(--j-ciano); }
+.j-lato::before { left: -1px; top: -1px; border-right: 0; border-bottom: 0; border-top-left-radius: 12px; }
+.j-lato::after { right: -1px; bottom: -1px; border-left: 0; border-top: 0; border-bottom-right-radius: 12px; }
+.j-schede { display: flex; border-bottom: 1px solid var(--j-linea); }
+.j-schede button { flex: 1; background: none; border: 0; color: rgba(223, 246, 255, .55); padding: 10px;
+  font: 600 12px "Consolas", monospace; letter-spacing: 3px; text-transform: uppercase; }
+.j-schede button.attiva { color: var(--j-ciano); box-shadow: inset 0 -2px 0 var(--j-ciano); }
+.j-pagina { display: none; flex: 1; min-height: 0; flex-direction: column; }
+.j-pagina.attiva { display: flex; }
+
+/* conversazione */
+.j-chat { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.j-msg { max-width: 86%; padding: 8px 11px; border-radius: 10px; font-size: 14px; line-height: 1.4; word-wrap: break-word;
+  white-space: pre-wrap; }
+.j-msg.utente { align-self: flex-end; background: rgba(57, 213, 255, .14); border: 1px solid rgba(57, 213, 255, .3); }
+.j-msg.jarvis { align-self: flex-start; background: rgba(255, 255, 255, .04); border: 1px solid rgba(255, 255, 255, .08); }
+.j-msg.jarvis::before { content: "JARVIS"; display: block; font: 600 9px "Consolas", monospace; letter-spacing: 2px;
+  color: var(--j-ciano); margin-bottom: 3px; }
+.j-msg.azione { align-self: flex-start; font: 11px "Consolas", monospace; color: var(--j-ambra); background: none;
+  padding: 0 4px; }
+.j-msg.azione::before { content: "▸ "; }
+.j-msg.errore { align-self: center; color: var(--j-rosso); font-size: 12px; background: none; }
+.j-vuoto { margin: auto; text-align: center; color: rgba(223, 246, 255, .45); font-size: 13px; line-height: 1.6; }
+.j-scrivi { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--j-linea); }
+.j-scrivi input { flex: 1; background: rgba(0, 0, 0, .4); border: 1px solid rgba(57, 213, 255, .3); color: #fff;
+  border-radius: 8px; padding: 10px 12px; font: inherit; font-size: 15px; }
+
+/* impostazioni */
+.j-impostazioni { flex: 1; overflow-y: auto; padding: 4px 14px 14px; }
+.j-gruppo { font: 600 10px "Consolas", monospace; letter-spacing: 3px; color: var(--j-ciano); margin: 14px 0 4px;
+  text-transform: uppercase; }
+.j-riga { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 0;
+  border-bottom: 1px solid rgba(57, 213, 255, .07); font-size: 14px; }
+.j-riga .j-nota { display: block; font-size: 11px; color: rgba(223, 246, 255, .45); margin-top: 1px; }
+.j-scelte { display: flex; border: 1px solid rgba(57, 213, 255, .3); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+.j-scelte button { background: none; border: 0; color: rgba(223, 246, 255, .7); padding: 6px 11px; font: inherit; font-size: 13px; }
+.j-scelte button + button { border-left: 1px solid rgba(57, 213, 255, .2); }
+.j-scelte button.si { background: rgba(57, 213, 255, .85); color: #02131a; font-weight: 700; }
+.j-riga select, .j-riga input[type=password], .j-riga input[type=text] { background: #061019; color: #dff6ff;
+  border: 1px solid rgba(57, 213, 255, .3); border-radius: 8px; padding: 6px 8px; font: inherit; font-size: 13px; max-width: 220px; }
+.j-riga input[type=range] { width: 170px; accent-color: var(--j-ciano); }
+.j-valore { font: 12px "Consolas", monospace; color: var(--j-ciano); min-width: 44px; text-align: right; }
+.j-interruttore { position: relative; width: 48px; height: 26px; border-radius: 13px; background: #1b2733; border: 0;
+  flex-shrink: 0; transition: background .2s; }
+.j-interruttore::after { content: ""; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: #8aa0b3; transition: transform .2s, background .2s; }
+.j-interruttore.si { background: rgba(57, 213, 255, .5); }
+.j-interruttore.si::after { transform: translateX(22px); background: #fff; box-shadow: 0 0 10px var(--j-ciano); }
+
+/* linguetta sul bordo sinistro del pannello: stato di Jarvis e invito allo scorrimento */
+#jarvis-linguetta { position: fixed; left: 0; top: 50%; width: 6px; height: 120px; margin-top: -60px; z-index: 5;
+  border-radius: 0 6px 6px 0; background: #39d5ff; opacity: .35; box-shadow: 0 0 12px #39d5ff; transition: all .3s; }
+#jarvis-linguetta[data-stato=ascolto], #jarvis-linguetta[data-stato=seguito] { opacity: 1; background: #8ff0ff; width: 9px; }
+#jarvis-linguetta[data-stato=penso], #jarvis-linguetta[data-stato=lavoro] { opacity: 1; background: #ffb341; box-shadow: 0 0 14px #ffb341; }
+#jarvis-linguetta[data-stato=parlo] { opacity: 1; background: #4dffb8; box-shadow: 0 0 14px #4dffb8; }
+#jarvis-linguetta[data-stato=conferma] { opacity: 1; background: #ff5468; box-shadow: 0 0 18px #ff5468; width: 10px; }
+#jarvis-linguetta[data-stato=spento], #jarvis-linguetta.assente { opacity: .12; background: #56606c; box-shadow: none; }
+#scia-jarvis { position: fixed; left: 0; top: 0; bottom: 0; width: 0; z-index: 19; pointer-events: none;
+  background: linear-gradient(90deg, rgba(57, 213, 255, .35), transparent); }

@@ -6,4 +6,6 @@
         <permission name="android.permission.SHUTDOWN" />
         <permission name="android.permission.WRITE_SECURE_SETTINGS" />
     </privapp-permissions>
+    <!-- Jarvis: fuori dal risparmio energetico (Doze), così a schermo spento e a batteria resta collegato al PC -->
+    <allow-in-power-save package="it.rikyr.pannello" />
 </permissions>

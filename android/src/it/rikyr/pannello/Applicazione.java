@@ -74,6 +74,8 @@ public class Applicazione extends Application {
         avviaSimbiosi(spento);
         registerReceiver(batteria, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         registerReceiver(usb, new IntentFilter("android.hardware.usb.action.USB_STATE"));
+        // Jarvis: microfono e voce del tablet, anche a schermo spento (si collega da solo quando il PC c'è)
+        JarvisServizio.avvia(this);
     }
 
     private final BroadcastReceiver batteria = new BroadcastReceiver() {

@@ -104,6 +104,21 @@ public class Pannello extends Activity {
 
         registerReceiver(batteria, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         ritorno = new Ritorno(this);
+        // Jarvis usa il microfono del tablet: si chiede una volta (l'installazione lo concede già con pm grant)
+        if (!microfonoConcesso()) requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 1);
+        JarvisServizio.avvia(this);
+    }
+
+    private boolean microfonoConcesso() {
+        return checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)
+                == android.content.pm.PackageManager.PERMISSION_GRANTED;
+    }
+
+    /** Jarvis attivato a schermo spento con "accendi lo schermo": si apre il suo pannello. */
+    @Override protected void onNewIntent(Intent i) {
+        super.onNewIntent(i);
+        if (i.getBooleanExtra("jarvis", false) && web != null)
+            web.evaluateJavascript("window.dispatchEvent(new CustomEvent('apri-jarvis'))", null);
     }
 
     /** Cerca il PC in rete o via USB (vedi Abbinamento); appena lo trova ricarica il pannello. */
@@ -268,6 +283,17 @@ public class Pannello extends Activity {
                     WindowManager.LayoutParams lp = getWindow().getAttributes();
                     lp.screenBrightness = Math.max(0.02f, Math.min(1f, valore));
                     getWindow().setAttributes(lp);
+                }
+            });
+        }
+
+        /** Jarvis: il microfono del tablet è utilizzabile? */
+        @JavascriptInterface public boolean microfono() { return microfonoConcesso(); }
+
+        @JavascriptInterface public void chiediMicrofono() {
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 1);
                 }
             });
         }

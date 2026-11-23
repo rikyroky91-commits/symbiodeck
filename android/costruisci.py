@@ -116,7 +116,7 @@ def main():
     base = COSTRUZIONE / "base.apk"
     esegui([t["aapt2"], "link", "-I", t["jar"], "--manifest", QUI / "AndroidManifest.xml",
             "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
-            "--version-code", 16, "--version-name", "1.8.1", "-A", QUI / "assets",
+            "--version-code", 17, "--version-name", "1.9.0", "-A", QUI / "assets",
             "-o", base, COSTRUZIONE / "res.zip"])
 
     classi = COSTRUZIONE / "classi"
@@ -154,6 +154,11 @@ def main():
         esegui([adb, "shell", "chmod 644 /system/priv-app/PannelloPC/PannelloPC.apk; "
                               "chcon u:object_r:system_file:s0 /system/priv-app/PannelloPC/PannelloPC.apk; "
                               "rm -rf /system/priv-app/PannelloPC/oat; sync"])
+        # permessi privilegiati e uscita dal risparmio energetico (Jarvis a schermo spento): prima del riavvio
+        print(esegui([adb, "push", QUI / "privapp-permissions-pannello.xml",
+                      "/system/etc/permissions/privapp-permissions-pannello.xml"]).strip())
+        esegui([adb, "shell", "chmod 644 /system/etc/permissions/privapp-permissions-pannello.xml; "
+                              "chcon u:object_r:system_file:s0 /system/etc/permissions/privapp-permissions-pannello.xml"])
         r = subprocess.run([adb, "shell", "pm", "uninstall", "-k", "it.rikyr.pannello"], capture_output=True, text=True)
         print("aggiornamento in /data:", (r.stdout + r.stderr).strip() or "nessuno")
         print("riavvio del tablet…")
@@ -163,6 +168,10 @@ def main():
         # appena avviato il gestore dei pacchetti può rispondere "cannot be home": si riprova per un po'
         esegui([adb, "shell", "for i in 1 2 3 4 5 6 7 8 9 10; do cmd package set-home-activity "
                               "it.rikyr.pannello/.Pannello && break; sleep 3; done"])
+        # Jarvis: microfono concesso senza toccare il tablet, servizio fuori da Doze anche se il file sopra manca
+        subprocess.run([adb, "shell", "pm", "grant", "it.rikyr.pannello", "android.permission.RECORD_AUDIO"],
+                       capture_output=True)
+        subprocess.run([adb, "shell", "dumpsys", "deviceidle", "whitelist", "+it.rikyr.pannello"], capture_output=True)
         print(esegui([adb, "shell", "dumpsys package it.rikyr.pannello | grep -E 'versionName|codePath'"]).strip())
 
 

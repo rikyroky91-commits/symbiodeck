@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.SHUTDOWN" />
     <!-- riavvio del debug USB quando adb resta "offline" dopo la ripresa del PC: si concede con pm grant -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Jarvis: microfono e voce del tablet anche a schermo spento (servizio in primo piano, Wi-Fi sveglio) -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
     <application
         android:label="Pannello PC"
@@ -35,6 +39,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service android:name=".JarvisServizio" android:exported="false" />
 
         <receiver
             android:name=".Amministratore"
