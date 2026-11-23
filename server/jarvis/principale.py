@@ -23,8 +23,9 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import audio
-from .esecutore import Esecutore, trova_claude
+from . import audio, locale
+from .cervello import Cervello
+from .esecutore import trova_claude
 from .trame import Frasi, Interruzione, si_o_no
 from .voce_claude import MODELLI_STT, VOCI, Sintesi, Trascrittore
 
@@ -125,7 +126,7 @@ class Jarvis:
         self.uscita = audio.Uscita(self.casse_pc, self.tablet)
         self.stt = Trascrittore(self.imp, log)
         self.tts = Sintesi(self.imp, log)
-        self.claude = Esecutore(DATI, self.imp, PORTA, self.chiave_interna, CONFIG)
+        self.claude = Cervello(DATI, self.imp, PORTA, self.chiave_interna, CONFIG, log)
         self.claude.ascoltatori(self._claude_testo, self._claude_azione, self._claude_fine)
         self.frasi = Frasi()
         self.da_dire = queue.Queue()
@@ -403,6 +404,7 @@ class Jarvis:
                 self.evento(utente=testo)
                 if testo.lower().strip(" .!") in ("stop", "fermati", "basta", "annulla", "lascia stare"):
                     self.claude.interrompi()
+                    self.claude.ferma_lavoro()
                     self.conversazione = False
                     self.imposta_stato("riposo")
                     self.di("Va bene, mi fermo.")
@@ -501,19 +503,28 @@ class Jarvis:
         recenti = recenti or [d for t, d in self.azioni if t > self.fine_parlato - 5][-8:] \
             or [d for _t, d in self.azioni][-3:]
         minuti = (time.time() - (self.azioni[0][0] if self.azioni else self.fine_parlato)) / 60
-        richiesta = (f"L'utente ha chiesto: {self.richiesta[:400]}\n"
+        lavoro = getattr(self.claude, "richiesta_lavoro", "") or self.richiesta
+        richiesta = (f"Il compito: {lavoro[:400]}\n"
                      f"Ci stai lavorando da {minuti:.0f} minuti. Le ultime cose che hai fatto: "
-                     f"{'; '.join(recenti) or 'sta ancora ragionando, nessuna azione nuova'}.\n"
-                     f"Aggiornamenti già detti: {' | '.join(self.detti[-3:]) or 'nessuno'}.\n"
-                     "Sei Jarvis, l'assistente vocale del PC. Scrivi UNA frase parlata in italiano, in prima persona "
-                     "(\"sto...\", \"ho trovato...\"), massimo 20 parole, dando del tu all'utente, tono naturale e un "
-                     "po' ironico, che dica a che punto sei. Non ripetere gli aggiornamenti già detti, non dire che "
-                     "hai quasi finito, niente nomi di comandi o file lunghi. Solo la frase.")
+                     f"{'; '.join(recenti) or 'stai ancora ragionando, nessuna azione nuova'}.\n"
+                     f"Aggiornamenti già detti: {' | '.join(self.detti[-3:]) or 'nessuno'}.")
+        sistema = ("Sei Jarvis, l'assistente vocale del PC. Scrivi UNA frase parlata in italiano, in prima persona "
+                   "(\"sto...\", \"ho trovato...\"), massimo 20 parole, dando del tu all'utente, tono naturale e un po' "
+                   "ironico, che dica a che punto sei. Non ripetere gli aggiornamenti già detti, non dire che hai "
+                   "quasi finito, niente nomi di comandi o file lunghi. Solo la frase.")
+        # 1) il modello locale, se è già acceso (worker o emergenza): zero token Claude
+        if locale.attivo():
+            frase = locale.frase(sistema, richiesta)
+            if frase and 3 < len(frase) < 220:
+                return frase
+        # 2) Haiku con il prompt minimo: ~900 token invece dei ~18.000 del prompt completo di Claude Code
         try:
             exe = trova_claude(self.imp.get("claude_exe", ""))
             r = subprocess.run([exe, "-p", richiesta, "--model", "haiku", "--effort", "low", "--tools", "",
-                                "--no-session-persistence"], capture_output=True, text=True, encoding="utf-8",
-                               errors="replace", timeout=20, cwd=str(DATI), creationflags=0x08000000)
+                                "--system-prompt", sistema, "--strict-mcp-config", "--disable-slash-commands",
+                                "--setting-sources", "", "--no-session-persistence"],
+                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
+                               cwd=str(DATI), creationflags=0x08000000)
             frase = r.stdout.strip().strip('"').splitlines()[0] if r.stdout.strip() else ""
             if 3 < len(frase) < 220:
                 return frase
@@ -755,7 +766,7 @@ class Gestore(BaseHTTPRequestHandler):
             return None
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        if u.path == "/jarvis/interno/conferma":
+        if u.path.startswith("/jarvis/interno/"):
             if not ipaddress.ip_address(self.client_address[0]).is_loopback or not secrets.compare_digest(
                     self.headers.get("X-Interno", ""), self.j.chiave_interna):
                 self.manda(403, {"errore": "riservato alla guardia"})
@@ -771,6 +782,8 @@ class Gestore(BaseHTTPRequestHandler):
         if not r:
             return
         u, q = r
+        if u.path == "/jarvis/interno/lavoro":
+            return self.manda(200, self.j.claude.stato_lavoro())
         if u.path == "/jarvis/stato":
             return self.manda(200, self.j.istantanea())
         if u.path == "/jarvis/flusso":
@@ -799,6 +812,9 @@ class Gestore(BaseHTTPRequestHandler):
                 raise ValueError("richiesta troppo grande")
             d = json.loads(self.rfile.read(n) or b"{}")
             j = self.j
+            if u.path == "/jarvis/interno/ferma-lavoro":
+                j.claude.ferma_lavoro()
+                return self.manda(200, {"ok": True})
             if u.path == "/jarvis/interno/conferma":
                 return self.manda(200, {"ok": j.chiedi_conferma(str(d.get("descrizione", ""))[:300])})
             if u.path == "/jarvis/impostazioni":

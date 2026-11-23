@@ -1,6 +1,7 @@
 """Claude Code come esecutore di Jarvis: un processo `claude -p` sempre aperto (stream-json in entrata e in
-uscita), così la conversazione continua da un comando vocale all'altro e la risposta arriva a pezzi, da dire
-frase per frase. Ogni strumento passa prima dalla guardia (guardia.py, hook PreToolUse)."""
+uscita), con tutti gli strumenti di Claude Code, lo schermo e Chrome. Fa i lavori che la voce gli affida (vedi
+cervello.py); la sua sessione è quella che compare nell'app Claude sotto il progetto pc-panel. Ogni strumento
+passa prima dalla guardia (guardia.py, hook PreToolUse)."""
 import json
 import os
 import re
@@ -59,7 +60,7 @@ class Esecutore:
         if self.sessione and not self.registro().exists():
             self._cambia_sessione(None)   # era in un'altra cartella di lavoro: si riparte da una nuova
         self._blocco = threading.Lock()
-        self._su_testo = self._su_azione = self._su_fine = lambda *a: None
+        self._su_testo = self._su_azione = self._su_fine = self._su_strumento = lambda *a: None
         self._modello_avviato = None
 
     def ascoltatori(self, testo, azione, fine):
@@ -83,30 +84,26 @@ class Esecutore:
         f.write_text(json.dumps(mcp, indent=2), encoding="utf-8")
         return f
 
-    def _avvia(self):
-        exe = trova_claude(self.imp.get("claude_exe", ""))
-        if not exe:
-            raise RuntimeError("Claude Code non trovato sul PC")
-        # due modelli: la voce (sessione principale, risponde subito) e l'esecutore (sotto-agente per i compiti)
-        esecutore = {"esecutore": {
-            "description": "Esegue sul PC qualsiasi compito vero (file, programmi, configurazioni, codice, ricerche, "
-                           "schermo, browser) e riporta l'esito. Usalo per tutto ciò che va oltre un comando singolo.",
-            "prompt": (QUI / "esecutore.md").read_text(encoding="utf-8"),
-            "model": self.imp.get("modello_compiti") or "opus",
-            "effort": self.imp.get("effort_compiti") or "high",
-        }}
+    def _comando(self, exe):
+        """Claude Code completo, come nell'app: modello e ragionamento dei compiti, guardia, schermo, Chrome."""
         cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--permission-mode", "bypassPermissions",
-               "--append-system-prompt-file", str(QUI / "persona.md"),
+               "--append-system-prompt-file", str(QUI / "esecutore.md"),
                "--settings", str(self._file_impostazioni()), "--mcp-config", str(self._file_mcp()),
-               "--agents", json.dumps(esecutore, ensure_ascii=False),
-               "--model", self.imp.get("modello_voce") or "sonnet", "--effort", self.imp.get("effort_voce") or "low"]
+               "--model", self.imp.get("modello_compiti") or "opus", "--effort", self.imp.get("effort_compiti") or "high"]
         if self.imp.get("chrome", True):
             cmd.append("--chrome")
         if self.sessione:
             cmd += ["--resume", self.sessione]
+        return cmd
+
+    def _avvia(self):
+        exe = trova_claude(self.imp.get("claude_exe", ""))
+        if not exe:
+            raise RuntimeError("Claude Code non trovato sul PC")
+        cmd = self._comando(exe)
         env = dict(os.environ, JARVIS_PORTA=str(self.porta), JARVIS_INTERNO=self.chiave_interna,
-                   JARVIS_CONFIG=str(self.file_config), JARVIS_DELEGA="1")
+                   JARVIS_CONFIG=str(self.file_config))
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      cwd=str(self.cartella()), env=env, creationflags=SENZA_FINESTRA)
         self._modello_avviato = self._firma()
@@ -114,8 +111,7 @@ class Esecutore:
         threading.Thread(target=self._scarta_errori, args=(self.proc,), daemon=True).start()
 
     def _firma(self):
-        return tuple(self.imp.get(k) for k in ("modello_voce", "effort_voce", "modello_compiti", "effort_compiti",
-                                                "chrome"))
+        return tuple(self.imp.get(k) for k in ("modello_compiti", "effort_compiti", "chrome"))
 
     def _vivo(self):
         return self.proc is not None and self.proc.poll() is None
@@ -332,6 +328,7 @@ class Esecutore:
             # anche gli strumenti dell'esecutore (sotto-agente) compaiono sul pannello: si vede cosa sta facendo
             for blocco in (d.get("message") or {}).get("content") or []:
                 if blocco.get("type") == "tool_use":
+                    self._su_strumento(blocco.get("name", ""), blocco.get("input") or {})
                     descrizione = descrivi_azione(blocco.get("name", ""), blocco.get("input"))
                     if descrizione:
                         self._su_azione(descrizione)

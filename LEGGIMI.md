@@ -225,6 +225,22 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   ha l'effetto `AcousticEchoCanceler` ("AEC non disponibile"), da misurare se la modalità chiamata riduce comunque
   l'eco (`jarvis.log`: "eco della voce" dopo ogni frase, efficace sotto 0,15). La parola chiave resta sempre attiva
   per interromperlo. **Non provato dal vivo.**
+- **Token: voce e esecutore in due processi** (2026-11-23, `server/jarvis/cervello.py`). Misurato: con un solo
+  Claude Code ogni turno della voce si portava dietro ~44.600 token di istruzioni (strumenti, skill, plugin) che la
+  voce non usa, e ogni aggiornamento ~18.000. Limitare gli strumenti nello stesso processo non va (provato:
+  l'esecutore perde anche PowerShell). Ora:
+  - la **voce** è un `claude -p` minimo: `--system-prompt-file persona.md` (al posto del prompt di Claude Code),
+    `--tools ""`, `--strict-mcp-config` con il solo server `voce_mcp.py` (esegui, stato_lavoro, ferma_lavoro),
+    `--disable-slash-commands`, `--setting-sources ""`, `--no-session-persistence`. Una chiacchiera costa ~4.100 token
+    (-91%) e risponde in 1,4 s. Ogni messaggio porta data e ora (la voce non ha più il prompt di sistema con la data);
+  - l'**esecutore** (`esecutore.py`) è il Claude Code completo (Opus, guardia, schermo, Chrome, skill) con
+    `esecutore.md`; lavora solo quando la voce chiama `esegui`, riceve le parole dell'utente e le istruzioni della
+    voce, e alla fine l'esito torna alla voce come messaggio "[Esito del lavoro …]" che lei racconta. La sua sessione
+    è quella che compare nell'app sotto pc-panel;
+  - aggiornamenti: il modello locale (`locale.py`, llama-server del worker su 127.0.0.1:8099) se è già acceso, se no
+    Haiku con prompt minimo (~900 token invece di ~18.000).
+  Provato: "Quanto spazio libero c'è sul disco C?" → la voce risponde subito, l'esecutore usa PowerShell, la voce
+  racconta l'esito con un'opinione (18 s in tutto). La delega obbligata della guardia (`JARVIS_DELEGA`) non serve più.
 - **Ascolto continuo** (2026-11-23): Jarvis partiva prima che l'utente finisse di parlare (frase chiusa dopo 0,8 s
   di silenzio) e poi non ascoltava più mentre lavorava. Ora: la frase si chiude dopo 1,4 s di silenzio (impostazione
   "Pausa per finire la frase", 0,6-3 s; simulato: un'esitazione di 0,7 s non spezza più la frase, una di 1 s o più
