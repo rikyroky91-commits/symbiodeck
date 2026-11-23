@@ -226,7 +226,7 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   riavvio automatico se cade) che lancia `avvia-jarvis.vbs`; da quel momento `pannello.py` non avvia più la sua copia
   senza privilegi e rilancia l'attività se Jarvis non risponde per un minuto. Si toglie con `-Togli`. La persona
   chiede di aprire i programmi con `explorer.exe` (partono come utente normale, così le scorciatoie del pannello
-  arrivano ancora). Le conferme a voce restano. **Non ancora provato** (serve l'UAC dell'utente).
+  arrivano ancora). Le conferme a voce restano. Provato il 2026-11-23: attività registrata dall'utente (RunLevel Highest), Jarvis ripartito da lì, il pannello non avvia più la sua copia, e Jarvis ha creato e cancellato un file di prova in `C:\Program Files\Apollo\config` (la cancellazione è passata dalla conferma). Nota: da un processo senza privilegi la riga di comando del Jarvis da amministratore non si vede (WMI la nasconde).
 - **Conversazioni nell'app Claude per Windows**: le sessioni di `claude -p` non compaiono da sole nell'elenco
   dell'app. Jarvis le ricorda (`server/jarvis-dati/conversazioni.json`, quella in corso in `sessione.txt`, così
   sopravvive ai riavvii) e le apre nell'app con `claude --desktop --resume <id>` (pulsante "⧉ Sul PC" nel pannello
