@@ -225,6 +225,14 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   ha l'effetto `AcousticEchoCanceler` ("AEC non disponibile"), da misurare se la modalità chiamata riduce comunque
   l'eco (`jarvis.log`: "eco della voce" dopo ogni frase, efficace sotto 0,15). La parola chiave resta sempre attiva
   per interromperlo. **Non provato dal vivo.**
+- **Ascolto continuo** (2026-11-23): Jarvis partiva prima che l'utente finisse di parlare (frase chiusa dopo 0,8 s
+  di silenzio) e poi non ascoltava più mentre lavorava. Ora: la frase si chiude dopo 1,4 s di silenzio (impostazione
+  "Pausa per finire la frase", 0,6-3 s; simulato: un'esitazione di 0,7 s non spezza più la frase, una di 1 s o più
+  sì); dopo "Hey Jarvis" la conversazione resta aperta e il microfono ascolta anche mentre pensa, lavora o
+  l'esecutore è in sottofondo (finché c'è lavoro in corso non scade); quello che aggiungi arriva subito a Claude.
+  Se aggiungi un pezzo entro 10 s dall'inizio della risposta, la risposta in corso si butta (interruzione del turno)
+  e Claude riceve il pezzo nuovo con "(continuo quello che stavo dicendo)"; più tardi il pezzo si accoda e basta.
+  Le frasi fisse non dicono più "signore". **Non provato dal vivo.**
 - **Conversazioni nell'app Claude, progetto pc-panel** (2026-11-23): Claude Code di Jarvis lavora nella cartella
   pc-panel (impostazione `cartella_lavoro`, vuota = pc-panel), quindi le sessioni stanno sotto questo progetto. Le
   sessioni di `claude -p` non compaiono da sole nell'app: appena c'è la prima risposta e Jarvis è fermo (niente

@@ -51,7 +51,8 @@ PREDEFINITE = {
     "velocita": 5,
     "tono": -2,
     "sensibilita": 0.5,            # soglia di openWakeWord: più bassa = si attiva più facilmente
-    "seguito": 6,                  # secondi in cui ascolta ancora dopo aver risposto
+    "seguito": 8,                  # secondi in cui ascolta ancora dopo aver risposto
+    "pausa": 1.4,                  # secondi di silenzio che chiudono una frase (più lunga: puoi pensare)
     "conferme": "irreversibili",   # irreversibili | sempre | mai
     "stt": "auto",
     "accendi_schermo": False,
@@ -144,6 +145,8 @@ class Jarvis:
         self.scarta = False        # turno interrotto: il resto della risposta di Claude non si dice
         self.pronte = queue.Queue(maxsize=2)
         self.ultima_attivita = time.time()  # ultima richiesta o parola chiave
+        self.conversazione = False          # dopo "Hey Jarvis": ascolta sempre finché la conversazione è viva
+        self.inizio_turno = 0.0             # quando è partita l'ultima richiesta a Claude
 
     # ------------------------------------------------------------ eventi per il pannello
     def evento(self, **d):
@@ -181,6 +184,7 @@ class Jarvis:
         self.imp["volume"] = max(0, min(150, int(self.imp["volume"])))
         self.imp["sensibilita"] = max(0.1, min(0.95, float(self.imp["sensibilita"])))
         self.imp["seguito"] = max(0, min(30, int(self.imp["seguito"])))
+        self.imp["pausa"] = max(0.6, min(4.0, float(self.imp["pausa"])))
         salva_impostazioni(self.imp)
         self._applica()
         self.evento(impostazioni=self.impostazioni_pubbliche())
@@ -293,7 +297,8 @@ class Jarvis:
             if interruzione.blocchi > 10:   # ha appena finito di parlare: quanto della sua voce è rientrato
                 log(f"eco della voce: {interruzione.eco:.3f} (microfono/uscita; con cancellazione efficace < 0,15)")
             interruzione.azzera()
-            if self.stato not in ("ascolto", "seguito", "conferma"):
+            ascolta = ("ascolto", "seguito", "conferma") + (("penso", "lavoro") if self.conversazione else ())
+            if self.stato not in ascolta:
                 continue
             if self.uscita.parla:
                 continue  # suoni brevi (attivazione, conferma): non si ascoltano
@@ -307,6 +312,9 @@ class Jarvis:
                 silenzio += 1
             if not parlato:
                 frase = frase[-4:]  # 320 ms prima dell'inizio, per non tagliare la prima sillaba
+                if self.stato in ("penso", "lavoro") or self.claude.lavora_in_sottofondo():
+                    inizio_ascolto = ora  # mentre lavora la conversazione non scade: puoi aggiungere quando vuoi
+                    continue
                 # dopo una domanda di Jarvis ("Mi conferma?") si aspetta di più la risposta
                 seguito = max(self.imp["seguito"], 12) if self.domanda else self.imp["seguito"]
                 attesa = {"ascolto": 6, "conferma": 10}.get(self.stato, seguito)
@@ -314,19 +322,21 @@ class Jarvis:
                     if self.stato == "conferma":
                         self._risposta_conferma(None)
                     else:
+                        self.conversazione = False
                         self.imposta_stato("riposo")
                         self._suona("fine")
                     inizio_ascolto = 0
                 continue
             durata = len(frase) * audio.BLOCCO_IN / audio.FREQ_IN
-            if silenzio >= 10 or durata > 25:  # 0,8 s di silenzio dopo la voce
+            if silenzio >= round(self.imp["pausa"] / 0.08) or durata > 40:  # la frase è finita
                 pcm = np.concatenate(frase)
                 frase, parlato, silenzio, inizio_ascolto = [], False, 0, 0
                 vad.reset_states()
                 if self.stato == "conferma":
                     threading.Thread(target=self._capisci_conferma, args=(pcm,), daemon=True).start()
                 else:
-                    self.imposta_stato("penso")
+                    if self.stato not in ("lavoro",):
+                        self.imposta_stato("penso")
                     self._suona("capito")
                     self.richieste.put(("voce", pcm))
 
@@ -347,6 +357,7 @@ class Jarvis:
             self.scarta = True
             self.claude.interrompi()
         self.uscita.riprendi()
+        self.conversazione = True
         self.imposta_stato("ascolto")
         self.evento(interrotto=True)
 
@@ -360,9 +371,10 @@ class Jarvis:
             self.uscita.taci()   # interrotto: smette di parlare e ascolta
             self._svuota(self.da_dire)
         self.uscita.riprendi()
+        self.conversazione = True
         self.imposta_stato("ascolto")
         self.tablet.comando(attivato=time.time())
-        # solo un suono, niente "Sì, signore?" a voce: mentre parla non ascolta, e si perderebbe l'inizio
+        # solo un suono, niente "Dimmi" a voce: mentre parla non ascolta, e si perderebbe l'inizio
         self._suona("attivo")
 
     @staticmethod
@@ -383,28 +395,47 @@ class Jarvis:
                     testo = self.stt.trascrivi(dato)
                     log("capito", f"({time.time() - t0:.1f}s):", testo)
                     if not testo:
-                        self.imposta_stato("riposo")
-                        self._suona("fine")
+                        if not self.claude.occupato and not self.claude.lavora_in_sottofondo():
+                            self.imposta_stato("seguito" if self.conversazione else "riposo")
                         continue
                 else:
                     testo = dato
                 self.evento(utente=testo)
                 if testo.lower().strip(" .!") in ("stop", "fermati", "basta", "annulla", "lascia stare"):
                     self.claude.interrompi()
+                    self.conversazione = False
                     self.imposta_stato("riposo")
-                    self.di("Come desidera.")
+                    self.di("Va bene, mi fermo.")
                     continue
+                # hai continuato a parlare dopo una pausa mentre la voce aveva appena cominciato a rispondere:
+                # quella risposta si butta e Claude riceve anche il pezzo nuovo (la richiesta di prima resta nella
+                # conversazione, interrotta). Se lavora da più tempo, il pezzo nuovo si accoda e basta.
+                if self.claude.occupato and time.time() - self.inizio_turno < 10:
+                    log("continua a parlare: riparto con la frase intera")
+                    self.gen_voce += 1
+                    self.uscita.taci()
+                    self._svuota(self.da_dire)
+                    self._svuota(self.pronte)
+                    self.uscita.riprendi()
+                    self.scarta = True
+                    self.claude.interrompi()
+                    limite = time.time() + 6
+                    while self.claude.occupato and time.time() < limite:
+                        time.sleep(0.1)
+                    self.scarta = False
+                    testo = "(continuo quello che stavo dicendo) " + testo
                 self.risposta, self.ultima_azione = "", ""
                 self.fine_turno.clear()
                 self.imposta_stato("lavoro")
                 self.richiesta, self.azioni, self.detti = testo, [], []
                 self.ultima_attivita = time.time()
                 self.fine_parlato = time.time()
+                self.inizio_turno = time.time()
                 self.claude.chiedi(testo)
             except Exception as e:
                 log("errore richiesta:", traceback.format_exc())
                 self.imposta_stato("riposo")
-                self.di("Mi scusi signore, qualcosa è andato storto: " + str(e)[:120])
+                self.di("Scusa, qualcosa è andato storto: " + str(e)[:120])
 
     def _claude_testo(self, pezzo):
         if self.scarta:
@@ -433,7 +464,7 @@ class Jarvis:
         if errore:
             log("claude:", errore)
             if "login" in errore.lower() or "logged in" in errore.lower():
-                errore = ("Signore, Claude Code sul PC non ha ancora fatto l'accesso. Esegua claude auth login "
+                errore = ("Claude Code sul PC non ha ancora fatto l'accesso: esegui claude auth login "
                           "in un terminale.")
             self.da_dire.put(errore if len(errore) < 200 else "Claude Code ha dato un errore.")
         # il testo è già arrivato a pezzi (jarvis_pezzo): si manda solo la fine del turno
@@ -446,7 +477,7 @@ class Jarvis:
         while True:
             time.sleep(1)
             lavora = self.claude.occupato or self.claude.lavora_in_sottofondo()
-            if not self.imp.get("aggiornamenti") or not lavora or self.stato not in ("lavoro", "riposo"):
+            if not self.imp.get("aggiornamenti") or not lavora or self.stato not in ("lavoro", "riposo", "seguito"):
                 continue
             if self.uscita.parla or not self.da_dire.empty() or self.conferma:
                 continue
@@ -456,7 +487,7 @@ class Jarvis:
             frase = self._frase_aggiornamento()
             # nel frattempo può aver finito: allora l'aggiornamento non serve più
             ancora = self.claude.occupato or self.claude.lavora_in_sottofondo()
-            if frase and ancora and self.stato in ("lavoro", "riposo") and not self.uscita.parla:
+            if frase and ancora and self.stato in ("lavoro", "riposo", "seguito") and not self.uscita.parla:
                 self.detti.append(frase)
                 log("aggiornamento:", frase)
                 self.evento(jarvis=frase, sottofondo=self.claude.lavora_in_sottofondo())
@@ -565,7 +596,7 @@ class Jarvis:
         self.evento(conferma={"id": c["id"], "descrizione": descrizione})
         self.uscita.riprendi()
         # a voce solo cosa (senza il comando: illeggibile), il dettaglio è sul pannello
-        self.da_dire.put(f"Signore, devo {descrizione.split(':')[0]}. Confermi?")
+        self.da_dire.put(f"Devo {descrizione.split(':')[0]}. Confermi?")
         # si ascolta appena finita la domanda
         threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
         c["esito"].wait(attesa)
@@ -620,7 +651,7 @@ class Jarvis:
 
     def prova_voce(self):
         self.uscita.riprendi()
-        self.di("Buongiorno signore. Tutti i sistemi sono operativi.")
+        self.di("Eccomi. Tutto acceso e funzionante, dimmi pure.")
 
     def avvia(self):
         self._applica()

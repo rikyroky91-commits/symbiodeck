@@ -359,6 +359,8 @@
     ultimo.value = 1.1 - imp.sensibilita;
     ultimo.oninput = function () { ultimo.nextSibling.textContent = Math.round((1 - (1.1 - ultimo.value)) * 100) + "%"; };
     ultimo.onchange = function () { cambia("sensibilita", Math.round((1.1 - Number(ultimo.value)) * 100) / 100); };
+    c.appendChild(riga("Pausa per finire la frase", "quanto silenzio aspetta prima di considerare finita la frase",
+      cursore("pausa", 0.6, 3, 0.1, function (v) { return v.toFixed(1) + " s"; })));
     c.appendChild(riga("Ascolto dopo la risposta", "secondi in cui puoi continuare senza ridire \"Ehi Jarvis\"",
       cursore("seguito", 0, 20, 1, function (v) { return v + " s"; })));
     c.appendChild(riga("Accendi lo schermo", "quando lo chiami a tablet spento", interruttore("accendi_schermo")));
