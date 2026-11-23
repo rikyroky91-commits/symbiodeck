@@ -192,6 +192,20 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - Impostazioni in `server/jarvis.json` (fuori da git), registro in `server/jarvis.log`.
   Si disattiva del tutto con `"jarvis": false` in `config.json`. Dipendenze: `requirements-jarvis.txt` (~3 GB con
   i modelli; `installa.ps1` lo chiede). Claude Code deve aver fatto l'accesso: `claude auth login`.
+- **Come amministratore** (dal 2026-11-23): senza privilegi Claude Code non può scrivere in Program Files (es.
+  `C:\Program Files\Apollo\config`). `server/jarvis-amministratore.ps1` (tasto destro > Esegui con PowerShell,
+  chiede da solo l'UAC, una volta sola) registra l'attività `Pannello PC - Jarvis` (all'accesso, privilegi più alti,
+  riavvio automatico se cade) che lancia `avvia-jarvis.vbs`; da quel momento `pannello.py` non avvia più la sua copia
+  senza privilegi e rilancia l'attività se Jarvis non risponde per un minuto. Si toglie con `-Togli`. La persona
+  chiede di aprire i programmi con `explorer.exe` (partono come utente normale, così le scorciatoie del pannello
+  arrivano ancora). Le conferme a voce restano. **Non ancora provato** (serve l'UAC dell'utente).
+- **Conversazioni nell'app Claude per Windows**: le sessioni di `claude -p` non compaiono da sole nell'elenco
+  dell'app. Jarvis le ricorda (`server/jarvis-dati/conversazioni.json`, quella in corso in `sessione.txt`, così
+  sopravvive ai riavvii) e le apre nell'app con `claude --desktop --resume <id>` (pulsante "⧉ Sul PC" nel pannello
+  di Jarvis, elenco in Impostazioni > Conversazioni e nella pagina delle impostazioni del PC). Il comando rifiuta
+  l'uscita rediretta: va lanciato con una console nascosta propria. Una conversazione aperta nell'app passa
+  all'app: Jarvis alla richiesta successiva ne comincia una nuova (due programmi sulla stessa conversazione
+  perderebbero messaggi). Provato: due conversazioni di Jarvis comparse nell'app (cartella `C:\Users\rikyr`).
 - Il microfono predefinito del PC di casa (Virtual Desktop) si blocca all'apertura: i dispositivi del PC si aprono
   in un thread a parte e, se non rispondono in 4 s, Jarvis lo segnala invece di bloccarsi.
 - **Provato** (2026-11-23): richiesta scritta dal pannello → ricerca in rete → risposta mostrata e detta;

@@ -35,6 +35,7 @@
           '<button class="j-btn forte" id="j-parla">◉ Parla</button>' +
           '<button class="j-btn" id="j-taci">■ Stop</button>' +
           '<button class="j-btn" id="j-nuova">↺ Nuova</button>' +
+          '<button class="j-btn" id="j-app" title="Continua questa conversazione nell&#39;app Claude sul PC">⧉ Sul PC</button>' +
         '</div>' +
         '<div class="j-conferma" id="j-conferma">' +
           '<div class="j-titolo">CONFERMA RICHIESTA</div><p id="j-conferma-testo"></p>' +
@@ -189,6 +190,12 @@
   $("j-nuova").onclick = function () {
     api("/jarvis/nuova", {}).then(function () { avviso("Nuova conversazione"); }, function (e) { avviso(e.message); });
   };
+  function apriNellApp(id) {
+    api("/jarvis/apri-app", id ? { id: id } : {}).then(function () {
+      avviso("Aperta nell'app Claude sul PC");
+    }, function (e) { avviso(e.message); });
+  }
+  $("j-app").onclick = function () { apriNellApp(null); };
   $("j-form").onsubmit = function (e) {
     e.preventDefault();
     var t = $("j-testo").value.trim();
@@ -285,6 +292,20 @@
     return b;
   }
 
+  function caricaConversazioni() {
+    api("/jarvis/conversazioni").then(function (d) {
+      var box = $("j-conversazioni");
+      if (!box) return;
+      box.innerHTML = "";
+      d.conversazioni.slice(0, 10).forEach(function (cv) {
+        var quando = new Date(cv.ultimo * 1000);
+        var nota = quando.toLocaleDateString("it-IT", { day: "numeric", month: "short" }) + " " +
+          quando.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }) + (cv.id === d.attuale ? " · in corso" : "");
+        box.appendChild(riga(cv.titolo || "(senza titolo)", nota, pulsante("⧉ Apri sul PC", function () { apriNellApp(cv.id); })));
+      });
+    }, function () {});
+  }
+
   function disegnaImpostazioni() {
     var c = $("j-imp");
     if (!c || imp.attivo === undefined) return;
@@ -329,9 +350,13 @@
       tendina("stt", [["auto", "Automatico"], ["small", "Piccolo (veloce)"], ["medium", "Medio"],
         ["large-v3-turbo", "Grande turbo"], ["large-v3", "Grande (lento)"]])));
 
-    gruppo(c, "Conversazione");
+    gruppo(c, "Conversazioni");
     c.appendChild(riga("Ricomincia da capo", "Jarvis dimentica la conversazione in corso",
       pulsante("↺ Nuova conversazione", function () { $("j-nuova").onclick(); })));
+    var elenco = document.createElement("div");
+    elenco.id = "j-conversazioni";
+    c.appendChild(elenco);
+    caricaConversazioni();
     c.scrollTop = su;
   }
 

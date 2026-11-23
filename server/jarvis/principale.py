@@ -574,6 +574,8 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, {"ingressi": [], "uscite": [], "errore": str(e)})
         if u.path == "/jarvis/altoparlante":
             return self.altoparlante()
+        if u.path == "/jarvis/conversazioni":
+            return self.manda(200, {"attuale": self.j.claude.sessione, "conversazioni": self.j.claude.conversazioni()})
         return self.manda(404, {"errore": "non trovato"})
 
     def do_POST(self):
@@ -614,6 +616,11 @@ class Gestore(BaseHTTPRequestHandler):
             if u.path == "/jarvis/conferma":
                 j.conferma_dal_pannello(d.get("id"), d.get("ok"))
                 return self.manda(200, {"ok": True})
+            if u.path == "/jarvis/apri-app":
+                uscita = j.claude.apri_nell_app(d.get("id") or None)
+                log("conversazione aperta nell'app Claude:", uscita)
+                j.evento(nuova=True)
+                return self.manda(200, {"ok": True, "messaggio": uscita})
             if u.path == "/jarvis/prova-voce":
                 j.prova_voce()
                 return self.manda(200, {"ok": True})
@@ -707,7 +714,7 @@ def main():
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.CreateMutexW.restype = ctypes.c_void_p
     main.mutex = k32.CreateMutexW(None, False, "Local\\PannelloPCJarvis")
-    if ctypes.get_last_error() == 183:
+    if ctypes.get_last_error() in (183, 5):  # già c'è (5: c'è, ma avviato come amministratore)
         log("jarvis già in esecuzione: esco")
         return
     j = Jarvis()

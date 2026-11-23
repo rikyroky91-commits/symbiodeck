@@ -1512,7 +1512,18 @@ def custode_jarvis(cfg):
     if cfg.get("jarvis") is False or not jarvis_installato():
         log("jarvis non attivo:", "disattivato in config.json" if cfg.get("jarvis") is False else "non installato")
         return
+    muto = 0
     while True:
+        if attivita_jarvis():
+            # Jarvis come amministratore (server/jarvis-amministratore.ps1): lo avvia e lo riavvia l'attività
+            # pianificata; qui si controlla solo che risponda, e se tace da un minuto la si rilancia
+            muto = 0 if jarvis_risponde() else muto + 1
+            if muto == 2:
+                log("jarvis (amministratore) non risponde: rilancio l'attività")
+                subprocess.run(["schtasks", "/run", "/tn", ATTIVITA_JARVIS], capture_output=True,
+                               creationflags=SENZA_FINESTRA)
+            time.sleep(30)
+            continue
         inizio = time.time()
         try:
             p = subprocess.Popen([sys.executable, "-m", "jarvis"], cwd=str(QUI), creationflags=SENZA_FINESTRA,
@@ -1523,6 +1534,27 @@ def custode_jarvis(cfg):
         except OSError as e:
             log("jarvis non avviato:", e)
         time.sleep(10 if time.time() - inizio > 60 else 60)
+
+
+ATTIVITA_JARVIS = "Pannello PC - Jarvis"
+
+
+def attivita_jarvis():
+    """True se è registrata l'attività che avvia Jarvis come amministratore."""
+    try:
+        return subprocess.run(["schtasks", "/query", "/tn", ATTIVITA_JARVIS], capture_output=True, timeout=10,
+                              creationflags=SENZA_FINESTRA).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def jarvis_risponde():
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", PORTA_JARVIS), timeout=3):
+            return True
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------- abbinamento del tablet

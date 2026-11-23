@@ -108,6 +108,8 @@
       <button data-modello="sonnet">Sonnet (veloce)</button><button data-modello="opus">Opus (il più capace)</button><button data-modello="haiku">Haiku (rapidissimo)</button>
       <button id="j-prova">▶ Prova la voce</button>
     </div>
+    <h2 style="margin-top:14px">Conversazioni di Jarvis <small>aprile nell'app Claude per continuarle qui sul PC</small></h2>
+    <div id="j-conversazioni"></div>
     <p class="nota">Jarvis usa Claude Code di questo PC con il tuo abbonamento Claude (accesso una volta sola con <code>claude auth login</code>).</p>
   </section>
 </main>
@@ -380,7 +382,26 @@
     b.onclick = function () { cambia({ modello_claude: b.getAttribute("data-modello") }); };
   });
   $("j-prova").onclick = function () { api("/jarvis/prova-voce", {}).catch(errore); };
-  api("/jarvis/stato").then(mostra, errore);
+  function conversazioni() {
+    api("/jarvis/conversazioni").then(function (d) {
+      var box = $("j-conversazioni"); box.innerHTML = "";
+      d.conversazioni.slice(0, 15).forEach(function (c) {
+        var r = document.createElement("div"); r.className = "barra";
+        var t = document.createElement("span"); t.style.flex = "1";
+        t.textContent = new Date(c.ultimo * 1000).toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) +
+          " · " + (c.titolo || "(senza titolo)") + (c.id === d.attuale ? " · in corso" : "");
+        var b = document.createElement("button"); b.textContent = "⧉ Apri nell'app Claude";
+        b.onclick = function () {
+          b.disabled = true;
+          api("/jarvis/apri-app", { id: c.id }).then(function () { b.textContent = "✓ Aperta"; conversazioni(); },
+            function (e) { b.disabled = false; $("j-stato").textContent = e.message; });
+        };
+        r.appendChild(t); r.appendChild(b); box.appendChild(r);
+      });
+      if (!d.conversazioni.length) box.textContent = "Ancora nessuna conversazione.";
+    }, function () {});
+  }
+  api("/jarvis/stato").then(function (s) { mostra(s); conversazioni(); }, errore);
 })();
 </script>
 </body>

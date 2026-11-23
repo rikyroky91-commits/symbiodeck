@@ -45,8 +45,12 @@ class Esecutore:
         self.chiave_interna = chiave_interna
         self.file_config = file_config
         self.proc = None
-        self.sessione = None
         self.occupato = False
+        # conversazione in corso: sopravvive ai riavvii di Jarvis (e del PC)
+        self.file_sessione = dati / "sessione.txt"
+        self.file_storia = dati / "conversazioni.json"
+        self.sessione = self._leggi_file(self.file_sessione).strip() or None
+        self._domanda = ""
         self._blocco = threading.Lock()
         self._su_testo = self._su_azione = self._su_fine = lambda *a: None
         self._modello_avviato = None
@@ -97,8 +101,70 @@ class Esecutore:
     def nuova_conversazione(self):
         with self._blocco:
             self.ferma()
-            self.sessione = None
+            self._cambia_sessione(None)
             self.occupato = False
+
+    # ------------------------------------------------------------ conversazioni salvate
+    @staticmethod
+    def _leggi_file(f):
+        try:
+            return f.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    def _cambia_sessione(self, nuova):
+        self.sessione = nuova
+        try:
+            if nuova:
+                self.file_sessione.write_text(nuova, encoding="utf-8")
+            elif self.file_sessione.exists():
+                self.file_sessione.unlink()
+        except OSError:
+            pass
+
+    def conversazioni(self):
+        """Le ultime conversazioni di Jarvis, la più recente per prima: [{id, titolo, inizio, ultimo}]."""
+        try:
+            storia = json.loads(self._leggi_file(self.file_storia) or "[]")
+        except ValueError:
+            storia = []
+        return sorted(storia, key=lambda c: c.get("ultimo", 0), reverse=True)
+
+    def _ricorda(self, sessione):
+        storia = [c for c in self.conversazioni() if c.get("id") != sessione]
+        vecchia = next((c for c in self.conversazioni() if c.get("id") == sessione), None)
+        ora = time.time()
+        voce = vecchia or {"id": sessione, "titolo": self._domanda[:80], "inizio": ora}
+        if not voce.get("titolo"):
+            voce["titolo"] = self._domanda[:80]
+        voce["ultimo"] = ora
+        try:
+            self.file_storia.write_text(json.dumps(([voce] + storia)[:50], ensure_ascii=False, indent=1),
+                                        encoding="utf-8")
+        except OSError:
+            pass
+
+    def apri_nell_app(self, sessione=None):
+        """Apre una conversazione nell'app Claude per Windows (claude --desktop --resume <id>). Jarvis la lascia
+        all'app: due programmi che scrivono sulla stessa conversazione perderebbero messaggi, quindi se era quella
+        in corso Jarvis ne comincia una nuova alla prossima richiesta."""
+        with self._blocco:
+            sessione = sessione or self.sessione
+            if not sessione:
+                raise ValueError("nessuna conversazione da aprire")
+            if sessione == self.sessione:
+                self.ferma()
+                self._cambia_sessione(None)
+                self.occupato = False
+            exe = trova_claude(self.imp.get("claude_exe", ""))
+            if not exe:
+                raise RuntimeError("Claude Code non trovato sul PC")
+            # --desktop rifiuta l'uscita rediretta: niente capture_output, una console nascosta tutta sua
+            r = subprocess.run([exe, "--desktop", "--resume", sessione], timeout=60, cwd=str(Path.home()),
+                               creationflags=SENZA_FINESTRA)
+            if r.returncode != 0:
+                raise RuntimeError(f"l'app Claude non ha aperto la conversazione (codice {r.returncode})")
+            return sessione
 
     def _scrivi(self, oggetto):
         self.proc.stdin.write((json.dumps(oggetto, ensure_ascii=False) + "\n").encode("utf-8"))
@@ -112,6 +178,7 @@ class Esecutore:
             if not self._vivo():
                 self._avvia()
             self.occupato = True
+            self._domanda = self._domanda or testo
             self._scrivi({"type": "user", "message": {"role": "user", "content": testo}})
 
     def interrompi(self):
@@ -146,8 +213,11 @@ class Esecutore:
 
     def _evento(self, d):
         tipo = d.get("type")
-        if d.get("session_id"):
-            self.sessione = d["session_id"]
+        if d.get("session_id") and d["session_id"] != self.sessione:
+            self._cambia_sessione(d["session_id"])
+        if tipo == "result" and self.sessione:
+            self._ricorda(self.sessione)  # la conversazione esiste davvero (c'è stato un turno)
+            self._domanda = ""
         if tipo == "stream_event":
             ev = d.get("event") or {}
             if ev.get("type") == "content_block_delta" and (ev.get("delta") or {}).get("type") == "text_delta" \
