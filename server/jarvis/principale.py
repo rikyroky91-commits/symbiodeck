@@ -182,6 +182,8 @@ class Jarvis:
         self.mic_pc = audio.MicPC(lambda b: self._blocco("pc", b))
         self.casse_pc = audio.CassePC()
         self.uscita = audio.Uscita(self.casse_pc, self.tablet)
+        # lo speaker del Quest: Jarvis XR si collega come un altro "tablet" (stesse trame), senza microfono
+        self.visore_audio = audio.Tablet(lambda *a: None)
         self.stt = Trascrittore(self.imp, log)
         self.tts = Sintesi(self.imp, log)
         self.in_gioco = False
@@ -339,8 +341,9 @@ class Jarvis:
         if immersivo == self.visore_immersivo:
             return
         self.visore_immersivo = immersivo
-        log("visore in uso: microfono del tablet spento" if immersivo
-            else "visore tolto: microfono del tablet di nuovo attivo")
+        log("visore in uso: microfono del tablet spento, voce dal Quest" if immersivo
+            else "visore tolto: microfono e voce di nuovo sul tablet")
+        self.uscita.visore = self.visore_audio if immersivo else None
         self._aggiorna_microfono()
         self.evento(visore_immersivo=immersivo)
 
@@ -1642,6 +1645,8 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, {"ingressi": [], "uscite": [], "errore": str(e)})
         if u.path == "/jarvis/altoparlante":
             return self.altoparlante()
+        if u.path == "/jarvis/altoparlante-visore":
+            return self.altoparlante(visore=True)
         if u.path == "/jarvis/eventi":
             dopo = int((q.get("dopo") or ["0"])[0] or 0)
             return self.manda(200, self.j.novita(dopo))
@@ -1863,23 +1868,27 @@ class Gestore(BaseHTTPRequestHandler):
         except (ConnectionError, OSError):
             pass
 
-    def altoparlante(self):
+    def altoparlante(self, visore=False):
+        """Voce di Jarvis in trame (trame.py) per il tablet o, con visore=True, per lo speaker del Quest (Jarvis XR:
+        tipo di contenuto proprio, così il pannello lo inoltra man mano e non a blocchi)."""
         self.send_response(200)
-        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Type", "application/x-jarvis-audio" if visore else "application/octet-stream")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
+        self._cors()
         self.end_headers()
         self.close_connection = True
-        log("tablet collegato (altoparlante):", self.client_address[0])
+        chi = "visore" if visore else "tablet"
+        log(chi, "collegato (altoparlante):", self.client_address[0])
 
         def scrivi(dati):
             self.wfile.write(dati)
             self.wfile.flush()
         try:
-            self.j.tablet.servi_altoparlante(scrivi)
+            (self.j.visore_audio if visore else self.j.tablet).servi_altoparlante(scrivi)
         except (ConnectionError, OSError):
             pass
-        log("tablet scollegato (altoparlante)")
+        log(chi, "scollegato (altoparlante)")
 
     def diretta(self, q):
         """Schermo o finestra in diretta per il cinema di Jarvis XR: [4 byte di lunghezza][JPEG], uno dopo l'altro,

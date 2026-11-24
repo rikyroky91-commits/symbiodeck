@@ -174,7 +174,9 @@ def solo_esecutore(dati):
     modello e il suo livello di ragionamento (impostati a parte nel pannello). Restituisce il rifiuto o None."""
     if os.environ.get("JARVIS_DELEGA") != "1" or dati.get("agent_type") or dati.get("agent_id"):
         return None
-    if dati.get("tool_name", "") in _DELLA_VOCE:
+    # strumenti del visore (aprire cose, guardare con la telecamera): veloci, la voce li usa da sola, come dice
+    # persona.md. Prima passavano dall'esecutore (Opus): una foto chiesta a voce costava ~15 s in più
+    if dati.get("tool_name", "") in _DELLA_VOCE or dati.get("tool_name", "").startswith("mcp__visore__"):
         return None
     return {"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny",

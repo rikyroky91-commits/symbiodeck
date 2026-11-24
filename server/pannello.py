@@ -1322,7 +1322,8 @@ class Gestore(BaseHTTPRequestHandler):
         except OSError:
             return self.manda(502, {"errore": "Jarvis non risponde"})
         # eventi e diretta dello schermo passano man mano che arrivano (non a blocchi da 64 KB)
-        eventi = (r.getheader("Content-Type") or "").startswith(("text/event-stream", "application/x-jarvis-fotogrammi"))
+        eventi = (r.getheader("Content-Type") or "").startswith(("text/event-stream", "application/x-jarvis-fotogrammi",
+                                                                  "application/x-jarvis-audio"))
         try:
             self.send_response(r.status)
             for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control"):

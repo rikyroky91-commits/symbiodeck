@@ -484,9 +484,18 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
       chiesto prima di entrare) o dal tablet
       (comando una tantum `foto`, `Fotocamera.java` con Camera2, telecamera posteriore, app 1.10.0) →
       `POST /jarvis/telecamera?id=` → ridotta a 1568 px → l'immagine torna a Claude. Senza sì niente foto.
-    - **Microfono del tablet spento col visore**: entrando in realtà mista Jarvis XR manda
-      `POST /jarvis/visore/sessione {"immersivo": true}` e Jarvis spegne il microfono del tablet (e ne ignora
-      l'audio); uscendo, o se il visore si scollega, si riaccende. Col visore si parla pizzicando la sfera.
+    - **Col visore addosso: microfono del tablet spento e voce di Jarvis dallo speaker del Quest**: entrando in
+      realtà mista Jarvis XR manda `POST /jarvis/visore/sessione {"immersivo": true}`: Jarvis spegne il microfono del
+      tablet (e ne ignora l'audio) e manda la voce a `GET /jarvis/altoparlante-visore` (stesse trame del tablet, tipo
+      di contenuto `application/x-jarvis-audio` che il pannello inoltra a pezzi), che la pagina suona con Web Audio
+      (AudioContext creato nel tocco su "Entra"). Finché la pagina non è collegata all'audio la voce resta sul
+      tablet. Uscendo, o se il visore si scollega, tutto torna sul tablet. Col visore si parla pizzicando la sfera.
+      Provato: canale audio via pannello HTTPS con la "prova voce" (6,4 s di voce arrivati tutti lì).
+    - **"Guarda" più veloce**: la voce (Sonnet) usa da sola gli strumenti `mcp__visore__*`, telecamera compresa
+      (`guardia.solo_esecutore`, `persona.md`), invece di passare dall'esecutore (Opus). Prova delle 23:19 (prima della
+      modifica): "che telefono ho in mano?" → capito in 1 s → permesso dopo 3 s → foto 5 s dopo il sì (242 KB) →
+      risposta 6 s dopo ("un iPhone, un modello Pro", dalle tre fotocamere e dall'anello MagSafe). Attesa prima dello
+      scatto da 700 a 300 ms.
     - **Priorità normale**: l'Utilità di pianificazione avviava pannello e Jarvis "sotto il normale"; con
       un'estrazione FitGirl a pieno carico `/jarvis/stato` impiegava 1,8 s e la voce minuti a caricarsi. Ora entrambi
       si mettono a priorità normale all'avvio (`SetPriorityClass`).

@@ -225,6 +225,7 @@ class Uscita:
         self.casse_pc = casse_pc
         self.tablet = tablet
         self.dove = "tablet"
+        self.visore = None   # col visore addosso (Jarvis XR) la voce esce dallo speaker del Quest
         self.volume = 1.0
         self.interrotta = threading.Event()
         self.parla = False
@@ -247,6 +248,8 @@ class Uscita:
         return max(recenti) if recenti else 0.0
 
     def _destinazione(self):
+        if self.visore is not None and self.visore.collegato():
+            return self.visore
         return self.tablet if self.dove == "tablet" else self.casse_pc
 
     def riproduci(self, pcm):
@@ -339,6 +342,8 @@ class Uscita:
             self.fine_audio = min(self.fine_audio, time.monotonic()) if self.fine_audio else 0.0
             self.casse_pc.taci()
             self.tablet.taci()
+            if self.visore is not None:
+                self.visore.taci()
             if self.aec is not None:
                 self.aec.taci()
         self._sveglia.set()

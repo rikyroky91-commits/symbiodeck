@@ -31,6 +31,8 @@ def _jarvis(permesso=True, visori=0, immersivo=False):
     j.visori, j.visore_immersivo, j.foto_attese = visori, immersivo, {}
     j.eventi, j.conferme, j.comandi_tablet, j.microfono_voluto = [], [], [], []
     j.evento = lambda **d: j.eventi.append(d)
+    j.uscita = types.SimpleNamespace(visore=None)
+    j.visore_audio = None
 
     def chiedi(descrizione, **k):
         j.conferme.append((descrizione, k))
@@ -129,6 +131,38 @@ def test_comando_una_volta_non_si_ripete_al_ricollegamento():
 def test_riduci_foto_lascia_le_piccole():
     piccola = _jpeg(800, 600)
     assert _riduci_foto(piccola) is piccola
+
+
+def test_voce_dallo_speaker_del_visore():
+    from jarvis.audio import Uscita
+    tablet, visore = Tablet(lambda *a: None), Tablet(lambda *a: None)
+    casse_pc = types.SimpleNamespace(scrivi=lambda d: None, taci=lambda: None)
+    u = Uscita(casse_pc, tablet)
+    assert u._destinazione() is tablet
+    u.visore = visore
+    assert u._destinazione() is tablet            # visore in uso ma Jarvis XR non ancora collegato all'audio
+    visore.clienti.add(object())
+    assert u._destinazione() is visore
+    j = _jarvis()
+    j.uscita = types.SimpleNamespace(visore=None)
+    j.visore_audio = visore
+    j.imposta_visore(True)
+    assert j.uscita.visore is visore
+    j.imposta_visore(False)
+    assert j.uscita.visore is None
+
+
+def test_la_voce_usa_da_sola_gli_strumenti_del_visore():
+    import os
+    from jarvis.guardia import solo_esecutore
+    os.environ["JARVIS_DELEGA"] = "1"
+    try:
+        assert solo_esecutore({"tool_name": "mcp__visore__guarda_con_telecamera"}) is None
+        assert solo_esecutore({"tool_name": "mcp__visore__visore_cartella"}) is None
+        assert solo_esecutore({"tool_name": "Bash"})["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert solo_esecutore({"tool_name": "mcp__schermo__clic"})["hookSpecificOutput"]["permissionDecision"] == "deny"
+    finally:
+        os.environ.pop("JARVIS_DELEGA", None)
 
 
 if __name__ == "__main__":

@@ -1836,6 +1836,72 @@ async function avviaDiretta(f) {
   }
 }
 
+// ------------------------------------------------------------------ voce di Jarvis dallo speaker del visore
+// In realtà mista la voce non esce più dal tablet ma da qui: GET /jarvis/altoparlante-visore manda le stesse trame
+// del tablet ([tipo 1 byte][lunghezza 4 byte][dati]; 1 = PCM 16 bit 24 kHz, 3 = taci), suonate in fila.
+const voceVisore = { ctrl: null, ctx: null, prossimo: 0, sorgenti: new Set() };
+function preparaVoceVisore() {   // va chiamata dentro il tocco su "Entra" (il browser vuole un gesto per l'audio)
+  if (!voceVisore.ctx) voceVisore.ctx = new AudioContext();
+  voceVisore.ctx.resume();
+}
+function suonaPcm(dati) {
+  const ctx = voceVisore.ctx, n = dati.length >> 1;
+  if (!ctx || !n) return;
+  const dv = new DataView(dati.buffer, dati.byteOffset, n * 2), f = new Float32Array(n);
+  for (let i = 0; i < n; i++) f[i] = dv.getInt16(i * 2, true) / 32768;
+  const buf = ctx.createBuffer(1, n, 24000);
+  buf.copyToChannel(f, 0);
+  const s = ctx.createBufferSource();
+  s.buffer = buf; s.connect(ctx.destination);
+  const ora = ctx.currentTime;
+  if (voceVisore.prossimo < ora + 0.02) voceVisore.prossimo = ora + 0.06;   // ripartenza: un filo di margine
+  s.start(voceVisore.prossimo);
+  voceVisore.prossimo += buf.duration;
+  voceVisore.sorgenti.add(s);
+  s.onended = () => voceVisore.sorgenti.delete(s);
+}
+function taciVisore() {
+  voceVisore.sorgenti.forEach((s) => { try { s.stop(); } catch (e) { /* già finita */ } });
+  voceVisore.sorgenti.clear();
+  voceVisore.prossimo = 0;
+}
+async function avviaVoceVisore() {
+  if (voceVisore.ctrl) return;
+  const ctrl = new AbortController();
+  voceVisore.ctrl = ctrl;
+  while (!ctrl.signal.aborted) {
+    try {
+      const r = await fetch(JARVIS + "/jarvis/altoparlante-visore", { headers: { "X-Token": TOKEN }, signal: ctrl.signal });
+      if (!r.ok) throw new Error("errore " + r.status);
+      console.info("[xr] voce di Jarvis dal visore");
+      const lettore = r.body.getReader();
+      let buf = new Uint8Array(0);
+      for (;;) {
+        const { value, done } = await lettore.read();
+        if (done) break;
+        const unito = new Uint8Array(buf.length + value.length);
+        unito.set(buf); unito.set(value, buf.length); buf = unito;
+        while (buf.length >= 5) {
+          const tipo = buf[0], n = new DataView(buf.buffer, buf.byteOffset + 1, 4).getUint32(0);
+          if (buf.length < 5 + n) break;
+          const dati = buf.slice(5, 5 + n);
+          buf = buf.slice(5 + n);
+          if (tipo === 1) suonaPcm(dati);
+          else if (tipo === 3) taciVisore();
+        }
+      }
+    } catch (e) {
+      if (ctrl.signal.aborted) break;
+      console.warn("[xr] voce dal visore:", e.message || e);
+    }
+    if (!ctrl.signal.aborted) await new Promise((ok) => setTimeout(ok, 1500));   // Jarvis riavviato: si ricollega
+  }
+}
+function fermaVoceVisore() {
+  if (voceVisore.ctrl) { voceVisore.ctrl.abort(); voceVisore.ctrl = null; }
+  taciVisore();
+}
+
 // ------------------------------------------------------------------ telecamera del visore (per Jarvis, col permesso)
 // Il permesso del browser si chiede prima di entrare (dentro la sessione il Quest non mostra la richiesta); Jarvis
 // chiede comunque il tuo sì ogni volta prima di scattare.
@@ -1860,7 +1926,8 @@ async function scattaFoto(id) {
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.srcObject = flusso;
     await v.play();
-    await new Promise((ok) => setTimeout(ok, 700));   // esposizione e messa a fuoco
+    // le telecamere della passthrough sono già accese per il visore: esposizione a posto, basta un attimo
+    await new Promise((ok) => setTimeout(ok, 300));
     const c = document.createElement("canvas");
     c.width = v.videoWidth; c.height = v.videoHeight;
     c.getContext("2d").drawImage(v, 0, 0);
@@ -2092,6 +2159,7 @@ async function avvia() {
   nota.innerHTML = "Tocca con l'indice · pizzica per spostare · due mani per ingrandire · pizzica e tieni la sfera per parlare";
   bottone.disabled = false;
   bottone.onclick = async () => {
+    preparaVoceVisore();        // subito, dentro il tocco: il browser lascia suonare solo dopo un gesto
     await preparaMicrofono();   // il permesso si chiede prima: dentro la sessione il visore non mostra la richiesta
     await preparaTelecamera();
     const sessione = await navigator.xr.requestSession(ar ? "immersive-ar" : "immersive-vr", {
@@ -2105,8 +2173,10 @@ async function avvia() {
     document.getElementById("avvio").classList.add("nascosto");
     // con il visore addosso si parla dal Quest: Jarvis spegne il microfono del tablet (si sovrapporrebbero)
     apiJ("/jarvis/visore/sessione", { immersivo: true }).catch(() => {});
+    avviaVoceVisore();          // la voce di Jarvis esce dallo speaker del Quest
     sessione.addEventListener("end", () => {
       apiJ("/jarvis/visore/sessione", { immersivo: false }).catch(() => {});
+      fermaVoceVisore();
       cinema.esci(true);
       scena.background = sfondoAnteprima; griglia.visible = true;
       document.getElementById("avvio").classList.remove("nascosto");
