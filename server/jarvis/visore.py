@@ -456,16 +456,16 @@ class _CatturaDxgi:
         self.cam = dxcam.create(output_color="RGB")
         if self.cam is None:
             raise OSError("dxcam: nessuno schermo")
-        self.ultima = None
+        self.ultima, self.chiave = None, None
 
     def zona(self, l, t, w, h, lato):
+        """None se sullo schermo non è cambiato niente e non c'è ancora un'immagine di questa zona."""
         import numpy as np
         from PIL import Image
+        chiave = (l, t, w, h, lato)
         f = self.cam.grab(region=(l, t, l + w, t + h))
-        if f is None:                       # niente di nuovo sullo schermo: si rimanda l'ultima
-            if self.ultima is None:
-                raise OSError("dxcam: nessun fotogramma")
-            return self.ultima
+        if f is None:                       # niente di nuovo sullo schermo: si rimanda l'ultima della stessa zona
+            return self.ultima if self.chiave == chiave else None
         W, H = _misura_ridotta(w, h, lato)
         try:
             import cv2
@@ -473,14 +473,17 @@ class _CatturaDxgi:
             im = Image.fromarray(np.ascontiguousarray(f))
         except ImportError:
             im = Image.fromarray(f).resize((W, H), Image.BILINEAR)
-        self.ultima = im
+        self.ultima, self.chiave = im, chiave
         return im
 
 
-_dxgi = {"cattura": None, "provata": False}
+_dxgi = {"cattura": None, "provata": False, "blocco": threading.Lock()}   # una sola cattura DXGI alla volta
 
 
 def _cattura_zona(l, t, w, h, lato):
+    # dxcam solo nel processo di cattura (jarvis/cattura.py): dentro Jarvis faceva cadere tutto (0xC0000409)
+    if not _dxgi["provata"] and os.environ.get("JARVIS_CATTURA_DXGI") != "1":
+        _dxgi["provata"] = True
     if not _dxgi["provata"]:
         _dxgi["provata"] = True
         try:
@@ -489,10 +492,13 @@ def _cattura_zona(l, t, w, h, lato):
             _dxgi["cattura"] = None
     if _dxgi["cattura"] is not None:
         try:
-            return _dxgi["cattura"].zona(l, t, w, h, lato)
+            with _dxgi["blocco"]:
+                im = _dxgi["cattura"].zona(l, t, w, h, lato)
+            if im is not None:
+                return im
         except Exception:
             _dxgi["cattura"] = None             # non va: da qui in poi GDI
-    return _cattura_gdi(l, t, w, h, lato)
+    return _cattura_gdi(l, t, w, h, lato)       # (o solo per questo fotogramma: schermo fermo, zona nuova)
 
 
 def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
@@ -535,6 +541,36 @@ def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
         resto = intervallo - (_t.monotonic() - t0)
         if resto > 0:
             _t.sleep(resto)
+
+
+def diretta_isolata(numero=0, hwnd=0, lato=1280, fps=30):
+    """Come diretta(), ma con dxcam (se c'è) in un processo a parte (jarvis/cattura.py): se quello cade, si
+    continua qui con GDI. Senza dxcam: diretta() con GDI e basta."""
+    import importlib.util
+    import subprocess
+    import sys
+    if not importlib.util.find_spec("dxcam"):
+        yield from diretta(numero, hwnd, lato, fps)
+        return
+    proc = subprocess.Popen([sys.executable, "-m", "jarvis.cattura", str(int(numero)), str(int(hwnd)), str(int(lato)),
+                             str(int(fps))], cwd=str(Path(__file__).resolve().parent.parent),
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                            creationflags=0x08000000)   # CREATE_NO_WINDOW
+    try:
+        while True:
+            testa = proc.stdout.read(4)
+            if len(testa) < 4:
+                break                                   # il processo di cattura è finito o caduto
+            jpeg = proc.stdout.read(int.from_bytes(testa, "big"))
+            if not jpeg.startswith(b"\xff\xd8"):
+                break
+            yield jpeg
+    finally:
+        proc.kill()
+        proc.wait(5)
+    if hwnd and not user32.IsWindow(int(hwnd)):
+        raise LookupError("finestra chiusa")
+    yield from diretta(numero, hwnd, lato, fps)         # ripiego: GDI qui dentro
 
 
 def porta_davanti(hwnd):

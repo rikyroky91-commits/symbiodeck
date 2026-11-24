@@ -468,10 +468,14 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
       spariscono (conferme e avvisi no), la sfera va accanto alla barra per parlare. La finestra del PC arriva in
       **diretta fluida** (`GET /jarvis/schermo/diretta`: [4 byte di lunghezza][JPEG]…, il pannello la inoltra a pezzi
       come gli eventi): un tocco o il raggio sullo schermo = clic nella finestra vera. Per giocare: controller,
-      tastiera o mouse collegati al PC; l'audio esce dal PC. Cattura: GDI ridotto mentre legge (StretchBlt, ~12
-      fotogrammi/s su schermo 4K, prima ~5 con la cattura intera); se c'è `dxcam` (`pip install dxcam
-      opencv-python-headless`, non installato: l'installazione da qui non era permessa) cattura dalla scheda video,
-      30-60/s. Schermo del PC spento: per una finestra si ripiega su PrintWindow (~5/s).
+      tastiera o mouse collegati al PC; l'audio esce dal PC. Cattura dalla scheda video con `dxcam` +
+      OpenCV (in requirements-jarvis.txt) **in un processo a parte** (`python -m jarvis.cattura`): dentro Jarvis
+      dxcam lo ha fatto cadere con un errore nativo (0xC0000409) e il visore ha perso la voce finché non è ripartito.
+      Misurato: da solo 50-58 fotogrammi/s; via pannello HTTPS a 1600 px ~28/s (chiesti 30), ~43 Mbit/s. Se il
+      processo di cattura cade si continua dentro Jarvis con GDI ridotto mentre legge (StretchBlt, ~12/s su schermo
+      4K, prima ~5 con la cattura intera); schermo del PC spento: per una finestra PrintWindow (~5/s).
+      Jarvis XR ripete `visore/sessione` a ogni ricollegamento a Jarvis (dopo un riavvio lo stato si perdeva e il
+      microfono del tablet tornava acceso).
     - **Telecamere** ("hey Jarvis, guarda questa scheda madre e dimmi che modello è"): strumento MCP
       `guarda_con_telecamera` (in `visore_mcp.py`) → `POST /jarvis/interno/guarda` → Jarvis chiede **ogni volta** il
       permesso ("usare la telecamera del visore: …", niente "sì, sempre") → foto dal visore (se lo indossi: evento

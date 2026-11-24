@@ -20,3 +20,6 @@ psutil>=5.9
 # riconoscimento vocale sulla scheda video NVIDIA (se manca: CPU, più lento)
 nvidia-cublas-cu12; sys_platform == "win32"
 nvidia-cudnn-cu12>=9,<10; sys_platform == "win32"
+# Jarvis XR, cinema: finestre e schermo del PC catturati dalla scheda video (30-60 fotogrammi/s invece di ~12)
+dxcam>=0.3; sys_platform == "win32"
+opencv-python-headless>=4.8

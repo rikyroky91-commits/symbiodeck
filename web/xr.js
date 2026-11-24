@@ -1913,6 +1913,8 @@ function eventoJarvis(d) {
     S.imp = s.impostazioni || {}; S.stato = s.stato || "riposo"; S.promemoria = s.promemoria || [];
     S.emergenza = !!(s.emergenza && s.emergenza.attiva); S.azione = s.azione || "";
     mostraConferma(s.conferma || null);
+    // Jarvis appena (ri)collegato, magari dopo un riavvio: se sei nel visore glielo si ridice (microfono del tablet)
+    if (renderer.xr.isPresenting) apiJ("/jarvis/visore/sessione", { immersivo: true }).catch(() => {});
     sporca(); return;
   }
   if (d.stato) S.stato = d.stato;

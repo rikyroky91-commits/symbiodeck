@@ -1886,7 +1886,7 @@ class Gestore(BaseHTTPRequestHandler):
         finché il visore resta collegato."""
         a = lambda k, d: (q.get(k) or [d])[0]   # noqa: E731
         try:
-            fotogrammi = visore.diretta(int(a("numero", "0")), int(a("hwnd", "0")), max(320, min(1920, int(a("lato", "1280")))),
+            fotogrammi = visore.diretta_isolata(int(a("numero", "0")), int(a("hwnd", "0")), max(320, min(1920, int(a("lato", "1280")))),
                                         int(a("fps", "30")))
             primo = next(fotogrammi)
         except (LookupError, ValueError, OSError) as e:
