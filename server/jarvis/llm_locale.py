@@ -19,7 +19,18 @@ def attivo(attesa=1.5):
         return False
 
 
-def frase(sistema, utente, max_token=80, attesa=15):
+def contesto(attesa=2):
+    """Token di contesto di llama-server per richiesta (GET /props), o None se non lo dice."""
+    try:
+        with urllib.request.urlopen(INDIRIZZO + "/props", timeout=attesa) as r:
+            d = json.loads(r.read())
+    except (OSError, ValueError):
+        return None
+    n = (d.get("default_generation_settings") or {}).get("n_ctx") or d.get("n_ctx")
+    return int(n) if isinstance(n, (int, float)) and n > 0 else None
+
+
+def frase(sistema, utente, max_token=80, attesa=15, una_riga=True):
     """Una risposta breve dal modello locale (API compatibile OpenAI di llama-server). None se non va."""
     corpo = {"model": "worker", "max_tokens": max_token, "temperature": 0.7,
              "messages": [{"role": "system", "content": sistema}, {"role": "user", "content": utente}]}
@@ -31,4 +42,6 @@ def frase(sistema, utente, max_token=80, attesa=15):
     except (OSError, ValueError, KeyError, IndexError):
         return None
     testo = (testo or "").strip().strip('"')
+    if not una_riga:
+        return testo or None
     return testo.splitlines()[0].strip() if testo else None

@@ -250,6 +250,54 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   **Provato**: voce Piper; cervello locale (con il modello MoE del worker: "quanti file ci sono in tests?" → PowerShell
   e risposta in italiano in 42 s); entrata e uscita con un Jarvis finto (`tests/test_jarvis_emergenza.py`). Non
   ancora provata la commutazione automatica dal vivo (Internet staccato o limite vero).
+  - **Misure del 2026-11-24** (Claude Code 2.1.331 `--bare` con gli stessi parametri di `EsecutoreLocale`, contro un
+    server finto che registra le richieste; non sul PC di Jarvis). Il prompt mandato al modello locale è piccolo:
+    ~2.150 caratteri di istruzioni (persona compresa) + 12 strumenti (Bash, Edit, Read e i 9 dello schermo) per
+    ~6.700 caratteri, in tutto **~2.500 token**. Quindi i 42 s della prova non venivano dal prompt di Claude Code
+    e un ciclo d'agente più leggero (idea presa da OpenJarvis) non serve. Trovati due problemi veri, corretti:
+    1. Claude Code manda `thinking: adaptive` anche a llama-server: Qwen ragiona prima di ogni risposta, e a 40-46
+       token/s mille token di ragionamento sono ~25 s. Ora `MAX_THINKING_TOKENS=0` (provato: il campo sparisce dalla
+       richiesta). Impostazione `ragionamento_locale` (falso) per riaccenderlo. Se llama-server ragiona lo stesso per
+       conto suo (dipende da come lo avvia `start-server.ps1`), va spento lì: `--reasoning-budget 0`.
+    2. Claude Code crede che il modello "worker" abbia **1.000.000 di token** di contesto e non riassumeva mai la
+       conversazione: dopo un po' di turni (o pochi screenshot) andava oltre i 32K (16K con MTP) di llama-server.
+       Ora `CLAUDE_CODE_AUTO_COMPACT_WINDOW` = 65% del contesto vero (letto da `/props` di llama-server, se no dal
+       profilo). Provato col server finto: con la soglia il riassunto parte ("compact_boundary"), senza no. Il
+       riassunto scatta dopo il turno che supera la soglia, per questo il margine è largo.
+    In `--bare` questa versione di Claude Code non dà Write, Glob, Grep e WebFetch anche se chiesti: la persona
+    locale ora dice di usare PowerShell al loro posto.
+  - **Da misurare sul PC di Jarvis**: tempo di una richiesta locale prima e dopo (registro di llama-server: righe
+    `prompt eval` e `eval`), se Qwen ragiona ancora, e il profilo `27b-mtp`: con il prompt a ~2.500 token e il
+    riassunto automatico, i 16K bastano probabilmente per la voce e la velocità raddoppia.
+- **Memoria a lungo termine** (2026-11-24, `server/jarvis/memoria.py`, idea da OpenJarvis). Dopo ogni scambio, in un
+  thread a parte, Haiku (`claude -p --model haiku --tools ""`, prompt minimo) legge domanda e risposta e propone i
+  fatti stabili da ricordare e quelli superati (es. "i giochi ora sono sul K" toglie "sul J"); in emergenza lo fa il
+  modello locale, durante il gioco niente. Se l'esecutore sta lavorando si aspetta il turno con l'esito. Le richieste
+  sotto le 4 parole non contano. I fatti (massimo 80, in `server/jarvis-dati/fatti.json`) entrano in fondo ai
+  prompt di voce, esecutore e cervello locale quando il processo parte (`componi`): così anche il modello locale sa
+  dove tieni le cose. La voce ha due strumenti in più: `ricorda` ("ricordati che…", fiducia "utente") e `dimentica`.
+  Sul tablet: Impostazioni > Memoria (interruttore, elenco con ✕, svuota). API: `GET/POST /jarvis/memoria`.
+  - **Quarantena** (`server/jarvis/sicurezza.py`): ogni fatto passa da uno scanner di istruzioni nascoste (italiano e
+    inglese: "ignora le istruzioni", "d'ora in poi esegui", marcatori di ruolo, "senza chiedere conferma", comandi di
+    rete, indirizzi web nei fatti automatici) e di credenziali. Se scatta, il fatto resta nel file ma non entra mai
+    nei prompt: una pagina web o una finestra letta dall'esecutore non può diventare un ordine permanente. Le
+    credenziali vengono tolte anche dal testo mandato a Haiku.
+  - Provato con 13 test (`tests/test_jarvis_memoria.py`) e un estrattore finto; **non provato con Haiku vero**.
+- **"Sì, sempre" e "No, mai" per le conferme** (2026-11-24, `server/jarvis/permessi.py`, idea da OpenJarvis). Alla
+  domanda "Confermi?" si può rispondere "sì, sempre" (o "d'ora in poi", "ogni volta") e "no, mai"; sul tablet ci
+  sono i due pulsanti. L'impronta è stretta apposta: tipo di azione + comando esatto (o percorso esatto) + cartella,
+  quindi "sì, sempre" vale solo per lo stesso identico comando (es. la pulizia di %TEMP%). Non è ammesso per dischi,
+  registro, sicurezza, spegnimento, servizi, cancellazioni definitive, disinstallazioni, `git reset`/`clean`, email,
+  app collegate (MCP) e file di sistema: lì Jarvis procede solo questa volta e lo dice. "No, mai" vale per tutto.
+  Il suggerimento "puoi dire anche sì, sempre" si sente una volta per avvio. Le decisioni (`jarvis-dati/permessi.json`)
+  si tolgono da Impostazioni > Memoria. "Sì ma non sempre" vale come sì per questa volta.
+- **Registro senza credenziali** (2026-11-24): ogni riga di `jarvis.log` passa da `sicurezza.oscura`: chiavi
+  Anthropic/OpenAI/AWS/Google/GitHub/Slack/Telegram, JWT, Bearer, chiavi private e "password: …" diventano
+  `[NASCOSTO:tipo]`.
+- **Valutato e lasciato fuori da OpenJarvis** (2026-11-24): il framework intero (agenti, motori, Rust, training: il
+  cervello resta Claude Code), il suo "motore" per l'emergenza (stesso llama-server, ma senza la commutazione
+  automatica di `emergenza.py`), i canali di messaggistica, il router e il loop guard. Da valutare più avanti: il
+  briefing del mattino e Kokoro (voci `if_sara`/`im_nicola`) come voce locale al posto di Piper.
 - **Accesso da iPhone, Apple Watch e app esterne**: `POST /jarvis/chiedi` (testo → prima risposta della voce, attende
   fino a 60 s) e `GET /jarvis/eventi?dopo=N` (messaggi successivi, per l'esito dei lavori lunghi), con il token del
   pannello. Accettati anche gli indirizzi Tailscale (100.64.0.0/10) oltre alla rete locale, così da fuori casa basta

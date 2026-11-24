@@ -84,17 +84,43 @@ def valuta(nome, ingresso, livello="irreversibili"):
     return f"usare lo strumento {nome}" if livello == "sempre" else None
 
 
+# azioni per cui "sì, sempre" non si può dire (troppo gravi o troppo larghe): si chiede ogni volta
+SEMPRE_VIETATO = ("modificare i dischi", "modificare il registro", "cambiare impostazioni di sicurezza",
+                  "spegnere o riavviare", "cancellare dei dati in modo definitivo", "disinstallare",
+                  "cambiare servizi", "scartare modifiche", "inviare un'email", "modificare un file di sistema", "usare ")
+
+
+def impronta(nome, ingresso, descrizione, cartella=""):
+    """Chiave stretta dell'azione per le decisioni ricordate: tipo + comando (o percorso) esatto + cartella."""
+    i = ingresso or {}
+    tipo = descrizione.split(":")[0].strip()
+    if nome in ("Bash", "PowerShell"):
+        oggetto = " ".join(str(i.get("command", "")).split()).lower()
+    elif nome in ("Write", "Edit", "NotebookEdit"):
+        oggetto = os.path.normcase(os.path.normpath(os.path.expandvars(
+            str(i.get("file_path") or i.get("notebook_path") or ""))))
+    else:
+        oggetto = nome
+    return f"{nome}|{tipo}|{os.path.normcase(cartella or '')}|{oggetto}"[:1000]
+
+
+def sempre_permesso(descrizione):
+    """True se per questa azione l'utente può rispondere "sì, sempre"."""
+    return not any(descrizione.startswith(v) for v in SEMPRE_VIETATO)
+
+
 def _breve(s, n=120):
     s = " ".join(str(s).split())
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def chiedi_a_jarvis(descrizione, attesa=60):
-    """True se l'utente conferma. Senza Jarvis raggiungibile: no (più prudente)."""
+def chiedi_a_jarvis(descrizione, attesa=60, impronta_azione="", sempre_ok=False):
+    """True se l'utente conferma (o l'aveva permesso per sempre). Senza Jarvis raggiungibile: no (più prudente)."""
     porta = os.environ.get("JARVIS_PORTA", "47802")
     chiave = os.environ.get("JARVIS_INTERNO", "")
     richiesta = urllib.request.Request(f"http://127.0.0.1:{porta}/jarvis/interno/conferma",
-                                       data=json.dumps({"descrizione": descrizione}).encode("utf-8"),
+                                       data=json.dumps({"descrizione": descrizione, "impronta": impronta_azione,
+                                                         "sempre_ok": sempre_ok}).encode("utf-8"),
                                        headers={"Content-Type": "application/json", "X-Interno": chiave})
     try:
         with urllib.request.urlopen(richiesta, timeout=attesa) as r:
@@ -154,7 +180,9 @@ def main():
     descrizione = valuta(dati.get("tool_name", ""), dati.get("tool_input") or {}, _livello())
     if not descrizione:
         return  # nessuna uscita: decide la modalità dei permessi (qui: procede)
-    ok = chiedi_a_jarvis(descrizione)
+    ok = chiedi_a_jarvis(descrizione, impronta_azione=impronta(dati.get("tool_name", ""), dati.get("tool_input"),
+                                                               descrizione, dati.get("cwd", "")),
+                         sempre_ok=sempre_permesso(descrizione))
     esito = {"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "allow" if ok else "deny",

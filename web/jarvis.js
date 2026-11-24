@@ -39,7 +39,8 @@
         '</div>' +
         '<div class="j-conferma" id="j-conferma">' +
           '<div class="j-titolo">CONFERMA RICHIESTA</div><p id="j-conferma-testo"></p>' +
-          '<button class="j-btn rosso" id="j-si">Sì, procedi</button> <button class="j-btn" id="j-no">No</button>' +
+          '<button class="j-btn rosso" id="j-si">Sì, procedi</button> <button class="j-btn" id="j-sempre">Sì, sempre</button> ' +
+          '<button class="j-btn" id="j-no">No</button> <button class="j-btn" id="j-mai">No, mai</button>' +
         '</div>' +
       '</div>' +
       '<div class="j-lato">' +
@@ -192,14 +193,18 @@
     confermaId = c ? c.id : null;
     $("j-conferma").classList.toggle("vista", !!c);
     if (c) $("j-conferma-testo").textContent = "Devo " + c.descrizione + ". Procedo?";
+    // "sì, sempre" solo dove la guardia lo ammette (stesso comando esatto, mai per dischi, registro, messaggi...)
+    $("j-sempre").style.display = c && c.sempre_ok ? "" : "none";
   }
-  function rispondi(ok) {
+  function rispondi(ok, sempre) {
     if (!confermaId) return;
-    api("/jarvis/conferma", { id: confermaId, ok: ok }).catch(function (e) { avviso(e.message); });
+    api("/jarvis/conferma", { id: confermaId, ok: ok, sempre: !!sempre }).catch(function (e) { avviso(e.message); });
     mostraConferma(null);
   }
   $("j-si").onclick = function () { rispondi(true); };
   $("j-no").onclick = function () { rispondi(false); };
+  $("j-sempre").onclick = function () { rispondi(true, true); };
+  $("j-mai").onclick = function () { rispondi(false, true); };
 
   // ------------------------------------------------------------ comandi
   $("j-parla").onclick = function () { api("/jarvis/tocca", {}).catch(function (e) { avviso(e.message); }); };
@@ -323,6 +328,32 @@
     }, function () {});
   }
 
+  function caricaMemoria(d) {
+    if (!d) return api("/jarvis/memoria").then(caricaMemoria, function () {});
+    var box = $("j-memoria");
+    if (!box) return;
+    box.innerHTML = "";
+    var togli = function (corpo) { return function () { api("/jarvis/memoria", corpo).then(caricaMemoria); }; };
+    if (!d.fatti.length) box.appendChild(riga("Nessun fatto ricordato", "si riempie da sola parlando, o di' \"ricordati che…\"",
+      document.createElement("span")));
+    d.fatti.forEach(function (f) {
+      var nota = f.fiducia === "utente" ? "detto da te" : f.fiducia === "auto" ? "annotato da Jarvis"
+        : "in quarantena, non usato (" + (f.motivo || "sospetto") + ")";
+      var t = document.createElement("span"); t.textContent = f.testo;   // testo: mai come HTML
+      var r = riga("", nota, pulsante("✕", togli({ togli: f.indice })));
+      r.firstChild.insertBefore(t, r.firstChild.firstChild);
+      box.appendChild(r);
+    });
+    if (d.fatti.length) box.appendChild(riga("Dimentica tutto", "", pulsante("Svuota la memoria", togli({ azzera: true }))));
+    d.permessi.forEach(function (p) {
+      var t = document.createElement("span");
+      t.textContent = (p.decisione === "sempre_si" ? "Sì, sempre: " : "No, mai: ") + p.descrizione;
+      var r = riga("", "deciso il " + p.quando, pulsante("✕", togli({ togli_permesso: p.impronta })));
+      r.firstChild.insertBefore(t, r.firstChild.firstChild);
+      box.appendChild(r);
+    });
+  }
+
   function disegnaImpostazioni() {
     var c = $("j-imp");
     if (!c || imp.attivo === undefined) return;
@@ -393,6 +424,13 @@
       interruttore("modalita_gioco")));
     c.appendChild(riga("Modello locale", "27B: più memoria per i compiti · MTP: il doppio più veloce, meno memoria",
       scelte("modello_emergenza", [["27b", "27B"], ["27b-mtp", "27B MTP"]])));
+    gruppo(c, "Memoria");
+    c.appendChild(riga("Memoria a lungo termine", "ricorda preferenze e fatti stabili tra una conversazione e l'altra",
+      interruttore("memoria")));
+    var mem = document.createElement("div");
+    mem.id = "j-memoria";
+    c.appendChild(mem);
+    caricaMemoria();
     gruppo(c, "Conversazioni");
     c.appendChild(riga("Ricomincia da capo", "Jarvis dimentica la conversazione in corso",
       pulsante("↺ Nuova conversazione", function () { $("j-nuova").onclick(); })));

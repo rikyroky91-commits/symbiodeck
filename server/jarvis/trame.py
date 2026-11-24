@@ -168,6 +168,26 @@ def si_o_no(testo):
     return None
 
 
+_SEMPRE = (" sempre ", " ogni volta ", " d'ora in poi ", " da ora in poi ", " d'ora in avanti ", " per sempre ",
+           " tutte le volte ", " mai ", " mai più ", " always ", " never ")
+
+
+def risposta_conferma(testo):
+    """(ok, per_sempre) da una risposta a voce: "sì, sempre" -> (True, True), "no, mai" o "mai" -> (False, True),
+    "sì" -> (True, False), non chiaro -> (None, False). Il no vince sempre."""
+    t = " " + re.sub(r"\s+", " ", re.sub(r"[^\wàèéìòù' ]", " ", (testo or "").lower())) + " "
+    t = t.replace(" non per sempre ", " ").replace(" non sempre ", " ")   # "sì, ma non sempre" = solo questa volta
+    sempre = any(p in t for p in _SEMPRE)
+    ok = si_o_no(t)
+    if ok is None and (" mai " in t or " never " in t):
+        ok = False
+    if ok is None and sempre and " mai " not in t:
+        ok = True   # solo "sempre" (o "d'ora in poi"): vale come sì
+    if ok is True and " non " in t:
+        ok = False
+    return ok, bool(sempre and ok is not None)
+
+
 # ---------------------------------------------------------------- interruzione mentre Jarvis parla
 
 class Interruzione:

@@ -23,11 +23,14 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import audio, llm_locale
+from . import audio, llm_locale, memoria
 from .cervello import Cervello
 from .emergenza import CervelloLocale, Emergenza, SintesiLocale
 from .esecutore import trova_claude
-from .trame import Frasi, Interruzione, si_o_no
+from .memoria import UTENTE, Memoria
+from .permessi import Permessi
+from .sicurezza import oscura
+from .trame import Frasi, Interruzione, risposta_conferma
 from .voce_claude import MODELLI_STT, VOCI, Sintesi, Trascrittore
 
 SERVER = Path(__file__).resolve().parent.parent
@@ -67,6 +70,8 @@ PREDEFINITE = {
     "cartella_lavoro": "",         # dove lavora Claude Code (vuoto: la cartella pc-panel)
     "aggiornamenti": True,         # mentre l'esecutore lavora in silenzio, ogni tanto dice a che punto è
     "aggiornamenti_ogni": 30,      # secondi di silenzio prima di un aggiornamento
+    "memoria": True,               # ricorda fatti stabili tra una conversazione e l'altra (memoria.py)
+    "ragionamento_locale": False,  # il modello locale ragiona prima di rispondere (più lento, vedi LEGGIMI)
     "claude_exe": "",
 }
 SCELTE = {
@@ -79,7 +84,8 @@ SCELTE = {
 
 
 def log(*parti):
-    riga = time.strftime("%Y-%m-%d %H:%M:%S ") + " ".join(str(p) for p in parti)
+    # chiavi, token e password non finiscono mai in chiaro nel registro (che contiene ogni frase detta)
+    riga = time.strftime("%Y-%m-%d %H:%M:%S ") + oscura(" ".join(str(p) for p in parti))
     try:
         with open(REGISTRO, "a", encoding="utf-8") as f:
             f.write(riga + "\n")
@@ -131,6 +137,11 @@ class Jarvis:
         self.uscita = audio.Uscita(self.casse_pc, self.tablet)
         self.stt = Trascrittore(self.imp, log)
         self.tts = Sintesi(self.imp, log)
+        self.in_gioco = False
+        self.memoria = Memoria(DATI / "fatti.json", estrai=self._estrai, log=log,
+                               attiva=lambda: bool(self.imp.get("memoria", True)))
+        memoria.ATTUALE = self.memoria      # i prompt di voce, esecutore e cervello locale la includono
+        self.permessi = Permessi(DATI / "permessi.json", log)
         self.emergenza = Emergenza(self, log)
         self.tts_locale = SintesiLocale(log)
         self.claude = None
@@ -174,7 +185,8 @@ class Jarvis:
     def istantanea(self):
         return {"stato": self.stato, "impostazioni": self.impostazioni_pubbliche(),
                 "tablet": {"altoparlante": self.tablet.collegato(), "microfono": self.tablet.microfono_attivo()},
-                "conferma": self.conferma and {"id": self.conferma["id"], "descrizione": self.conferma["descrizione"]},
+                "conferma": self.conferma and {"id": self.conferma["id"], "descrizione": self.conferma["descrizione"],
+                                               "sempre_ok": self.conferma.get("sempre_ok", False)},
                 "claude": bool(trova_claude(self.imp.get("claude_exe", ""))),
                 "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo(),
                 "emergenza": {"attiva": self.emergenza.attiva, "motivo": self.emergenza.motivo},
@@ -484,6 +496,10 @@ class Jarvis:
                 errore = ("Claude Code sul PC non ha ancora fatto l'accesso: esegui claude auth login "
                           "in un terminale.")
             self.da_dire.put(errore if len(errore) < 200 else "Claude Code ha dato un errore.")
+        # memoria: lo scambio va all'estrattore (in sottofondo). Se l'esecutore sta ancora lavorando si aspetta il
+        # turno con l'esito, che contiene le cose vere
+        if not errore and not self.claude.lavora_in_sottofondo():
+            self.memoria.dopo_il_turno(self.richiesta, self.risposta or risultato or "")
         # il testo è già arrivato a pezzi (jarvis_pezzo): si manda solo la fine del turno
         self.evento(fine=True) if self.risposta.strip() else self.evento(jarvis=risultato or "Fatto.", fine=True)
         self.da_dire.put(None)  # segnale di fine turno
@@ -533,20 +549,38 @@ class Jarvis:
             if frase and 3 < len(frase) < 220:
                 return frase
         # 2) Haiku con il prompt minimo: ~900 token invece dei ~18.000 del prompt completo di Claude Code
-        try:
-            exe = trova_claude(self.imp.get("claude_exe", ""))
-            r = subprocess.run([exe, "-p", richiesta, "--model", "haiku", "--effort", "low", "--tools", "",
-                                "--system-prompt", sistema, "--strict-mcp-config", "--disable-slash-commands",
-                                "--setting-sources", "", "--no-session-persistence"],
-                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20,
-                               cwd=str(DATI), creationflags=0x08000000)
-            frase = r.stdout.strip().strip('"').splitlines()[0] if r.stdout.strip() else ""
-            if 3 < len(frase) < 220:
-                return frase
-        except (OSError, subprocess.TimeoutExpired, IndexError) as e:
-            log("aggiornamento non generato:", repr(e))
+        uscita = self._haiku(sistema, richiesta, 20)
+        frase = uscita.strip().strip('"').splitlines()[0] if uscita and uscita.strip() else ""
+        if 3 < len(frase) < 220:
+            return frase
         ultima = recenti[-1][0].lower() + recenti[-1][1:] if recenti else ""
         return f"Ci sto ancora lavorando{': ' + ultima if ultima else ''}."
+
+    def _haiku(self, sistema, richiesta, attesa=30):
+        """Una risposta da Haiku senza strumenti né contesto di Claude Code (pochi token). None se non va."""
+        try:
+            exe = trova_claude(self.imp.get("claude_exe", ""))
+            r = subprocess.run([exe, "-p", "--model", "haiku", "--effort", "low", "--tools", "",
+                                "--system-prompt", sistema, "--strict-mcp-config", "--disable-slash-commands",
+                                "--setting-sources", "", "--no-session-persistence"],
+                               input=richiesta, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=attesa, cwd=str(DATI), creationflags=0x08000000)
+            return r.stdout if r.returncode == 0 else None
+        except (OSError, subprocess.TimeoutExpired, TypeError) as e:
+            log("haiku non raggiungibile:", repr(e)[:160])
+            return None
+
+    def _estrai(self, sistema, testo):
+        """Per la memoria: il modello locale in emergenza (se acceso), altrimenti Haiku. Niente durante il gioco."""
+        if self.in_gioco:
+            return None
+        if self.emergenza.attiva:
+            return llm_locale.frase(sistema, testo, max_token=400, attesa=60, una_riga=False) \
+                if llm_locale.attivo() else None
+        return self._haiku(sistema, testo, 40)
+
+    def ricorda(self, fatto):
+        return self.memoria.aggiungi(fatto, UTENTE)
 
     def ciclo_emergenza(self):
         self.emergenza.ciclo()
@@ -675,19 +709,34 @@ class Jarvis:
                 self.imposta_stato("lavoro")
 
     # ------------------------------------------------------------ conferme (dalla guardia)
-    def chiedi_conferma(self, descrizione, attesa=45):
-        c = {"id": secrets.token_hex(4), "descrizione": descrizione, "esito": threading.Event(), "ok": False}
+    def chiedi_conferma(self, descrizione, attesa=45, impronta="", sempre_ok=False):
+        ricordata = self.permessi.decisione(impronta, sempre_ok)
+        if ricordata is not None:
+            log("conferma", descrizione, "->", ricordata, "(decisione ricordata)")
+            self.evento(azione=("Permesso già dato: " if ricordata else "Vietato per sempre: ") + descrizione[:120])
+            if ricordata:
+                self.da_dire.put(f"Vado: {descrizione.split(':')[0]} me l'avevi già permesso.")
+            return ricordata
+        c = {"id": secrets.token_hex(4), "descrizione": descrizione, "esito": threading.Event(), "ok": False,
+             "sempre": False, "sempre_ok": bool(sempre_ok and impronta)}
         self.conferma = c
-        self.evento(conferma={"id": c["id"], "descrizione": descrizione})
+        self.evento(conferma={"id": c["id"], "descrizione": descrizione, "sempre_ok": c["sempre_ok"]})
         self.uscita.riprendi()
-        # a voce solo cosa (senza il comando: illeggibile), il dettaglio è sul pannello
-        self.da_dire.put(f"Devo {descrizione.split(':')[0]}. Confermi?")
+        # a voce solo cosa (senza il comando: illeggibile), il dettaglio è sul pannello. Il "sì, sempre" si
+        # suggerisce una volta per avvio di Jarvis, solo dove vale
+        suggerimento = ""
+        if c["sempre_ok"] and not getattr(self, "_suggerito_sempre", False):
+            self._suggerito_sempre = True
+            suggerimento = " Se vuoi puoi dire anche sì, sempre."
+        self.da_dire.put(f"Devo {descrizione.split(':')[0]}. Confermi?{suggerimento}")
         # si ascolta appena finita la domanda
         threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
         c["esito"].wait(attesa)
         self.conferma = None
         self.evento(conferma=None)
-        log("conferma", descrizione, "->", c["ok"])
+        log("conferma", descrizione, "->", c["ok"], "(per sempre)" if c["sempre"] else "")
+        if c["sempre"]:
+            self.permessi.ricorda(impronta, c["ok"], descrizione, c["sempre_ok"])
         return c["ok"]
 
     def _ascolta_conferma_dopo_domanda(self, c):
@@ -700,9 +749,10 @@ class Jarvis:
     def _capisci_conferma(self, pcm):
         testo = self.stt.trascrivi(pcm)
         self.evento(utente=testo)
-        self._risposta_conferma(si_o_no(testo) if testo else None, testo)
+        ok, sempre = risposta_conferma(testo) if testo else (None, False)
+        self._risposta_conferma(ok, testo, sempre)
 
-    def _risposta_conferma(self, ok, testo=""):
+    def _risposta_conferma(self, ok, testo="", sempre=False):
         c = self.conferma
         if not c:
             return
@@ -712,15 +762,26 @@ class Jarvis:
             threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
             return
         c["ok"] = bool(ok)
+        c["sempre"] = bool(sempre and (c["sempre_ok"] or not ok))   # "no, mai" vale sempre; "sì, sempre" non per tutto
         self.imposta_stato("lavoro")
-        self.da_dire.put("Procedo." if ok else "D'accordo, lascio stare.")
+        if c["sempre"] and ok:
+            frase = "Procedo, e d'ora in poi questo lo faccio senza chiedertelo."
+        elif c["sempre"]:
+            frase = "D'accordo: questo non lo faccio, e non te lo chiederò più."
+        elif sempre and ok:
+            frase = "Procedo. Per questo però continuerò a chiederti ogni volta."
+        else:
+            frase = "Procedo." if ok else "D'accordo, lascio stare."
+        self.da_dire.put(frase)
         c["esito"].set()
 
-    def conferma_dal_pannello(self, id_, ok):
-        if self.conferma and self.conferma["id"] == id_:
-            self.conferma["ok"] = bool(ok)
+    def conferma_dal_pannello(self, id_, ok, sempre=False):
+        c = self.conferma
+        if c and c["id"] == id_:
+            c["ok"] = bool(ok)
+            c["sempre"] = bool(sempre and (c["sempre_ok"] or not ok))
             self.imposta_stato("lavoro")
-            self.conferma["esito"].set()
+            c["esito"].set()
 
     # ------------------------------------------------------------ comandi dal pannello
     def scrivi(self, testo):
@@ -943,6 +1004,9 @@ class Gestore(BaseHTTPRequestHandler):
         if u.path == "/jarvis/eventi":
             dopo = int((q.get("dopo") or ["0"])[0] or 0)
             return self.manda(200, self.j.novita(dopo))
+        if u.path == "/jarvis/memoria":
+            return self.manda(200, {"attiva": bool(self.j.imp.get("memoria", True)), "fatti": self.j.memoria.elenco(),
+                                    "permessi": self.j.permessi.elenco()})
         if u.path == "/jarvis/conversazioni":
             return self.manda(200, {"attuale": self.j.claude.sessione, "conversazioni": self.j.claude.conversazioni()})
         return self.manda(404, {"errore": "non trovato"})
@@ -964,7 +1028,27 @@ class Gestore(BaseHTTPRequestHandler):
                 j.claude.ferma_lavoro()
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/interno/conferma":
-                return self.manda(200, {"ok": j.chiedi_conferma(str(d.get("descrizione", ""))[:300])})
+                return self.manda(200, {"ok": j.chiedi_conferma(str(d.get("descrizione", ""))[:300],
+                                                                impronta=str(d.get("impronta", ""))[:1000],
+                                                                sempre_ok=bool(d.get("sempre_ok")))})
+            if u.path == "/jarvis/interno/ricorda":
+                fiducia = j.ricorda(str(d.get("fatto", ""))[:400])
+                return self.manda(200, {"fiducia": fiducia})
+            if u.path == "/jarvis/interno/dimentica":
+                return self.manda(200, {"tolti": j.memoria.dimentica(str(d.get("cosa", ""))[:200])})
+            if u.path == "/jarvis/memoria":
+                if "aggiungi" in d:
+                    j.ricorda(str(d["aggiungi"])[:400])
+                if "togli" in d:
+                    j.memoria.togli(int(d["togli"]))
+                if d.get("azzera"):
+                    j.memoria.azzera()
+                if "togli_permesso" in d:
+                    j.permessi.togli(str(d["togli_permesso"]))
+                if d.get("azzera_permessi"):
+                    j.permessi.azzera()
+                return self.manda(200, {"attiva": bool(j.imp.get("memoria", True)), "fatti": j.memoria.elenco(),
+                                        "permessi": j.permessi.elenco()})
             if u.path == "/jarvis/impostazioni":
                 j.cambia(d)
                 return self.manda(200, j.istantanea())
@@ -992,7 +1076,7 @@ class Gestore(BaseHTTPRequestHandler):
                 j.nuova_conversazione()
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/conferma":
-                j.conferma_dal_pannello(d.get("id"), d.get("ok"))
+                j.conferma_dal_pannello(d.get("id"), d.get("ok"), bool(d.get("sempre")))
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/apri-app":
                 uscita = j.claude.apri_nell_app(d.get("id") or None)
