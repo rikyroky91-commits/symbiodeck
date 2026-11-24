@@ -118,6 +118,10 @@
     </div>
     <h2 style="margin-top:14px">App Jarvis per iPhone e Apple Watch <small>inserisci questi dati nell'app sull'iPhone (l'orologio li riceve da lì)</small></h2>
     <p class="nota" id="j-app-dati">…</p>
+    <h2 style="margin-top:14px">Jarvis XR per Meta Quest 3 <small>il pannello e Jarvis come ologrammi nella stanza (vedi LEGGIMI)</small></h2>
+    <p class="nota" id="j-xr">…</p>
+    <h2 style="margin-top:14px">Altre sessioni di Claude Code <small>possono parlarti con la voce di Jarvis e chiederti decisioni</small></h2>
+    <p class="nota">Una volta sola, in un terminale: <code id="j-mcp">claude mcp add --scope user jarvis -- python …\server\jarvis\jarvis_mcp.py</code></p>
     <h2 style="margin-top:14px">Conversazioni di Jarvis <small>aprile nell'app Claude per continuarle qui sul PC</small></h2>
     <div id="j-conversazioni"></div>
     <p class="nota">Jarvis usa Claude Code di questo PC con il tuo abbonamento Claude (accesso una volta sola con <code>claude auth login</code>).</p>
@@ -416,6 +420,19 @@
     var a = d.app_jarvis || {};
     $("j-app-dati").textContent = "Indirizzo: " + (a.indirizzi || []).join(" oppure ") +
       " (da fuori casa: l'indirizzo Tailscale del PC, 100.x.y.z) · Chiave: " + (a.chiave || "?");
+    // il visore vuole https (Tailscale Serve) oppure localhost (cavo USB + adb reverse): con http in rete locale
+    // il browser del Quest non apre la realtà mista
+    var xr = $("j-xr"), k = encodeURIComponent(a.chiave || "");
+    xr.innerHTML = "";
+    var riga = function (testo, url) {
+      var p = document.createElement("div"); p.textContent = testo + " ";
+      var l = document.createElement("a"); l.href = url; l.textContent = url; l.target = "_blank"; p.appendChild(l);
+      xr.appendChild(p);
+    };
+    riga("Anteprima qui sul PC:", "http://localhost:" + location.port + "/xr.html?t=" + k);
+    riga("Quest col cavo (adb reverse tcp:" + location.port + " e tcp:47802):", "http://localhost:" + location.port + "/xr.html?t=" + k);
+    riga("Quest via Tailscale Serve:", "https://<nome-pc>.<tailnet>.ts.net/xr.html?t=" + k);
+    if (a.cartella) $("j-mcp").textContent = 'claude mcp add --scope user jarvis -- python "' + a.cartella + '\\server\\jarvis\\jarvis_mcp.py"';
   }, function () {});
 })();
 </script>

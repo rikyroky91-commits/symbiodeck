@@ -1347,7 +1347,8 @@ class Gestore(BaseHTTPRequestHandler):
                                                for ip, t in self.server.tablet.items() if ora - t < 30],
                                     "porta": PORTA, "abbinamento": Abbinamento.secondi_rimasti(),
                                     # per l'app Jarvis su iPhone e Apple Watch (solo dal PC stesso)
-                                    "app_jarvis": {"indirizzi": indirizzi_del_pc(), "chiave": cfg["token"]}})
+                                    "app_jarvis": {"indirizzi": indirizzi_del_pc(), "chiave": cfg["token"],
+                                                   "cartella": str(WEB.resolve().parent)}})
         return self.manda(404, {"errore": "non trovato"})
 
     def icona(self, target):

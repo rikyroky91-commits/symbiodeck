@@ -131,6 +131,7 @@ class CervelloLocale:
         self.esec.ascoltatori(lambda p: self._testo(p), self._e_azione, lambda r, e: self._fine(r, e))
         self.azioni, self.richiesta_lavoro, self.inizio_lavoro = [], "", 0.0
         self.locale = True
+        self.contesto = lambda: ""
 
     def ascoltatori(self, testo, azione, fine):
         self._testo, self._azione, self._fine = testo, azione, fine
@@ -142,7 +143,7 @@ class CervelloLocale:
     def chiedi(self, testo):
         from .cervello import adesso
         self.richiesta_lavoro, self.inizio_lavoro, self.azioni = testo, time.time(), []
-        self.esec.chiedi(f"[{adesso()}] {testo}")
+        self.esec.chiedi(f"[{adesso()}]{self.contesto()} {testo}")
 
     def interrompi(self):
         self.esec.interrompi()
@@ -217,7 +218,10 @@ class Emergenza:
 
     def valuta(self):
         scelta = self.j.imp.get("emergenza", "auto")
-        if scelta == "sempre":
+        privata = bool(self.j.imp.get("privata"))
+        if privata:
+            voluta, motivo = True, "modalità privata"
+        elif scelta == "sempre":
             voluta, motivo = True, "attivata dalle impostazioni"
         elif scelta == "mai":
             voluta, motivo = False, ""
@@ -227,8 +231,9 @@ class Emergenza:
             voluta, motivo = True, "Claude è fuori dai limiti d'uso"
         else:
             voluta, motivo = False, ""
-        if voluta and getattr(self.j, "in_gioco", False) and scelta != "sempre":
-            # stai giocando: il modello locale (12 GB di scheda video) non si accende, e se c'è si spegne
+        if voluta and getattr(self.j, "in_gioco", False) and (scelta != "sempre" or privata):
+            # stai giocando: il modello locale (12 GB di scheda video) non si accende, e se c'è si spegne. In
+            # modalità privata intanto Jarvis non risponde alle domande (principale._comando_locale): mai Claude
             if not self.rimandata:
                 self.rimandata = True
                 self.log("emergenza rimandata: si sta giocando")
@@ -249,8 +254,11 @@ class Emergenza:
     def _entra(self, motivo):
         self.log("EMERGENZA:", motivo)
         self.j.evento(emergenza={"attiva": True, "motivo": motivo})
-        self.j.di_subito(f"{motivo.capitalize()}: passo al cervello locale. Sarò più lento e un po' meno sveglio, "
-                         "ma ci sono.")
+        if motivo == "modalità privata":
+            self.j.di_subito("Accendo il cervello locale: un minuto e ci sono.")
+        else:
+            self.j.di_subito(f"{motivo.capitalize()}: passo al cervello locale. Sarò più lento e un po' meno "
+                             "sveglio, ma ci sono.")
         try:
             self.avvia_server()
         except Exception as e:
@@ -263,7 +271,7 @@ class Emergenza:
         self.log("fine emergenza: torno a Claude")
         self.j.cambia_cervello(locale=False)
         self.j.evento(emergenza={"attiva": False, "motivo": ""})
-        if not self.rimandata:
+        if not self.rimandata and not self.j.imp.get("privata"):
             self.j.di_subito("Ok, Claude è di nuovo raggiungibile: torno al cervello normale.")
         if self.server_nostro:
             self.ferma_server()

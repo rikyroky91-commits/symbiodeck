@@ -52,14 +52,95 @@
 .j-comandi { display: flex; gap: 8px; margin-top: 10px; }
 .j-comandi .j-btn { min-width: 92px; }
 
-/* conferma */
-.j-conferma { position: absolute; left: 30px; right: 30px; top: 120px; padding: 16px; border-radius: 12px;
-  background: rgba(20, 4, 8, .92); border: 1px solid var(--j-rosso); box-shadow: 0 0 30px rgba(255, 84, 104, .35);
-  text-align: center; display: none; }
-.j-conferma.vista { display: block; animation: j-lampo 1.2s ease-in-out infinite alternate; }
-.j-conferma p { margin: 6px 0 14px; font-size: 15px; line-height: 1.35; }
-.j-conferma .j-titolo { font: 600 12px "Consolas", monospace; letter-spacing: 3px; color: var(--j-rosso); }
-@keyframes j-lampo { from { box-shadow: 0 0 14px rgba(255, 84, 104, .25); } to { box-shadow: 0 0 36px rgba(255, 84, 104, .6); } }
+/* autorizzazioni e domande: a tutto schermo, pulsanti grandi (un tocco preciso anche col tablet in mano) */
+.j-conferma { position: absolute; inset: 0; z-index: 40; display: none; flex-direction: column; align-items: center;
+  justify-content: center; padding: 28px 44px; text-align: center; overflow: hidden;
+  background: radial-gradient(900px 520px at 50% 40%, rgba(255, 84, 104, .16), transparent 70%),
+    repeating-linear-gradient(180deg, rgba(255, 84, 104, .05) 0 1px, transparent 1px 4px), rgba(10, 0, 4, .96); }
+.j-conferma.vista { display: flex; animation: j-c-entra .32s cubic-bezier(.2, .9, .25, 1.15) both; }
+.j-conferma::before, .j-conferma::after { content: ""; position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--j-rosso), transparent); box-shadow: 0 0 18px var(--j-rosso); }
+.j-conferma::before { top: 0; animation: j-c-scansione 2.6s linear infinite; }
+.j-conferma::after { bottom: 0; opacity: .5; }
+.j-c-alone { position: absolute; width: 760px; height: 760px; left: 50%; top: 50%; margin: -380px 0 0 -380px;
+  border-radius: 50%; border: 1px dashed rgba(255, 84, 104, .25); animation: j-gira 40s linear infinite; pointer-events: none; }
+.j-c-testa { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; position: relative; }
+.j-c-anello { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--j-rosso);
+  box-shadow: 0 0 14px var(--j-rosso); animation: j-battito 1.1s ease-in-out infinite; }
+.j-conferma .j-titolo { font: 600 15px "Consolas", monospace; letter-spacing: 6px; color: var(--j-rosso);
+  text-shadow: 0 0 12px rgba(255, 84, 104, .7); }
+.j-c-badge { font: 700 11px "Consolas", monospace; letter-spacing: 2px; padding: 5px 9px; border-radius: 5px;
+  background: var(--j-rosso); color: #1a0004; animation: j-lampeggia 1s steps(2) infinite; }
+.j-c-testo { font-size: 30px; line-height: 1.25; margin: 0 0 8px; max-width: 980px; font-weight: 600; position: relative; }
+.j-c-dettaglio { font: 14px "Consolas", monospace; color: rgba(255, 211, 217, .7); margin: 0 0 16px; max-width: 980px;
+  max-height: 3.6em; overflow: hidden; word-break: break-all; position: relative; }
+.j-c-tempo { width: 520px; max-width: 80%; height: 3px; background: rgba(255, 84, 104, .15); border-radius: 2px;
+  margin-bottom: 26px; overflow: hidden; position: relative; }
+.j-c-tempo i { display: block; height: 100%; width: 100%; background: var(--j-rosso); box-shadow: 0 0 10px var(--j-rosso);
+  transition: width .2s linear; }
+.j-c-pulsanti { display: flex; gap: 22px; width: 100%; max-width: 960px; position: relative; }
+.j-c-btn { flex: 1; border-radius: 18px; border: 2px solid; font: inherit; color: #fff; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  transition: transform .12s, box-shadow .2s, background .2s; -webkit-tap-highlight-color: transparent;
+  animation: j-c-pulsante .45s .12s cubic-bezier(.2, .9, .25, 1.2) both; }
+.j-c-btn b { font: 700 46px/1 "Segoe UI", Roboto, sans-serif; letter-spacing: 4px; }
+.j-c-btn small { font-size: 14px; opacity: .75; letter-spacing: 1px; }
+.j-c-btn:active { transform: scale(.96); }
+.j-c-btn.si { height: 190px; background: linear-gradient(180deg, rgba(77, 255, 184, .22), rgba(77, 255, 184, .06));
+  border-color: rgba(77, 255, 184, .75); box-shadow: 0 0 30px rgba(77, 255, 184, .2), inset 0 0 30px rgba(77, 255, 184, .08); }
+.j-c-btn.no { height: 190px; background: linear-gradient(180deg, rgba(255, 84, 104, .2), rgba(255, 84, 104, .05));
+  border-color: rgba(255, 84, 104, .75); box-shadow: 0 0 30px rgba(255, 84, 104, .2); animation-delay: .18s; }
+.j-c-secondari { display: flex; gap: 22px; width: 100%; max-width: 960px; margin-top: 16px; position: relative; }
+.j-c-btn.piccolo { height: 74px; font-size: 18px; font-weight: 600; background: rgba(255, 255, 255, .04);
+  border-color: rgba(255, 255, 255, .22); animation-delay: .24s; }
+.j-c-btn.piccolo small { font-size: 12px; font-weight: 400; }
+.j-c-opzioni { display: flex; flex-wrap: wrap; gap: 18px; width: 100%; max-width: 960px; justify-content: center; position: relative; }
+.j-c-btn.opzione { flex: 1 1 40%; min-height: 130px; font-size: 30px; font-weight: 700;
+  background: rgba(57, 213, 255, .1); border-color: rgba(57, 213, 255, .7); box-shadow: 0 0 24px rgba(57, 213, 255, .15); }
+.j-c-voce { margin-top: 18px; font: 12px "Consolas", monospace; letter-spacing: 2px; color: rgba(255, 211, 217, .55);
+  text-transform: uppercase; position: relative; }
+.j-conferma.alto .j-c-btn.si { border-style: dashed; }
+.j-conferma.esito-si { animation: j-c-esito-si .38s ease-out forwards; }
+.j-conferma.esito-no { animation: j-c-esito-no .38s ease-out forwards; }
+@keyframes j-c-entra { from { opacity: 0; transform: scale(1.06); } to { opacity: 1; transform: none; } }
+@keyframes j-c-pulsante { from { opacity: 0; transform: translateY(26px) scale(.94); } to { opacity: 1; transform: none; } }
+@keyframes j-c-scansione { from { top: 0; } to { top: 100%; } }
+@keyframes j-c-esito-si { to { opacity: 0; background-color: rgba(77, 255, 184, .25); transform: scale(.97); } }
+@keyframes j-c-esito-no { to { opacity: 0; transform: translateX(-30px); } }
+@keyframes j-battito { 0%, 100% { transform: scale(.8); opacity: .6; } 50% { transform: scale(1.15); opacity: 1; } }
+@keyframes j-lampeggia { 50% { opacity: .45; } }
+@keyframes j-gira { to { transform: rotate(360deg); } }
+
+/* avvisi (promemoria, temperature) e dettatura */
+.j-avviso { position: absolute; left: 50%; top: 14px; z-index: 35; transform: translate(-50%, -140%); max-width: 80%;
+  padding: 14px 22px; border-radius: 12px; font-size: 18px; font-weight: 600; color: #1d1200;
+  background: linear-gradient(90deg, #ffb341, #ffd27a); box-shadow: 0 0 34px rgba(255, 179, 65, .55);
+  transition: transform .45s cubic-bezier(.2, .9, .25, 1.2); }
+.j-avviso.visto { transform: translate(-50%, 0); }
+.j-dettatura { position: absolute; left: 0; right: 0; bottom: 0; z-index: 30; padding: 9px; text-align: center;
+  font: 13px "Consolas", monospace; letter-spacing: 2px; color: #02131a; background: var(--j-ciano-2);
+  transform: translateY(100%); transition: transform .3s; }
+.j-dettatura.vista { transform: none; }
+.j-dettatura::after { content: "▍"; animation: j-lampeggia .9s steps(2) infinite; }
+
+/* modalità privata: bordo verde */
+#jarvis.privata { box-shadow: inset 0 0 0 2px rgba(77, 255, 184, .55), inset 0 0 40px rgba(77, 255, 184, .12); }
+
+/* piccole animazioni */
+.j-msg { animation: j-msg-entra .28s ease-out both; }
+.j-msg.utente { animation-name: j-msg-entra-destra; }
+@keyframes j-msg-entra { from { opacity: 0; transform: translate(-10px, 6px); } to { opacity: 1; transform: none; } }
+@keyframes j-msg-entra-destra { from { opacity: 0; transform: translate(10px, 6px); } to { opacity: 1; transform: none; } }
+.j-pagina.attiva { animation: j-dissolvi .22s ease-out both; }
+@keyframes j-dissolvi { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.j-chip.lampo { animation: j-chip-lampo .8s ease-out; }
+@keyframes j-chip-lampo { from { box-shadow: 0 0 16px currentColor; } to { box-shadow: none; } }
+.j-btn { transition: transform .1s, background .2s; }
+.j-btn:active { transform: scale(.95); }
+.j-schede button { transition: color .2s, box-shadow .25s; }
+.j-stato { transition: color .3s, text-shadow .3s, letter-spacing .4s; }
+#jarvis[data-stato=lavoro] .j-stato, #jarvis[data-stato=penso] .j-stato { animation: j-respiro 1.6s ease-in-out infinite; }
+@keyframes j-respiro { 50% { opacity: .55; } }
 
 /* schede */
 .j-lato { flex: 1; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--j-linea);
@@ -117,7 +198,8 @@
 #jarvis-linguetta { position: fixed; left: 0; top: 50%; width: 6px; height: 120px; margin-top: -60px; z-index: 5;
   border-radius: 0 6px 6px 0; background: #39d5ff; opacity: .35; box-shadow: 0 0 12px #39d5ff; transition: all .3s; }
 #jarvis-linguetta[data-stato=ascolto], #jarvis-linguetta[data-stato=seguito] { opacity: 1; background: #8ff0ff; width: 9px; }
-#jarvis-linguetta[data-stato=penso], #jarvis-linguetta[data-stato=lavoro] { opacity: 1; background: #ffb341; box-shadow: 0 0 14px #ffb341; }
+#jarvis-linguetta[data-stato=penso], #jarvis-linguetta[data-stato=lavoro] { opacity: 1; background: #ffb341; box-shadow: 0 0 14px #ffb341;
+  animation: j-respiro 1.4s ease-in-out infinite; }
 #jarvis-linguetta[data-stato=parlo] { opacity: 1; background: #4dffb8; box-shadow: 0 0 14px #4dffb8; }
 #jarvis-linguetta[data-stato=conferma] { opacity: 1; background: #ff5468; box-shadow: 0 0 18px #ff5468; width: 10px; }
 #jarvis-linguetta[data-stato=spento], #jarvis-linguetta.assente { opacity: .12; background: #56606c; box-shadow: none; }

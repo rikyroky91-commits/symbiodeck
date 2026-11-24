@@ -11,6 +11,7 @@ miniaudio>=1.59
 mcp>=2.0
 mss>=9.0
 pillow>=10.0
+uiautomation>=2.0; sys_platform == "win32"
 # modalità emergenza: voce italiana sul PC (senza Internet)
 piper-tts>=1.2
 psutil>=5.9

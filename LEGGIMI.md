@@ -294,6 +294,136 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - **Registro senza credenziali** (2026-11-24): ogni riga di `jarvis.log` passa da `sicurezza.oscura`: chiavi
   Anthropic/OpenAI/AWS/Google/GitHub/Slack/Telegram, JWT, Bearer, chiavi private e "password: …" diventano
   `[NASCOSTO:tipo]`.
+- **Il meglio degli altri Jarvis** (2026-11-24). Analizzati i 238 repo del topic GitHub `jarvis-ai`; letti i 19 attivi
+  nel 2026 o più popolari. Quasi tutti sono esercizi (`if "apri youtube" in frase`). Idee prese, riscritte qui:
+  - **Resoconti come dati** (regola R4 di jarvis-desktop, lopadova): l'esito dell'esecutore arriva alla voce tra
+    `<resoconto>…</resoconto>` con l'avviso che è un dato; se contiene frasi che sembrano ordini al modello
+    (`sicurezza.ordini_nascosti`) la voce lo dice all'utente. Stessa regola nelle persone di esecutore e locale.
+  - **Azioni delicate solo col tocco** (jarvis-desktop, jarvis-fr): dischi, registro, sicurezza, servizi,
+    cancellazioni definitive e file di sistema (`guardia.ALTO_RISCHIO`). Un "sì" a voce non basta (una TV o un'altra
+    persona non deve poter formattare un disco): Jarvis aspetta Sì sul tablet; "no" a voce vale.
+    Impostazione `conferma_alta`: tocco (predefinito) | voce.
+  - **Dimenticare per numero** (regola R12 di jarvis-desktop): ogni fatto ha un numero, la voce vede `[n]` nel
+    prompt e `dimentica(numero)` toglie solo quello; i fatti superati dall'estrattore si tolgono solo se quasi
+    identici. Prima una parola sbagliata poteva cancellare più fatti.
+  - **Modalità privata** (`privata`, jarvis-desktop): cervello locale, Whisper, Piper, memoria e aggiornamenti sul
+    PC; Haiku ed edge-tts bloccati (`online_permesso`). Se il cervello locale non c'è (gioco in corso, avvio) Jarvis
+    lo dice e **non** passa a Claude. A voce: "modalità privata" / "esci dalla modalità privata" (riconosciute sul
+    PC, non arrivano mai a un modello). Sul tablet: chip "PRIVATA · SOLO PC". Resta il controllo di rete
+    dell'emergenza (contatta api.anthropic.com e 1.1.1.1 senza mandare dati).
+  - **Promemoria e timer senza IA** (`server/jarvis/promemoria.py`, idea da jarvis-desktop, pi-esp-jarvis,
+    jarvis-fr): "ricordami tra 20 minuti di…", "avvisami alle 18:30 di…", "domani alle 9", "tra due ore e mezza",
+    "metti un timer di 5 minuti", "che promemoria ho?", "cancella i promemoria". Capiti prima di Claude: subito,
+    gratis, anche in privata. Le frasi difficili ("venerdì dopo pranzo") vanno alla voce, che usa lo strumento
+    `promemoria(quando, testo)`. "Ricordami che…" senza un'ora resta per la memoria. File
+    `jarvis-dati/promemoria.json`; uno scaduto a PC spento si dice alla riaccensione con l'ora a cui era.
+  - **Frasi pronte** (DesktopJarvis): la voce delle frasi brevi ("Procedo.", "Ci guardo."…) si prepara all'avvio e
+    si tiene (fino a 80 frasi sotto i 60 caratteri): partono senza aspettare la sintesi.
+  - **Avvisi di temperatura** (jarvis-fr, con i sensori che il pannello legge già): processore oltre
+    `soglia_cpu` (90 °C) o scheda video oltre `soglia_gpu` (85 °C) per 30 s → una frase, al massimo ogni 15 minuti.
+  - **Finestre lette come testo** (JARVIS-VORNEX): strumenti `controlli` e `usa_controllo` nel server MCP schermo,
+    con UI Automation (`uiautomation`, nuovo in requirements-jarvis.txt). Elenco numerato di pulsanti, campi, voci
+    con nome e valore; poi clic, scrivi, spunta, seleziona, espandi per numero. La finestra si rilegge a ogni uso
+    e se è cambiata si rifiuta. Utilizzabile anche dal modello locale, che non vede le immagini. Non vale per
+    giochi e molte app Electron/Chrome.
+  - Provato con 9 test (`tests/test_jarvis_dal_meglio.py`, UI Automation con controlli finti) e il pannello in un
+    browser senza schermo. **Non provato sul PC di Jarvis**: UI Automation vera, Piper in privata, i promemoria
+    detti a voce, gli avvisi con sensori veri. Dopo `git pull`: `pip install -r requirements-jarvis.txt`.
+  - Da fare più avanti: dettatura nell'app in primo piano (akshayaggarwal99), briefing del mattino, Jarvis come
+    server MCP per le altre sessioni di Claude Code (`jarvis_speak`, `jarvis_ask_user` di jarvis-desktop), annullare
+    le operazioni sui file (jarvis-fr).
+- **App per Quest 3: Jarvis XR** (2026-11-24, `web/xr.html` + `web/xr.js`, three.js r187 in `web/lib/`). Il pannello e
+  Jarvis come ologrammi nella stanza, in realtà mista (passthrough), stile Minority Report / Iron Man. È una pagina
+  WebXR servita dal pannello del PC: niente APK da compilare né da installare (si può aggiungere alla libreria del
+  visore dal browser).
+  - **Cosa c'è**: la sfera di Jarvis al centro (colore e anelli seguono lo stato, barre col livello della voce, onda
+    a ogni cambio di stato); attorno, ad arco, i pannelli Conversazione (con Stop, Nuova, Privata, Riordina),
+    Telemetria (CPU e GPU con carico e temperatura, FPS con la storia di 90 s, RAM, VRAM, programma in primo piano),
+    App e scorciatoie (le stesse del tablet, con le icone), Media, Promemoria (con ora, Briefing e Dettatura). Le
+    autorizzazioni compaiono grandi a 55 cm davanti agli occhi, opache, con il resto attenuato; gli avvisi volano in
+    alto. Anello sul pavimento e pulviscolo luminoso. Suoni brevi e vibrazione dei controller a ogni tocco.
+  - **Mani**: tocchi i pulsanti con la punta dell'indice (si preme attraversando il vetro, cerchio-cursore che si
+    stringe mentre ti avvicini, al massimo un tocco ogni 350 ms); pizzichi un pannello e lo sposti (si gira sempre
+    verso di te); con due mani sullo stesso pannello lo ingrandisci o rimpicciolisci (0,45-2,6x). Pizzica e tieni
+    la sfera per parlare: il microfono del visore registra finché tieni, la frase va a `POST /jarvis/voce` (PCM
+    16 kHz) e Jarvis la trascrive sul PC come quelle del tablet; se c'è una conferma aperta, è la risposta. Le
+    posizioni restano salvate nel visore; "Riordina" le rimette attorno a te. **Controller**: raggio + grilletto
+    (tenuto sulla sfera = parla), impugnatura per spostare.
+  - **Aprirla nel visore**: la realtà mista vuole `https://` oppure `localhost`. Due strade:
+    1. **Tailscale Serve** (consigliata, senza cavo): sul PC `tailscale serve --bg --https=443 http://127.0.0.1:47800`
+       e `tailscale serve --bg --https=8443 http://127.0.0.1:47802`; sul Quest Tailscale attivo e nel browser
+       `https://<nome-pc>.<tailnet>.ts.net/xr.html?t=<chiave>` (la pagina usa da sola la porta 8443 per Jarvis).
+    2. **Cavo USB** (modalità sviluppatore del Quest): `adb reverse tcp:47800 tcp:47800` e
+       `adb reverse tcp:47802 tcp:47802`, poi `http://localhost:47800/xr.html?t=<chiave>`.
+    I link con la chiave sono nella pagina delle impostazioni del PC (sezione Jarvis XR). Sul PC la stessa pagina
+    è un'**anteprima** col mouse: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.
+  - Provato in Chrome senza visore con pannello e Jarvis finti: rendering, pulsanti col mouse (app, media, privata,
+    nuova), autorizzazione e risposta, e **mani simulate** (giunti finti): il tocco preme Privata, il pizzico sposta
+    la Telemetria e salva la posizione, due mani ingrandiscono le App. **Non provato su un Quest 3 vero**: tracciamento
+    delle mani reale, passthrough, microfono del visore, Tailscale Serve.
+- **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
+  "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
+  Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche
+  se spostati in OneDrive, poi cartella utente e altri dischi, fino a 3 livelli, con sinonimi come foto/photos/
+  immagini) e il visore la apre: il pannello esce dalla sfera e vola davanti agli occhi. Il messaggio alla voce dice
+  "[l'utente indossa il visore…]" quando l'app è aperta (`/jarvis/flusso?xr=1` conta i visori collegati).
+  - **Esploratore**: griglia 6×3 con anteprime vere delle foto (JPEG ridotti sul PC, girati secondo l'EXIF, in
+    cache), cartelle, video, testi; ⌂ (Questo PC), ⬆, pagine col gesto o con ◀ ▶.
+  - **Foto, video, testi**: la foto grande con la striscia di miniature sotto (tocca per saltare); **scorri con la
+    mano** davanti al pannello, senza toccarlo, per la successiva o la precedente (un gesto = una foto, si riarma
+    quando la mano si ferma). Video riprodotti nel visore (mp4, webm, mov; a pezzi con Range, si può saltare
+    toccando la barra); testi con ▲ ▼. "Apri sul PC" per tutto il resto (mai programmi o script).
+  - **Finestre del PC in diretta**: "aprimi Chrome nel visore", oppure 🪟 FINESTRE nella barra sopra la sfera.
+    L'immagine arriva ~5 volte al secondo anche se la finestra è coperta (PrintWindow); il pannello prende le
+    proporzioni della finestra. **Tocchi l'immagine e il clic avviene nello stesso punto della finestra vera**; modo
+    DOPPIO e DESTRO per il tocco dopo, ▲ ▼ rotella (anche scorrendo con la mano), INVIO, ⟳ DAVANTI. Per scrivere:
+    tocca il campo e usa la dettatura. 🖥 SCHERMO mostra lo schermo intero allo stesso modo.
+  - **Disposizione alla Iron Man**: il pannello più recente davanti, gli altri si spostano ai lati ad arco, più
+    piccoli; toccandone uno torna davanti. Quelli spostati con le mani restano dove li hai messi. Al massimo 5.
+  - **Barra sopra la sfera**: 📁 FILE, 🪟 FINESTRE, 🖥 SCHERMO, ✕ CHIUDI (tutti i pannelli aperti).
+  - Strumenti per voce, esecutore e cervello locale: `visore_cartella`, `visore_file`, `visore_finestra`,
+    `visore_schermo`, `visore_elenco_finestre`, `visore_chiudi`. Se la cartella non si trova la voce chiede il
+    percorso all'esecutore e richiama; se il visore è spento la cosa si apre sul PC come prima.
+  - API (chiave del pannello): `GET /jarvis/file/elenco|anteprima|dati`, `POST /jarvis/file/apri`, `GET /jarvis/finestre`,
+    `/jarvis/finestre/immagine`, `/jarvis/schermo/immagine`, `POST /jarvis/finestre/azione`. **Cosa si vede**: solo la
+    cartella utente e i dischi diversi da quello di sistema; mai Windows, Program Files, ProgramData, AppData, cartelle
+    con il punto (.ssh…) e file nascosti o di sistema. Sola lettura, tranne "apri sul PC" (non per .exe, .bat, .ps1,
+    .lnk e simili) e i comandi alle finestre, che con la chiave equivalgono a mouse e tastiera.
+  - Provato in Chrome con Jarvis finto: cartella aperta "a voce" con le anteprime, foto aperta toccando, scorrimento
+    con la mano simulata (una foto per gesto), disposizione a ventaglio, finestra in diretta con tocco → clic nel
+    punto giusto e rotella, elenco delle finestre. In Python (`tests/test_jarvis_visore.py`, 8 test): elenco e
+    permessi, cartelle a parole, anteprime, file a pezzi, niente programmi, richieste della voce. **Non provato sul PC
+    di Jarvis né sul Quest**: cattura vera delle finestre (PrintWindow, DPI, più monitor), clic veri, video nel visore.
+- **Autorizzazioni a tutto schermo sul tablet** (2026-11-24, richiesta dell'utente): la conferma occupa tutto lo
+  schermo con SÌ e NO alti 190 px, "Sì, sempre" / "No, mai" sotto, il comando in piccolo, una barra col tempo che
+  resta (`scade` nell'evento) e i pulsanti attivi solo dopo 450 ms (un tocco partito prima non conferma). Le azioni
+  delicate hanno l'etichetta "SOLO TOCCO"; le domande delle altre sessioni mostrano le opzioni come pulsanti grandi.
+  Si apre da sola anche a pannello chiuso.
+- **Animazioni del pannello Jarvis** (2026-11-24): messaggi che entrano scorrendo, schede in dissolvenza, chip che
+  lampeggiano quando cambiano, onda d'urto e particelle in orbita sulla sfera, stato che "respira" mentre lavora,
+  avvisi (promemoria, temperature) che scendono dall'alto, barra "DETTATURA" in basso, bordo verde in privata.
+  Solo transform e opacità: leggere anche per il WebView 88 dello SHIELD.
+- **Dettatura** (2026-11-24, `server/jarvis/tastiera.py`, idea da akshayaggarwal99/jarvis-ai-assistant): "dettatura" /
+  "detta" e quello che dici si scrive nella finestra in primo piano sul PC (SendInput, caratteri Unicode), trascritto
+  da Whisper sul PC e **mai mandato a un modello**. "a capo", "cancella l'ultima parola", "fine dettatura" (o "stop").
+  Durante la dettatura l'ascolto non scade.
+- **Briefing del mattino** (2026-11-24): "buongiorno" / "briefing" / "com'è la giornata". Il PC raccoglie promemoria
+  di oggi, meteo (Open-Meteo, gratis e senza chiave, con la città di Impostazioni > Privacy e sicurezza; mai in
+  privata), spazio libero sul disco di sistema e temperature, e la voce ne fa un buongiorno di 30 secondi; se
+  l'esecutore ha calendario e posta collegati, li aggiunge.
+- **Jarvis per le altre sessioni di Claude Code** (2026-11-24, `server/jarvis/jarvis_mcp.py`, idea da jarvis-desktop):
+  server MCP con `jarvis_parla(testo)`, `jarvis_chiedi(domanda, opzioni)` (domanda a voce, risposta detta o toccata
+  sul tablet o nel visore, fino a 10 minuti) e `jarvis_promemoria`. Si registra una volta:
+  `claude mcp add --scope user jarvis -- python "<cartella>\server\jarvis\jarvis_mcp.py"` (il comando esatto è
+  nelle impostazioni del PC). API: `POST /jarvis/annuncia`, `/jarvis/domanda`, `/jarvis/promemoria-esterno`. Conferme
+  e domande ora passano una alla volta (`blocco_domande`): due insieme si sovrascrivevano.
+- **Annulla l'ultima modifica** (2026-11-24, `server/jarvis/annulla.py`, idea da jarvis-fr): la guardia copia ogni file
+  prima che l'esecutore lo scriva o modifichi (Write, Edit) e annota i file nuovi. "Annulla l'ultima modifica" /
+  "rimetti com'era" chiede conferma e rimette com'erano i file dell'ultimo lavoro (stessa sessione, senza pause oltre
+  10 minuti); quelli nuovi vanno in `jarvis-dati/annulla/tolti`, mai cancellati. Le cancellazioni l'esecutore ora le
+  fa nel Cestino (esecutore.md). Si tengono le ultime 300 modifiche.
+- Test: 57 (`tests/test_jarvis_extra.py` +10). Non provati dal vivo: dettatura in un'app vera, il meteo reale,
+  jarvis_mcp registrato in Claude Code, annulla dopo un lavoro vero dell'esecutore.
 - **Valutato e lasciato fuori da OpenJarvis** (2026-11-24): il framework intero (agenti, motori, Rust, training: il
   cervello resta Claude Code), il suo "motore" per l'emergenza (stesso llama-server, ma senza la commutazione
   automatica di `emergenza.py`), i canali di messaggistica, il router e il loop guard. Da valutare più avanti: il
