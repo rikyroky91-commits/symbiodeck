@@ -463,7 +463,14 @@ class _CatturaDxgi:
         import numpy as np
         from PIL import Image
         chiave = (l, t, w, h, lato)
-        f = self.cam.grab(region=(l, t, l + w, t + h))
+        # anche a schermo fermo (niente fotogrammi nuovi) si vuole l'immagine: new_frame_only=False dà l'ultima.
+        # Il primissimo fotogramma può mancare: si riprova per mezzo secondo
+        f = None
+        for _ in range(25):
+            f = self.cam.grab(region=(l, t, l + w, t + h), new_frame_only=False)
+            if f is not None:
+                break
+            time.sleep(0.02)
         if f is None:                       # niente di nuovo sullo schermo: si rimanda l'ultima della stessa zona
             return self.ultima if self.chiave == chiave else None
         W, H = _misura_ridotta(w, h, lato)

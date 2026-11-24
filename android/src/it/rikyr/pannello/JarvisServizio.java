@@ -195,7 +195,7 @@ public class JarvisServizio extends Service {
         }
     }
 
-    /** Jarvis vuole guardare (l'utente ha già detto sì): una foto con la telecamera posteriore, mandata al PC. */
+    /** Jarvis vuole guardare (l'utente ha già detto sì): una foto con la telecamera davanti, mandata al PC. */
     private void mandaFoto(final String id) {
         new Thread(() -> {
             byte[] jpeg = null;

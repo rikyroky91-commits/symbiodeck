@@ -999,14 +999,55 @@ function tempo(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 6
 
 // ---- una finestra del PC (o lo schermo intero) in diretta: si usa toccandola
 class FinestraPc extends Pannello {
+  // Una finestra o uno schermo del PC in diretta (GET /jarvis/schermo/diretta: dxcam in un processo a parte, ~30
+  // fotogrammi/s a 1920 px) su un piano davanti al vetro. Se la diretta non va: un'immagine ogni 180 ms come prima,
+  // e ogni 5 s si riprova la diretta. Il cinema usa gli stessi fotogrammi (niente seconda diretta).
   constructor(hwnd, titolo, numeroSchermo) {
     super("finestra", "FINESTRA", 1.0, 0.66, { chiudibile: true, denso: true, colore: "143,240,255" });
     this.hwnd = hwnd || 0; this.nome = titolo || "Schermo"; this.schermo = numeroSchermo || 0;
     this.img = null; this.carico = false; this.ultimo = 0; this.errore = ""; this.modo = "clic"; this.proporzione = 0;
     this.barra = 84;   // altezza in pixel della barra dei comandi sopra l'immagine
+    this.diretta = null; this.inDiretta = false; this.bitmap = null; this.tentativo = 0;
+    this.texDiretta = new THREE.Texture();
+    this.texDiretta.colorSpace = THREE.SRGBColorSpace;
+    this.texDiretta.flipY = false;   // ImageBitmap già girata (imageOrientation: "flipY")
+    this.texDiretta.anisotropy = 8;
+    this.piano = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: this.texDiretta, toneMapped: false }));
+    this.piano.visible = false;
+    this.gruppo.add(this.piano);
+    this.avviaDiretta();
+  }
+  avviaDiretta() {
+    this.tentativo = performance.now();
+    const parametri = this.schermo ? { numero: this.schermo } : { hwnd: this.hwnd };
+    this.diretta = apriDiretta(Object.assign(parametri, { lato: 1920, fps: 30 }), (b) => this.fotogramma(b), (errore) => {
+      this.diretta = null; this.inDiretta = false; this.piano.visible = false; this.sporco = true;
+      if (errore) console.warn("[xr] diretta di " + this.nome + ":", errore);
+    });
+  }
+  fotogramma(b) {
+    const vecchio = this.bitmap;
+    this.bitmap = b;
+    this.texDiretta.image = b; this.texDiretta.needsUpdate = true;
+    if (cinema.attivo && cinema.sorgente === this) cinema.mostra(b);
+    if (vecchio) setTimeout(() => vecchio.close(), 150);   // già caricato nella scheda video
+    if (!this.inDiretta) { this.inDiretta = true; this.errore = ""; this.sporco = true; }
+    const p = b.width / b.height;
+    if (Math.abs(p - this.proporzione) > 0.02) {   // il vetro prende le proporzioni della finestra
+      this.proporzione = p;
+      const w = Math.min(1.25, Math.max(0.7, 0.62 * p));
+      this.dimensioni(w, w / p + (84 + this.barra) / PX_M);
+    }
+    const aH = this.ch - 84 - this.barra;
+    this.piano.scale.set((this.cw - 12) / PX_M, aH / PX_M, 1);
+    this.piano.position.set(0, this.h / 2 - (84 + aH / 2) / PX_M, 0.002);
+    this.piano.visible = this.comparsa > 0.5;
   }
   ogni(dt, t) {
-    // un fotogramma ogni ~180 ms finché è aperta (più lento se sta caricando)
+    if (this.inDiretta) { this.piano.visible = this.comparsa > 0.5; return; }
+    if (!this.diretta && performance.now() - this.tentativo > 5000) this.avviaDiretta();
+    if (this.diretta) return;
+    // ripiego: un'immagine ogni ~180 ms finché la diretta non riparte
     if (this.carico || performance.now() - this.ultimo < 180) return;
     this.carico = true; this.ultimo = performance.now();
     const url = this.schermo ? urlJ("/jarvis/schermo/immagine", { numero: this.schermo, lato: 1600 })
@@ -1015,7 +1056,7 @@ class FinestraPc extends Pannello {
       if (this.img && this.img.close) this.img.close();
       this.img = b; this.errore = "";
       const p = b.width / b.height;
-      if (Math.abs(p - this.proporzione) > 0.02) {   // il vetro prende le proporzioni della finestra
+      if (Math.abs(p - this.proporzione) > 0.02) {
         this.proporzione = p;
         const w = Math.min(1.25, Math.max(0.7, 0.62 * p));
         this.dimensioni(w, w / p + (84 + this.barra) / PX_M);
@@ -1027,8 +1068,10 @@ class FinestraPc extends Pannello {
   contenuto(c, W, H) {
     this.titolo = (this.schermo ? "SCHERMO " + this.schermo : "FINESTRA") + " · " + this.nome.toUpperCase();
     const b = this.barra, y = H - b + 8;   // comandi in basso, l'immagine sopra
-    if (this.img) c.drawImage(this.img, 6, 84, W - 12, H - 84 - b);
-    else { c.font = "400 28px " + FONT; c.fillStyle = this.errore ? "#ff5468" : "rgba(223,246,255,0.5)"; c.fillText(this.errore || "Collego la finestra…", 40, 160); }
+    // in diretta l'immagine è un piano a sé davanti al vetro (this.piano): qui solo il fondo nero
+    c.fillStyle = "#000"; c.fillRect(6, 84, W - 12, H - 84 - b);
+    if (!this.inDiretta && this.img) c.drawImage(this.img, 6, 84, W - 12, H - 84 - b);
+    else if (!this.inDiretta) { c.font = "400 28px " + FONT; c.fillStyle = this.errore ? "#ff5468" : "rgba(223,246,255,0.5)"; c.fillText(this.errore || "Collego la finestra…", 40, 160); }
     const bw = 140, gap = 10;
     [["clic", "TOCCO"], ["doppio", "DOPPIO"], ["destro", "DESTRO"]].forEach(([m, n], i) =>
       this.bottone(c, 34 + i * (bw + gap), y, bw, b - 16, n, () => { this.modo = m; this.sporco = true; },
@@ -1058,7 +1101,13 @@ class FinestraPc extends Pannello {
     return super.premi(u, v, origine);
   }
   swipe(dir) { this.manda({ tipo: "rotella", scatti: dir * 4, x: 0.5, y: 0.5 }); }
-  chiudi() { if (this.img && this.img.close) this.img.close(); super.chiudi(); }
+  chiudi() {
+    if (this.diretta) { this.diretta.abort(); this.diretta = null; }
+    if (this.img && this.img.close) this.img.close();
+    if (this.bitmap) { const b = this.bitmap; this.bitmap = null; setTimeout(() => b.close(), 150); }
+    this.texDiretta.dispose(); this.piano.geometry.dispose();
+    super.chiudi();
+  }
 }
 
 // ---- elenco delle finestre aperte sul PC
@@ -1712,6 +1761,7 @@ const cinema = (() => {
   const tex = new THREE.Texture();
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.flipY = false;   // le ImageBitmap arrivano già girate (imageOrientation: "flipY")
+  tex.anisotropy = 8;
   const schermo = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
   schermo.userData.cinema = true; schermo.visible = false; scena.add(schermo);
   const cornice = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
@@ -1719,7 +1769,7 @@ const cinema = (() => {
   schermo.add(cornice);
   const barra = new BarraCinema();
   scena.add(barra.gruppo);
-  const C = { attivo: false, sorgente: null, schermo, barra, fps: 0, nascosti: [], ctrl: null, bitmap: null,
+  const C = { attivo: false, sorgente: null, schermo, barra, fps: 0, nascosti: [],
     proporzione: 16 / 9, fotogrammi: 0, tFps: performance.now(), sferaPrima: null };
   const LUCI = [0.94, 0.7, 0];
   function misura(prop) {
@@ -1752,7 +1802,7 @@ const cinema = (() => {
     } else {
       schermo.material.map = tex; schermo.material.needsUpdate = true;
       misura(16 / 9);
-      avviaDiretta(sorgente);
+      if (sorgente.bitmap) C.mostra(sorgente.bitmap);   // i fotogrammi arrivano dalla diretta della finestra
     }
     schermo.visible = true;
     // la sfera (pizzica e tieni per parlare) non copre lo schermo: va accanto alla barra, a portata di mano
@@ -1764,7 +1814,6 @@ const cinema = (() => {
   C.esci = function (subito) {
     if (!C.attivo) return;
     C.attivo = false;
-    if (C.ctrl) { C.ctrl.abort(); C.ctrl = null; }
     if (schermo.material.map !== tex) { schermo.material.map.dispose(); schermo.material.map = tex; }
     schermo.visible = false; barra.gruppo.visible = false;
     C.nascosti.forEach((p) => { if (pannelli.includes(p)) p.gruppo.visible = true; });
@@ -1786,12 +1835,9 @@ const cinema = (() => {
     if (C.attivo && C.sorgente && !pannelli.includes(C.sorgente)) C.esci();   // chiusa la sorgente
     if (C.attivo && C.sorgente && C.sorgente.video && !C.sorgente.video.paused) barra.sporco = barra.sporco || Math.random() < 0.03;
   };
-  C.fotogramma = function (bmp) {
-    if (!C.attivo) { bmp.close(); return; }
-    const vecchio = C.bitmap;
-    C.bitmap = bmp;
+  C.mostra = function (bmp) {   // la bitmap è della finestra (la chiude lei)
+    if (!C.attivo) return;
     tex.image = bmp; tex.needsUpdate = true;
-    if (vecchio) setTimeout(() => vecchio.close(), 100);   // già caricato nella scheda video
     const p = bmp.width / bmp.height;
     if (Math.abs(p - C.proporzione) > 0.02) misura(p);
     C.fotogrammi++;
@@ -1800,13 +1846,11 @@ const cinema = (() => {
   };
   return C;
 })();
-// la diretta fluida della finestra o dello schermo: [4 byte di lunghezza][JPEG]... (vedi diretta() in visore.py)
-async function avviaDiretta(f) {
+// la diretta fluida di una finestra o di uno schermo: [4 byte di lunghezza][JPEG]... (diretta() in visore.py).
+// Restituisce l'AbortController per fermarla; suFine(errore) quando finisce da sola.
+function apriDiretta(parametri, suFotogramma, suFine) {
   const ctrl = new AbortController();
-  cinema.ctrl = ctrl;
-  const parametri = f.schermo ? { numero: f.schermo } : { hwnd: f.hwnd };
-  Object.assign(parametri, { lato: 1600, fps: 30 });
-  try {
+  (async () => {
     const r = await fetch(urlJ("/jarvis/schermo/diretta", parametri), { headers: { "X-Token": TOKEN }, signal: ctrl.signal });
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).errore || "errore " + r.status);
     const lettore = r.body.getReader();
@@ -1822,18 +1866,18 @@ async function avviaDiretta(f) {
         if (buf.length < 4 + n) break;
         ultimo = buf.slice(4, 4 + n); buf = buf.slice(4 + n);
       }
-      // si decodifica solo l'ultimo arrivato: se il visore resta indietro salta i fotogrammi, non accumula ritardo
+      // si decodifica solo l'ultimo arrivato: se il visore resta indietro salta i fotogrammi, non accumula ritardo;
+      // le ImageBitmap non si capovolgono da sole in WebGL: si chiede già girata
       if (ultimo && !occupato) {
         occupato = true;
-        // le ImageBitmap non si capovolgono da sole in WebGL: si chiede già girata
         createImageBitmap(new Blob([ultimo], { type: "image/jpeg" }), { imageOrientation: "flipY" })
-          .then((b) => (cinema.ctrl === ctrl ? cinema.fotogramma(b) : b.close()))
+          .then((b) => (ctrl.signal.aborted ? b.close() : suFotogramma(b)))
           .catch(() => {}).finally(() => { occupato = false; });
       }
     }
-  } catch (e) {
-    if (e.name !== "AbortError") { avviso("Diretta interrotta: " + e.message); console.warn("[xr] diretta:", e); }
-  }
+  })().then(() => { if (!ctrl.signal.aborted && suFine) suFine(""); })
+    .catch((e) => { if (!ctrl.signal.aborted && suFine) suFine(e.message || String(e)); });
+  return ctrl;
 }
 
 // ------------------------------------------------------------------ voce di Jarvis dallo speaker del visore
@@ -2165,6 +2209,13 @@ async function avvia() {
     const sessione = await navigator.xr.requestSession(ar ? "immersive-ar" : "immersive-vr", {
       requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "bounded-floor"] });
     scena.background = null; griglia.visible = false;
+    // nitidezza: il browser rende sotto la risoluzione del Quest 3 e three.js usa la foveazione massima (bordi
+    // sfocati). Risoluzione nativa (al massimo 1,5x) e foveazione leggera
+    const nativo = window.XRWebGLLayer && XRWebGLLayer.getNativeFramebufferScaleFactor
+      ? XRWebGLLayer.getNativeFramebufferScaleFactor(sessione) : 1;
+    renderer.xr.setFramebufferScaleFactor(Math.max(1, Math.min(1.5, nativo || 1)));
+    renderer.xr.setFoveation(0.15);
+    console.info("[xr] risoluzione: scala", Math.max(1, Math.min(1.5, nativo || 1)), "(nativa", nativo + ")");
     primoFotogramma = true; posaBuona = 0; lontanoDa = 0; ancora.visible = false;
     await renderer.xr.setSession(sessione);
     // "ricentra" del Quest: l'origine dello spazio si sposta su di te, la scena va rimessa attorno a te
@@ -2174,6 +2225,18 @@ async function avvia() {
     // con il visore addosso si parla dal Quest: Jarvis spegne il microfono del tablet (si sovrapporrebbero)
     apiJ("/jarvis/visore/sessione", { immersivo: true }).catch(() => {});
     avviaVoceVisore();          // la voce di Jarvis esce dallo speaker del Quest
+    // visore messo e tolto (la sessione resta, ma il Quest la nasconde): voce e microfono passano da qui al tablet e
+    // ritorno. In più un battito ogni 4 s: se smette (pagina ferma, visore spento) Jarvis torna al tablet da solo
+    const indossato = () => sessione.visibilityState !== "hidden";
+    sessione.addEventListener("visibilitychange", () => {
+      console.info("[xr] visore", sessione.visibilityState);
+      apiJ("/jarvis/visore/sessione", { immersivo: indossato() }).catch(() => {});
+      if (indossato()) { preparaVoceVisore(); avviaVoceVisore(); } else taciVisore();
+    });
+    const battito = setInterval(() => {
+      if (indossato()) apiJ("/jarvis/visore/sessione", { immersivo: true }).catch(() => {});
+    }, 4000);
+    sessione.addEventListener("end", () => clearInterval(battito));
     sessione.addEventListener("end", () => {
       apiJ("/jarvis/visore/sessione", { immersivo: false }).catch(() => {});
       fermaVoceVisore();

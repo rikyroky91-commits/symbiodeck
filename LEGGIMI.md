@@ -491,6 +491,23 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
       (AudioContext creato nel tocco su "Entra"). Finché la pagina non è collegata all'audio la voce resta sul
       tablet. Uscendo, o se il visore si scollega, tutto torna sul tablet. Col visore si parla pizzicando la sfera.
       Provato: canale audio via pannello HTTPS con la "prova voce" (6,4 s di voce arrivati tutti lì).
+    - **Visore messo e tolto** (richiesta dell'utente: audio e microfono devono seguire il visore): togliendo il Quest
+      la sessione resta ma diventa `hidden`; Jarvis XR lo dice subito (`visibilitychange` → `immersivo: false`) e
+      ogni 4 s, finché lo indossi, manda il battito `immersivo: true`. Se il battito manca da 12 s
+      (`_guardia_visore`) voce e microfono tornano sul tablet anche se la pagina non ha fatto in tempo a dirlo.
+      Rimesso il visore: di nuovo sul Quest. Provato: test della guardia; dal vero non ancora.
+    - **Nitidezza** (l'utente: "la risoluzione sembra molto bassa"): three.js usava la foveazione massima (bordi
+      sfocati) e il browser rendeva sotto la risoluzione del pannello. Ora scala del framebuffer = quella nativa del
+      Quest (`XRWebGLLayer.getNativeFramebufferScaleFactor`, al massimo 1,5x) e foveazione 0,15.
+    - **Desktop e finestre del PC in diretta** (l'utente: "la modalità desktop dal Quest non funziona"): lo schermo
+      intero si catturava con BitBlt dentro Jarvis, che da amministratore (e da ore acceso) falliva a ripetizione
+      (`ScreenShotError: BitBlt`). Ora ogni finestra/schermo nel visore usa la diretta (dxcam nel processo a parte,
+      1920 px, 30/s) su un piano davanti al vetro; le immagini ogni 180 ms restano solo come ripiego (e ogni 5 s si
+      riprova la diretta). Il cinema mostra gli stessi fotogrammi (niente seconda diretta). dxcam con
+      `new_frame_only=False`: a schermo fermo prima non arrivava nessun fotogramma (e il ripiego GDI, da
+      amministratore, falliva). Misurato nell'anteprima: primo fotogramma in 0,8 s, 29,6/s a 1920×1080, cinema 28/s.
+    - **Tablet, telecamera davanti** (app 1.10.1, richiesta dell'utente: il tablet sta di fronte e la posteriore
+      guardava il muro). Provato con la 1.10.0 (posteriore): permesso → foto da 104 KB in 3 s → "quasi tutta nera".
     - **"Guarda" più veloce**: la voce (Sonnet) usa da sola gli strumenti `mcp__visore__*`, telecamera compresa
       (`guardia.solo_esecutore`, `persona.md`), invece di passare dall'esecutore (Opus). Prova delle 23:19 (prima della
       modifica): "che telefono ho in mano?" → capito in 1 s → permesso dopo 3 s → foto 5 s dopo il sì (242 KB) →
@@ -692,4 +709,4 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.10.0 (2026-11-24, telecamera del tablet per Jarvis); app iPhone/Watch: `jarvis-ios-N`.
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.10.1 (2026-11-24, telecamera davanti del tablet); app iPhone/Watch: `jarvis-ios-N`.

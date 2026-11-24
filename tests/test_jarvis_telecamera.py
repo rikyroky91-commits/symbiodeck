@@ -165,6 +165,27 @@ def test_la_voce_usa_da_sola_gli_strumenti_del_visore():
         os.environ.pop("JARVIS_DELEGA", None)
 
 
+def test_visore_tolto_senza_battito_torna_al_tablet():
+    j = _jarvis()
+    j._guardia_visore_avviata = True          # niente thread: si prova un giro della guardia a mano
+    j.imposta_visore(True)
+    assert j.visore_immersivo
+    j.visore_battito -= 13                    # 13 s senza battito: il visore è stato tolto
+    giri = []
+
+    def dormi(s):
+        if giri:
+            raise StopIteration
+        giri.append(s)
+    from unittest import mock
+    with mock.patch.object(principale.time, "sleep", dormi):
+        try:
+            j._guardia_visore()
+        except StopIteration:
+            pass
+    assert not j.visore_immersivo and j.microfono_voluto[-1] is True   # microfono e voce di nuovo sul tablet
+
+
 if __name__ == "__main__":
     for nome, f in list(globals().items()):
         if nome.startswith("test_"):

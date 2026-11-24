@@ -336,8 +336,14 @@ class Jarvis:
                                    and not self.visore_immersivo)
 
     def imposta_visore(self, immersivo):
-        """Jarvis XR dice se l'utente è dentro la sessione immersiva (o il visore si è scollegato)."""
+        """Jarvis XR dice se l'utente ha il visore addosso, dentro la sessione (ogni 4 s finché è così: è anche il
+        battito che la guardia_visore aspetta), o se l'ha tolto / la sessione è finita / il visore si è scollegato."""
         immersivo = bool(immersivo)
+        if immersivo:
+            self.visore_battito = time.time()
+            if not getattr(self, "_guardia_visore_avviata", False):
+                self._guardia_visore_avviata = True
+                threading.Thread(target=self._guardia_visore, daemon=True, name="guardia-visore").start()
         if immersivo == self.visore_immersivo:
             return
         self.visore_immersivo = immersivo
@@ -346,6 +352,15 @@ class Jarvis:
         self.uscita.visore = self.visore_audio if immersivo else None
         self._aggiorna_microfono()
         self.evento(visore_immersivo=immersivo)
+
+    def _guardia_visore(self):
+        """Visore tolto dalla testa: il Quest nasconde la sessione e la pagina si ferma, i battiti smettono. Dopo 12 s
+        senza battito voce e microfono tornano sul tablet (anche se la pagina non ha fatto in tempo a dirlo)."""
+        while True:
+            time.sleep(2)
+            if self.visore_immersivo and time.time() - getattr(self, "visore_battito", 0) > 12:
+                log("visore: nessun segnale da 12 s (tolto o in pausa)")
+                self.imposta_visore(False)
 
     # ------------------------------------------------------------ telecamere (visore e tablet)
     def guarda(self, motivo, dispositivo="auto", attesa_foto=20):

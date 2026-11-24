@@ -133,7 +133,9 @@ def test_annulla_a_voce_chiede_conferma():
 def test_briefing_con_i_dati_del_pc():
     j = _jarvis()
     from datetime import datetime, timedelta
-    j.promemoria.aggiungi(datetime.now() + timedelta(minutes=30), "chiamare il dentista")
+    # oggi anche dopo le 23:30 (prima "tra 30 minuti" finiva a domani e il test falliva di sera)
+    quando = min(datetime.now() + timedelta(minutes=30), datetime.now().replace(hour=23, minute=59, second=0))
+    j.promemoria.aggiungi(quando, "chiamare il dentista")
     with mock.patch.object(principale, "stato_pannello", return_value={"cpu": {"temp": 55}, "gpu": {"temp": 61}}):
         testo = Jarvis.briefing(j)
     assert testo.startswith("[Briefing del mattino") and "chiamare il dentista" in testo

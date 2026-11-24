@@ -23,7 +23,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Una foto con la telecamera posteriore del tablet, per Jarvis ("guarda questa scheda madre"): Jarvis chiede
+ * Una foto con la telecamera davanti del tablet (dalla parte dello schermo), per Jarvis ("guarda questa scheda madre"): Jarvis chiede
  * prima il permesso all'utente, poi manda il comando {"foto": id}. Si apre la telecamera, si lascia lavorare
  * esposizione e messa a fuoco per ~1 s su una superficie finta, si scatta un JPEG (~1920 px) e si chiude tutto.
  * Bloccante: va chiamata da un thread a parte.
@@ -111,13 +111,14 @@ final class Fotocamera {
         }
     }
 
-    /** La telecamera posteriore (quella che guarda quello che hai davanti), se no la prima che c'è. */
+    /** La telecamera davanti (dalla parte dello schermo: il tablet sta in piedi di fronte all'utente, che le mostra
+     *  le cose), se no la prima che c'è. Richiesta dell'utente, 2026-11-24: la posteriore guardava il muro. */
     private static String scegli(CameraManager cm) throws CameraAccessException {
         String prima = null;
         for (String id : cm.getCameraIdList()) {
             if (prima == null) prima = id;
             Integer verso = cm.getCameraCharacteristics(id).get(CameraCharacteristics.LENS_FACING);
-            if (verso != null && verso == CameraCharacteristics.LENS_FACING_BACK) return id;
+            if (verso != null && verso == CameraCharacteristics.LENS_FACING_FRONT) return id;
         }
         return prima;
     }
