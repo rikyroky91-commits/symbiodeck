@@ -20,15 +20,27 @@ enum Impostazioni {
         set { archivio.set(newValue, forKey: "chiave") }
     }
 
+    /// Se le risposte si leggono anche dal tablet a casa (di solito no: sei fuori e ti risponde il telefono).
+    static var parlaACasa: Bool {
+        get { archivio.bool(forKey: "parlaACasa") }
+        set { archivio.set(newValue, forKey: "parlaACasa") }
+    }
+
     static var completa: Bool { !indirizzo.isEmpty && !chiave.isEmpty }
 }
 
 // MARK: - Server di Jarvis
 
+struct Conferma: Decodable, Equatable {
+    let id: String
+    let descrizione: String
+}
+
 struct RispostaChiedi: Decodable {
     let risposta: String
     let ultimo: Int
     let lavoro: Bool
+    let conferma: Conferma?
 }
 
 struct MessaggioServer: Decodable {
@@ -42,6 +54,7 @@ struct Novita: Decodable {
     let stato: String
     let lavoro: Bool
     let emergenza: Bool
+    let conferma: Conferma?
 }
 
 enum ErroreJarvis: LocalizedError {
@@ -91,8 +104,19 @@ struct ServerJarvis {
         r.httpMethod = "POST"
         r.timeoutInterval = 70
         r.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        r.httpBody = try JSONSerialization.data(withJSONObject: ["testo": testo, "attesa": 40])
+        r.httpBody = try JSONSerialization.data(withJSONObject: ["testo": testo, "attesa": 40,
+                                                                  "parla_a_casa": Impostazioni.parlaACasa])
         return try JSONDecoder().decode(RispostaChiedi.self, from: try await esegui(r))
+    }
+
+    /// Risposta a una conferma ("Devo cancellare dei file. Confermi?").
+    func conferma(id: String, ok: Bool) async throws {
+        var r = URLRequest(url: try url("/jarvis/conferma"))
+        r.httpMethod = "POST"
+        r.timeoutInterval = 15
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = try JSONSerialization.data(withJSONObject: ["id": id, "ok": ok])
+        _ = try await esegui(r)
     }
 
     func novita(dopo: Int) async throws -> Novita {
@@ -118,6 +142,7 @@ final class Conversazione: ObservableObject {
     @Published var inAttesa = false
     @Published var lavoro = false
     @Published var emergenza = false
+    @Published var conferma: Conferma?
     @Published var leggiAdAltaVoce = true
 
     private let voce = AVSpeechSynthesizer()
@@ -133,6 +158,7 @@ final class Conversazione: ObservableObject {
                 let r = try await ServerJarvis.configurato.chiedi(pulito)
                 inAttesa = false
                 lavoro = r.lavoro
+                conferma = r.conferma
                 if !r.risposta.isEmpty {
                     messaggi.append(Messaggio(chi: "jarvis", testo: r.risposta))
                     parla(r.risposta)
@@ -158,12 +184,33 @@ final class Conversazione: ObservableObject {
                 ultimo = n.ultimo
                 lavoro = n.lavoro
                 emergenza = n.emergenza
+                if n.conferma != conferma {
+                    conferma = n.conferma
+                    if let c = n.conferma {
+                        let domanda = "Devo \(c.descrizione.components(separatedBy: ":").first ?? c.descrizione). Confermi?"
+                        messaggi.append(Messaggio(chi: "jarvis", testo: domanda))
+                        parla(domanda)
+                    }
+                }
                 for m in n.messaggi where m.chi == "jarvis" {
                     messaggi.append(Messaggio(chi: "jarvis", testo: m.testo))
                     parla(m.testo)
                 }
                 // niente più lavoro in corso e Jarvis a riposo: non arriverà altro
                 if !n.lavoro && n.stato == "riposo" && Date().timeIntervalSince(partenza) > 20 { break }
+            }
+        }
+    }
+
+    func rispondi(_ ok: Bool) {
+        guard let c = conferma else { return }
+        conferma = nil
+        messaggi.append(Messaggio(chi: "utente", testo: ok ? "Sì, procedi" : "No"))
+        Task {
+            do {
+                try await ServerJarvis.configurato.conferma(id: c.id, ok: ok)
+            } catch {
+                messaggi.append(Messaggio(chi: "errore", testo: error.localizedDescription))
             }
         }
     }

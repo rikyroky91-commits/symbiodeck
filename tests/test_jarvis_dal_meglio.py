@@ -113,6 +113,7 @@ def test_azioni_delicate_solo_col_tocco():
     j._ascolta_conferma_dopo_domanda = lambda c: None
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
     j.blocco_domande = threading.Lock()
+    j.solo_remoto = False
     j._chiedi_conferma = lambda *a, **k: Jarvis._chiedi_conferma(j, *a, **k)
     esito = {}
 

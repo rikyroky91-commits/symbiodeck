@@ -16,6 +16,9 @@ struct SchermataOrologio: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 8) {
+                if let c = conversazione.conferma {
+                    ConfermaOrologio(descrizione: c.descrizione) { ok in conversazione.rispondi(ok) }
+                }
                 pulsante
                 stato
                 ForEach(ultimi) { m in
@@ -86,5 +89,21 @@ struct RigaOrologio: View {
             .font(daUtente ? .footnote : .body)
             .foregroundStyle(colore)
             .frame(maxWidth: .infinity, alignment: daUtente ? .trailing : .leading)
+    }
+}
+
+struct ConfermaOrologio: View {
+    let descrizione: String
+    let risposta: (Bool) -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text("Confermi?").font(.headline).foregroundStyle(Color.red)
+            Text(descrizione).font(.footnote).lineLimit(4)
+            HStack {
+                Button("Sì") { risposta(true) }.tint(Color.red)
+                Button("No") { risposta(false) }
+            }
+        }
     }
 }

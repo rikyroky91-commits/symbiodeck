@@ -114,6 +114,17 @@ struct SchermataPrincipale: View {
                     Text(dettatura.testo.isEmpty ? "Ti ascolto…" : dettatura.testo)
                         .font(.callout).padding(.horizontal).padding(.bottom, 6)
                 }
+                if let c = conversazione.conferma {
+                    VStack(spacing: 6) {
+                        Text("Jarvis chiede conferma: \(c.descrizione)")
+                            .font(.footnote).multilineTextAlignment(.center)
+                        HStack(spacing: 16) {
+                            Button("Sì, procedi") { conversazione.rispondi(true) }.buttonStyle(.borderedProminent).tint(.red)
+                            Button("No") { conversazione.rispondi(false) }.buttonStyle(.bordered)
+                        }
+                    }
+                    .padding(8)
+                }
                 if let errore = dettatura.errore {
                     Text(errore).font(.footnote).foregroundStyle(.red).padding(.bottom, 4)
                 }
@@ -185,6 +196,7 @@ struct SchermataImpostazioni: View {
     @Environment(\.dismiss) private var chiudi
     @State private var indirizzo = Impostazioni.indirizzo
     @State private var chiave = Impostazioni.chiave
+    @State private var parlaACasa = Impostazioni.parlaACasa
 
     var body: some View {
         NavigationStack {
@@ -193,6 +205,7 @@ struct SchermataImpostazioni: View {
                     TextField("192.168.1.96 oppure 100.x.y.z", text: $indirizzo)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     SecureField("Chiave del pannello", text: $chiave)
+                    Toggle("Parla anche dal tablet a casa", isOn: $parlaACasa)
                 } header: {
                     Text("PC con Jarvis")
                 } footer: {
@@ -207,6 +220,7 @@ struct SchermataImpostazioni: View {
                     Button("Salva") {
                         Impostazioni.indirizzo = indirizzo.trimmingCharacters(in: .whitespaces)
                         Impostazioni.chiave = chiave.trimmingCharacters(in: .whitespaces)
+                        Impostazioni.parlaACasa = parlaACasa
                         Collegamento.condiviso.mandaImpostazioni()
                         chiudi()
                     }

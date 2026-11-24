@@ -24,3 +24,6 @@ apple/build/
 apple/JarvisRemote.xcodeproj/
 apple/Payload/
 *.ipa
+
+# cartelle temporanee dei test
+tests/_tmp*/

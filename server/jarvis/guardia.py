@@ -129,8 +129,9 @@ def _breve(s, n=120):
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def chiedi_a_jarvis(descrizione, attesa=60, impronta_azione="", sempre_ok=False, alto=False):
-    """True se l'utente conferma (o l'aveva permesso per sempre). Senza Jarvis raggiungibile: no (più prudente)."""
+def chiedi_a_jarvis(descrizione, attesa=110, impronta_azione="", sempre_ok=False, alto=False):
+    """True se l'utente conferma (o l'aveva permesso per sempre). Senza Jarvis raggiungibile: no (più prudente).
+    110 s: le conferme da lontano (telefono, orologio) ne aspettano 100."""
     porta = os.environ.get("JARVIS_PORTA", "47802")
     chiave = os.environ.get("JARVIS_INTERNO", "")
     richiesta = urllib.request.Request(f"http://127.0.0.1:{porta}/jarvis/interno/conferma",

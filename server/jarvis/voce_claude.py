@@ -3,6 +3,7 @@ voci neurali italiane di Microsoft; serve Internet)."""
 import asyncio
 import os
 import sys
+import re
 import threading
 import time
 from pathlib import Path
@@ -38,77 +39,100 @@ def llm_locale_acceso():
 
 
 class Trascrittore:
-    """Carica il modello una volta sola (in un thread, all'avvio) e lo tiene in memoria."""
+    """Riconoscimento vocale con due modelli tenuti pronti:
+    - sulla scheda video: large-v3-turbo (preciso, ~0,2 s a frase) quando la scheda è libera;
+    - sul processore: medium int8, 4 thread (preciso, ~3,5 s a frase) quando la scheda serve al gioco o al modello
+      locale (worker, emergenza). Misurato: lo small sul processore è più veloce (1,3 s) ma sbaglia frasi comuni
+      ("Che ore sono" -> "Chiuri sono"); il medium no.
+    Il modello del processore resta caricato in RAM (~1 GB, niente scheda video), così a inizio partita il passaggio
+    è immediato; quello della scheda video si scarica appena serve e si ricarica a fine partita."""
 
     def __init__(self, imp, log):
         self.imp = imp
         self.log = log
+        self.modelli = {}          # (nome, dispositivo) -> WhisperModel
         self.modello = None
         self.caricato = None
         self.dispositivo = None
         self.blocco = threading.Lock()
-        self.in_gioco = False   # lo imposta Jarvis (modalità gioco): Whisper resta sulla CPU
+        self.in_gioco = False      # lo imposta Jarvis (modalità gioco)
+        self.gpu_guasta = False    # la GPU non è andata una volta: non si riprova a ogni giro
+
+    @staticmethod
+    def _gpu_presente():
+        try:
+            import ctranslate2
+            return ctranslate2.get_cuda_device_count() > 0
+        except Exception:
+            return False
+
+    def serve_cpu(self):
+        return self.in_gioco or llm_locale_acceso()
 
     def _scelta(self):
         scelto = self.imp.get("stt") or "auto"
-        try:
-            import ctranslate2
-            gpu = ctranslate2.get_cuda_device_count() > 0
-        except Exception:
-            gpu = False
-        if gpu and self.serve_cpu():
-            gpu = False   # la scheda serve al gioco o al modello locale (worker, emergenza): si ascolta con la CPU
-            if scelto == "auto":
-                return "small", "cpu"
+        gpu = self._gpu_presente() and not self.gpu_guasta and not self.serve_cpu()
         if scelto == "auto":
-            return ("large-v3-turbo", "cuda") if gpu else ("small", "cpu")
+            return ("large-v3-turbo", "cuda") if gpu else (self.imp.get("stt_cpu") or "medium", "cpu")
         return scelto, ("cuda" if gpu else "cpu")
+
+    def _carica(self, nome, disp):
+        chiave = (nome, disp)
+        if chiave in self.modelli:
+            return self.modelli[chiave]
+        from faster_whisper import WhisperModel
+        _librerie_cuda()
+        t0 = time.time()
+        if disp == "cuda":
+            m = WhisperModel(nome, device="cuda", compute_type="float16")
+            # prova vera (transcribe è pigro: senza list() non calcola niente): le DLL di CUDA ci sono?
+            list(m.transcribe(np.zeros(16000, dtype=np.float32), language="it")[0])
+        else:
+            m = WhisperModel(nome, device="cpu", compute_type="int8", cpu_threads=4)
+        self.modelli[chiave] = m
+        self.log("stt pronto", nome, disp, f"{time.time() - t0:.1f}s")
+        return m
 
     def prepara(self):
         with self.blocco:
             nome, disp = self._scelta()
             if self.caricato == nome and self.dispositivo == disp and self.modello:
                 return
-            from faster_whisper import WhisperModel
-            _librerie_cuda()
-            t0 = time.time()
-            if disp == "cuda":
-                try:
-                    m = WhisperModel(nome, device="cuda", compute_type="float16")
-                    # prova vera (transcribe è pigro: senza list() non calcola niente): le DLL di CUDA ci sono?
-                    list(m.transcribe(np.zeros(16000, dtype=np.float32), language="it")[0])
-                    self.modello, self.caricato, self.dispositivo = m, nome, "cuda"
-                    self.log("stt pronto", nome, "cuda", f"{time.time() - t0:.1f}s")
-                    return
-                except Exception as e:
-                    self.log("stt su GPU non disponibile, uso la CPU:", repr(e)[:200])
-                    if nome.startswith("large"):
-                        nome = "small" if (self.imp.get("stt") or "auto") == "auto" else nome
-            self.modello = WhisperModel(nome, device="cpu", compute_type="int8")
-            self.caricato, self.dispositivo = nome, "cpu"
-            self.log("stt pronto", nome, "cpu", f"{time.time() - t0:.1f}s")
+            try:
+                self.modello = self._carica(nome, disp)
+            except Exception as e:
+                if disp != "cuda":
+                    raise
+                self.gpu_guasta = True
+                self.log("stt su GPU non disponibile, uso la CPU:", repr(e)[:200])
+                nome, disp = self.imp.get("stt_cpu") or "medium", "cpu"
+                self.modello = self._carica(nome, disp)
+            self.caricato, self.dispositivo = nome, disp
 
-    def serve_cpu(self):
-        return self.in_gioco or llm_locale_acceso()
+    def precarica_cpu(self):
+        """All'avvio, in sottofondo: il modello del processore pronto per la prima partita."""
+        try:
+            with self.blocco:
+                self._carica(self.imp.get("stt_cpu") or "medium", "cpu")
+        except Exception as e:
+            self.log("stt: modello per la CPU non precaricato:", repr(e)[:160])
 
     def libera_gpu_se_serve(self):
-        """Il modello locale sta partendo o gira: si toglie Whisper dalla scheda video (sennò il modello non ci sta
-        e finisce nella RAM, lentissimo). Quando il modello locale si spegne, Whisper torna sulla scheda."""
-        acceso = self.serve_cpu()
-        if acceso and self.dispositivo == "cuda":
-            with self.blocco:
-                self.modello, self.caricato, self.dispositivo = None, None, None
-            import gc
-            gc.collect()
-            self.log("stt: scheda video lasciata libera (gioco o modello locale)")
-            self.prepara()
-        elif not acceso and self.dispositivo == "cpu" and (self.imp.get("stt") or "auto") == "auto":
-            try:
-                import ctranslate2
-                if ctranslate2.get_cuda_device_count() > 0:
-                    self.prepara()   # torna sulla scheda video
-            except Exception:
-                pass
+        """Se la scheda video serve (gioco, modello locale) Whisper la lascia subito; quando torna libera ci rientra."""
+        if self.serve_cpu():
+            if self.dispositivo == "cuda" or any(d == "cuda" for _n, d in self.modelli):
+                with self.blocco:
+                    for chiave in [k for k in self.modelli if k[1] == "cuda"]:
+                        del self.modelli[chiave]
+                    if self.dispositivo == "cuda":
+                        self.modello, self.caricato, self.dispositivo = None, None, None
+                import gc
+                gc.collect()
+                self.log("stt: scheda video lasciata libera (gioco o modello locale)")
+                self.prepara()
+        elif self.dispositivo == "cpu" and not self.gpu_guasta and (self.imp.get("stt") or "auto") == "auto" \
+                and self._gpu_presente():
+            self.prepara()   # torna sulla scheda video
 
     def trascrivi(self, pcm16k):
         """pcm16k: array int16 a 16 kHz. Restituisce il testo (vuoto se non ha capito niente)."""
@@ -116,13 +140,30 @@ class Trascrittore:
         audio = pcm16k.astype(np.float32) / 32768
         segmenti, _info = self.modello.transcribe(
             audio, language="it", beam_size=1 if self.dispositivo == "cpu" else 5, vad_filter=False,
-            condition_on_previous_text=False, initial_prompt="Jarvis, apri Spotify. Sì, confermo.")
-        testo = " ".join(s.text.strip() for s in segmenti if s.no_speech_prob < 0.8).strip()
-        # frasi che Whisper "allucina" sul silenzio
-        if testo.lower().strip(" .!") in ("", "grazie", "grazie a tutti", "sottotitoli a cura di qtss",
-                                          "sottotitoli creati dalla comunità amara.org", "amen"):
+            condition_on_previous_text=False, initial_prompt=SUGGERIMENTO)
+        testo = " ".join(s.text.strip() for s in segmenti if not _vuoto(s)).strip()
+        pulito = testo.lower().strip(" .,!?")
+        if ALLUCINAZIONI.match(pulito) or (len(pulito) > 3 and pulito in SUGGERIMENTO.lower()):
             return ""
         return testo
+
+
+# suggerimento per Whisper (lingua, nome "Jarvis"). Sul rumore Whisper a volte lo ripete: non deve mai essere un
+# comando né una risposta (provato il 2026-11-24: con "Sì, confermo." nel suggerimento, da un residuo d'eco è uscito
+# "Sì, confermo.", che durante una richiesta di conferma avrebbe approvato un'azione irreversibile)
+SUGGERIMENTO = "Conversazione in italiano con Jarvis, l'assistente vocale del computer."
+
+
+# frasi che Whisper "allucina" sul silenzio o sul fruscio (imparate dai sottotitoli dei video): provato il
+# 2026-11-24, un residuo d'eco è diventato "Grazie per la visione."
+ALLUCINAZIONI = re.compile(
+    r"^(|grazie( mille| a tutti)?( per (la |l')?(visione|attenzione|ascolto))?|buona visione|ciao a tutti"
+    r"|alla prossima|iscriviti( al canale)?.*|sottotitoli.*|.*amara\.org.*|amen|\.+)$")
+
+
+def _vuoto(segmento):
+    """Segmento senza parlato: Whisper stesso lo dice probabile silenzio, o è molto incerto e probabile silenzio."""
+    return segmento.no_speech_prob >= 0.8 or (segmento.no_speech_prob >= 0.5 and segmento.avg_logprob < -1.0)
 
 
 class Sintesi:
