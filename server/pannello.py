@@ -1369,7 +1369,7 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(403, {"errore": "abbinamento chiuso: aprilo dalle impostazioni sul PC"})
             return self.manda(200, Abbinamento.risposta(self.server.cfg, con_chiave=True))
         if u.path == "/api/xr/abbina":
-            return self.manda(200, AbbinaVisore.esito(self.server.cfg, (q.get("id") or [""])[0]))
+            return self.manda(200, AbbinaVisore.esito(self.server.cfg, (q.get("id") or [""])[0], self.client_address[0]))
         livello = self.livello(q)
         if not livello:
             return self.manda(401, {"errore": "token mancante o sbagliato"})
@@ -1734,8 +1734,13 @@ class AbbinaVisore:
         with cls._blocco:
             cls._quando = [t for t in cls._quando if ora - t < 600]
             attive = [r for r in cls._richieste.values() if r["stato"] == "attesa" and ora - r["t"] < 180]
+            # la richiesta in corso vale solo per chi l'ha fatta: un altro dispositivo non la riceve (né il suo id,
+            # con cui ritirerebbe la chiave appena consentita)
+            mia = [r for r in attive if r["ip"] == ip]
+            if mia:
+                return mia[0]
             if attive:
-                return attive[0]
+                raise PermissionError("un altro dispositivo sta già chiedendo di collegarsi: riprova tra qualche minuto")
             if len(cls._quando) >= 6:
                 raise PermissionError("troppe richieste: riprova tra qualche minuto")
             cls._quando.append(ora)
@@ -1777,11 +1782,11 @@ class AbbinaVisore:
         return True
 
     @classmethod
-    def esito(cls, cfg, id_):
-        """Lo stato della richiesta; la chiave solo la prima volta che il visore la ritira."""
+    def esito(cls, cfg, id_, ip):
+        """Lo stato della richiesta; la chiave solo la prima volta che il visore la ritira, e solo a chi l'ha chiesta."""
         with cls._blocco:
             r = cls._richieste.get(id_)
-            if not r:
+            if not r or r["ip"] != ip:
                 return {"stato": "sconosciuta"}
             if r["stato"] == "attesa" and time.time() - r["t"] > 180:
                 r["stato"] = "scaduta"

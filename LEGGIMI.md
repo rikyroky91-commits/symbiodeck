@@ -170,6 +170,18 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - **Pronuncia**: il modello della parola chiave (`hey_jarvis` di openWakeWord) è inglese. Detto all'inglese
   ("Hei Giàrvis") scatta con punteggio 0,98–1,00; "Ehi Jarvis" letto all'italiana ("Iàrvis") solo 0,10 (prova con
   voci sintetiche, 2026-11-23). Se non scatta: pronuncia inglese, oppure "Sensibilità" più alta nel pannello.
+- **Parola chiave verificata** (2026-11-24 sera, richiesta dell'utente: "deve attivarsi solo quando lo dico io").
+  Con la sensibilità a 0,40 il registro mostrava decine di attivazioni a vuoto mentre si parlava d'altro, tutte tra
+  0,40 e 0,51 ("La pipì dalle 4 e mezza", "Dobbiamo festeggiare"); quelle vere 0,93–0,97. Ora sotto `parola_sicura`
+  (0,9) Jarvis non si accende subito: Whisper trascrive gli ultimi 2 s **senza suggerimento** (quello normale contiene
+  "Jarvis") e si accende solo se c'è il nome (`NOME` in `voce_claude.py`: "Jarvis", "giarvis", "GARVIS", "jervis"…).
+  La verifica gira in un altro thread e quello che dici intanto si tiene: "Hey Jarvis apri Spotify" detto di fila
+  arriva intero (senza suono d'attivazione, che coprirebbe le parole). Whisper guasto = non si accende. Si spegne con
+  `"verifica_parola": false` in `jarvis.json`. Registro: `parola chiave confermata/scartata da Whisper: '…'`.
+  **Provato**: ciclo di ascolto vero con parola chiave, VAD e Whisper finti (`tests/test_jarvis_parola.py`, 6 test);
+  Whisper large-v3-turbo vero sulla GPU con voce sintetica Piper: 13 frasi su 13 giuste (5 con "Jarvis", anche in
+  mezzo a una frase; 8 comuni scartate, comprese quelle che lo avevano acceso), ~0,15 s. Sulla CPU (gioco) ~3,5 s.
+  **Non provato**: con la voce vera dell'utente al tablet.
 - **Come è fatto** (`server/jarvis/`, processo a parte avviato e tenuto in vita da `pannello.py`, porta 47802,
   stesso token del pannello; `adb reverse` inoltra anche la 47802):
   - `principale.py`: stati (riposo, ascolto, penso, lavoro, parlo, conferma, seguito), parola chiave sempre
@@ -403,7 +415,9 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     **Senza chiave da copiare** (`AbbinaVisore` in pannello.py): il visore chiede di collegarsi e mostra un codice di
     4 cifre; Jarvis lo chiede sul tablet a tutto schermo ("Un visore vuole collegarsi, il codice è 4 7 1 9: lo
     consento?", Consenti/Rifiuta, anche a voce), oppure si consente dalle impostazioni del PC. La chiave arriva al
-    visore una volta sola e resta salvata lì. Una richiesta per volta, al massimo 6 ogni 10 minuti, valide 3 minuti.
+    visore una volta sola e resta salvata lì. Una richiesta per volta, al massimo 6 ogni 10 minuti, valide 3 minuti. Dal 2026-11-24 sera la richiesta in corso vale solo per l'IP che
+    l'ha fatta: un altro dispositivo riceve "riprova tra qualche minuto" e non può ritirarne la chiave (prima riceveva
+    la stessa richiesta e il suo id, e la chiave andava a chi la ritirava per primo).
     1. Nel Browser del Quest scrivi l'IP del PC (è scritto grande nelle impostazioni del PC > Jarvis XR).
     2. Solo la prima volta: il visore avvisa che il certificato non è verificato, **Avanzate** > **Procedi**.
     3. Il visore mostra il codice: sul tablet rispondi **Consenti**.

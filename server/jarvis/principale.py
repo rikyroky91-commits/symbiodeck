@@ -58,6 +58,8 @@ PREDEFINITE = {
     "velocita": 5,
     "tono": -2,
     "sensibilita": 0.5,            # soglia di openWakeWord: più bassa = si attiva più facilmente
+    "verifica_parola": True,       # sotto "parola_sicura" Whisper controlla che sia stato detto davvero "Jarvis"
+    "parola_sicura": 0.9,          # da qui in su la parola chiave basta da sola (detta bene: 0,93-0,97)
     "seguito": 8,                  # secondi in cui ascolta ancora dopo aver risposto
     "pausa": 1.4,                  # secondi di silenzio che chiudono una frase (più lunga: puoi pensare)
     "conferme": "irreversibili",   # irreversibili | sempre | mai
@@ -248,6 +250,7 @@ class Jarvis:
             self.imp[k] = tipo(v) if tipo is not bool else bool(v)
         self.imp["volume"] = max(0, min(150, int(self.imp["volume"])))
         self.imp["sensibilita"] = max(0.1, min(0.95, float(self.imp["sensibilita"])))
+        self.imp["parola_sicura"] = max(0.5, min(1.01, float(self.imp["parola_sicura"])))
         self.imp["seguito"] = max(0, min(30, int(self.imp["seguito"])))
         self.imp["pausa"] = max(0.6, min(4.0, float(self.imp["pausa"])))
         salva_impostazioni(self.imp)
@@ -353,12 +356,26 @@ class Jarvis:
         # con la cancellazione dell'eco sul PC: un'Interruzione a parte che impara solo dal segnale già pulito e
         # solo a cancellazione agganciata (se imparasse mentre il filtro converge, crederebbe l'eco molto più forte)
         interruzione_pulita, epoca_eco, aec_prima = Interruzione(), None, None
+        # parola chiave incerta: Whisper controlla gli ultimi 2 s in un altro thread; intanto si tiene da parte quello
+        # che segue, così se era davvero "Jarvis" la richiesta detta di fila non si perde
+        prima, verifica = [], None
         while True:
             try:
                 blocco = self.blocchi.get(timeout=1)
             except queue.Empty:
                 continue
             ora = time.time()
+            prima.append(blocco)
+            del prima[:-25]                                  # 2 s
+            if verifica is not None:
+                if verifica["esito"] is None and ora - verifica["t"] < 10:
+                    verifica["dopo"].append(blocco)
+                else:
+                    if verifica["esito"]:
+                        parlato, silenzio = self._attivato_dopo_verifica(verifica["dopo"], vad)
+                        frase = verifica["dopo"] if parlato else verifica["dopo"][-4:]
+                        inizio_ascolto = ora
+                    verifica = None
             rms = float(np.sqrt(np.mean((blocco.astype(np.float32) / 32768) ** 2)))
             self.livello = max(rms * 6, self.livello * 0.6)
             if ora - ultimo_livello > 0.1:
@@ -380,6 +397,13 @@ class Jarvis:
                 dopo_attivazione = ora
                 self.parola.reset()
                 log("parola chiave", round(float(punteggio), 2))
+                if self.imp.get("verifica_parola", True) and punteggio < self.imp.get("parola_sicura", 0.9):
+                    if verifica is None:     # una per volta
+                        verifica = {"esito": None, "dopo": [], "t": ora}
+                        threading.Thread(target=self._verifica_parola, args=(np.concatenate(prima), verifica),
+                                         daemon=True).start()
+                    continue
+                verifica = None              # detta bene: la verifica in corso non serve più
                 self._attivato()
                 frase, parlato, silenzio, inizio_ascolto = [], False, 0, ora
                 vad.reset_states()
@@ -500,7 +524,7 @@ class Jarvis:
     def _suona(self, nome):
         threading.Thread(target=self.uscita.riproduci, args=(audio.suono(nome),), daemon=True).start()
 
-    def _attivato(self):
+    def _attivato(self, suono=True):
         if self.conferma:
             return
         if self.stato == "parlo" or self.claude.occupato:
@@ -513,7 +537,33 @@ class Jarvis:
         self.imposta_stato("ascolto")
         self.tablet.comando(attivato=time.time())
         # solo un suono, niente "Dimmi" a voce: mentre parla non ascolta, e si perderebbe l'inizio
-        self._suona("attivo")
+        if suono:
+            self._suona("attivo")
+
+    def _verifica_parola(self, pcm, verifica):
+        """Thread: c'è davvero "Jarvis" nell'audio della parola chiave? Se Whisper non va: no (meglio una parola
+        chiave da ripetere che Jarvis che si accende mentre si parla d'altro)."""
+        try:
+            detto, testo = self.stt.dice_jarvis(pcm)
+        except Exception as e:
+            detto, testo = False, f"(verifica non riuscita: {e!r})"[:160]
+        log("parola chiave", "confermata" if detto else "scartata", f"da Whisper: {testo!r}")
+        verifica["esito"] = detto
+
+    def _attivato_dopo_verifica(self, dopo, vad):
+        """Parola chiave confermata: si attiva e si riprende quello che l'utente ha detto mentre si verificava.
+        Restituisce (sta parlando, blocchi di silenzio dopo la voce); se parla già, niente suono (coprirebbe le
+        sue parole)."""
+        vad.reset_states()
+        parlato, silenzio = False, 0
+        for b in dopo:
+            if vad.predict(b, frame_size=640) > 0.5:
+                parlato, silenzio = True, 0
+            elif parlato:
+                silenzio += 1
+        self._attivato(suono=not parlato)
+        self.utente_parla = parlato
+        return parlato, silenzio
 
     @staticmethod
     def _svuota(q):
