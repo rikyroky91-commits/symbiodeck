@@ -147,6 +147,22 @@ class Trascrittore:
             return ""
         return testo
 
+    def dice_jarvis(self, pcm16k):
+        """Seconda verifica della parola chiave: c'è davvero "Jarvis" negli ultimi secondi? Trascrizione senza
+        suggerimento (quello normale contiene "Jarvis" e sul rumore Whisper potrebbe ripeterlo).
+        Restituisce (sì/no, testo capito)."""
+        self.prepara()
+        audio = pcm16k.astype(np.float32) / 32768
+        segmenti, _info = self.modello.transcribe(audio, language="it", beam_size=1, vad_filter=False,
+                                                  condition_on_previous_text=False)
+        testo = " ".join(s.text.strip() for s in segmenti if not _vuoto(s)).strip()
+        return bool(NOME.search(testo)), testo
+
+
+# "Jarvis" come lo scrive Whisper, detto all'inglese o all'italiana (provato con voce sintetica il 2026-11-24:
+# "e giarvis", "e i GARVIS", "e i JARVIS", "Jarvis"; nessuna frase comune lo contiene)
+NOME = re.compile(r"\b(?:j|gi|g|dj|dg|ch|ci|y|i)[ae]h?r?\s?[vb]i[sz]", re.I)
+
 
 # suggerimento per Whisper (lingua, nome "Jarvis"). Sul rumore Whisper a volte lo ripete: non deve mai essere un
 # comando né una risposta (provato il 2026-11-24: con "Sì, confermo." nel suggerimento, da un residuo d'eco è uscito

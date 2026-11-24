@@ -217,3 +217,20 @@ def test_rimando_da_http_a_https():
     assert r.status == 301 and r.getheader("Location") == "https://192.168.1.50/"
     srv.shutdown()
     del gestore
+
+
+def test_abbinamento_solo_per_chi_lo_chiede():
+    """Un altro dispositivo in rete non riceve la richiesta in corso del visore né può ritirarne la chiave."""
+    p = _pannello()
+    A = p.AbbinaVisore
+    A._richieste.clear(); A._quando.clear()
+    cfg = {"token": "chiave-del-pannello"}
+    with mock.patch.object(A, "_chiedi_a_jarvis", lambda *a: None):
+        quest = A.nuova(cfg, "192.168.1.60")
+        assert A.nuova(cfg, "192.168.1.60")["id"] == quest["id"]          # lo stesso visore ritrova la sua
+        with pytest.raises(PermissionError):
+            A.nuova(cfg, "192.168.1.77")                                    # un altro aspetta il suo turno
+        assert A.decidi(quest["id"], True)
+        assert A.esito(cfg, quest["id"], "192.168.1.77") == {"stato": "sconosciuta"}   # niente chiave a un altro
+        assert A.esito(cfg, quest["id"], "192.168.1.60")["token"] == "chiave-del-pannello"
+        assert A.nuova(cfg, "192.168.1.77")["id"] != quest["id"]          # finita quella, tocca all'altro
