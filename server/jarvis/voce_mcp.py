@@ -1,10 +1,12 @@
-"""Server MCP della voce di Jarvis: i soli tre strumenti che la voce ha.
+"""Server MCP della voce di Jarvis: i soli strumenti che la voce ha.
 
 La voce è un Claude leggerissimo (niente strumenti di Claude Code, niente skill): parla e decide. Il lavoro vero lo
 fa l'esecutore, un Claude Code completo in un processo a parte. Questi strumenti sono il ponte:
   esegui(richiesta)  - affida un compito all'esecutore (Jarvis vede la chiamata e lo passa; qui si conferma e basta)
   stato_lavoro()     - a che punto è l'esecutore
   ferma_lavoro()     - ferma il lavoro in corso
+  ricorda(fatto)     - salva un fatto nella memoria a lungo termine (memoria.py)
+  dimentica(cosa)    - toglie dalla memoria i fatti che parlano di qualcosa
 Lo avvia la voce (vedi cervello.py, --mcp-config):  python voce_mcp.py
 """
 import json
@@ -56,6 +58,31 @@ def ferma_lavoro() -> str:
         return "Lavoro fermato."
     except OSError as e:
         return f"Non sono riuscito a fermarlo: {e}"
+
+
+@server.tool()
+def ricorda(fatto: str) -> str:
+    """Salva nella memoria a lungo termine un fatto che l'utente ti chiede di ricordare ("ricordati che…") o una sua
+    preferenza stabile. Scrivi il fatto completo e breve, in terza persona, es. "Il disco dei giochi è il J"."""
+    try:
+        fiducia = _jarvis("ricorda", {"fatto": fatto}).get("fiducia")
+    except OSError as e:
+        return f"Memoria non disponibile: {e}"
+    if fiducia == "quarantena":
+        return ("Non l'ho salvato tra le cose da usare: sembra un ordine o contiene una password o una chiave. "
+                "Dillo all'utente.")
+    return "Salvato." if fiducia else "Troppo corto o vuoto: non salvato."
+
+
+@server.tool()
+def dimentica(cosa: str) -> str:
+    """Toglie dalla memoria a lungo termine i fatti che contengono queste parole (quando l'utente chiede di
+    dimenticare qualcosa o dice che un fatto ricordato è sbagliato)."""
+    try:
+        tolti = _jarvis("dimentica", {"cosa": cosa}).get("tolti", 0)
+    except OSError as e:
+        return f"Memoria non disponibile: {e}"
+    return f"Tolti {tolti} fatti." if tolti else "Non c'era niente del genere in memoria."
 
 
 if __name__ == "__main__":

@@ -21,7 +21,8 @@ from pathlib import Path
 import numpy as np
 
 from .esecutore import QUI, SENZA_FINESTRA, Esecutore
-from .llm_locale import CARTELLA_LLM, attivo
+from .llm_locale import CARTELLA_LLM, attivo, contesto
+from .memoria import componi
 
 LIMITE = re.compile(r"usage limit|limit reached|rate.?limit|exceeded.*(quota|limit)|out of (extra )?usage|"
                     r"overloaded|credit balance|429|529", re.I)
@@ -67,6 +68,18 @@ class SintesiLocale:
 
 # ---------------------------------------------------------------- cervello locale
 
+CONTESTO_PROFILI = {"27b": 32768, "27b-mtp": 16384}
+
+
+def finestra_riassunto(imp, n_ctx=None):
+    """Token oltre i quali Claude Code riassume la conversazione. Claude Code crede che il modello "worker" abbia
+    1.000.000 di token di contesto (misurato 2026-11-24) e senza questo non riassumerebbe mai: la conversazione
+    andrebbe a sbattere contro il limite di llama-server. Si tiene il 65% del contesto vero (da /props, altrimenti dal
+    profilo): il riassunto scatta dopo il turno che supera la soglia, e un turno con uno screenshot pesa parecchio."""
+    n = n_ctx or contesto() or CONTESTO_PROFILI.get(imp.get("modello_emergenza") or "27b", 32768)
+    return max(8000, int(n * 0.65))
+
+
 class EsecutoreLocale(Esecutore):
     """Claude Code --bare puntato a llama-server: voce ed esecutore insieme, senza account Anthropic."""
 
@@ -77,7 +90,8 @@ class EsecutoreLocale(Esecutore):
     def _comando(self, exe):
         cmd = [exe, "--bare", "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--permission-mode", "bypassPermissions", "--model", "worker",
-               "--effort", "low", "--append-system-prompt-file", str(QUI / "persona_locale.md"),
+               "--effort", "low", "--append-system-prompt-file",
+               str(componi(QUI / "persona_locale.md", self.dati / "persona-locale-con-memoria.md")),
                "--settings", str(self._file_impostazioni()), "--mcp-config", str(self._file_mcp()),
                "--tools", "Read,Edit,Write,Glob,Grep,Bash,PowerShell,WebFetch"]
         if self.sessione:
@@ -89,7 +103,11 @@ class EsecutoreLocale(Esecutore):
                    ANTHROPIC_MODEL="worker", ANTHROPIC_DEFAULT_HAIKU_MODEL="worker",
                    ANTHROPIC_DEFAULT_SONNET_MODEL="worker", ANTHROPIC_DEFAULT_OPUS_MODEL="worker",
                    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1", DISABLE_TELEMETRY="1",
-                   CLAUDE_CODE_MAX_OUTPUT_TOKENS="4096")
+                   CLAUDE_CODE_MAX_OUTPUT_TOKENS="4096",
+                   CLAUDE_CODE_AUTO_COMPACT_WINDOW=str(finestra_riassunto(self.imp)))
+        if not self.imp.get("ragionamento_locale"):
+            # Claude Code manda "thinking: adaptive" anche a llama-server: con 0 non lo chiede (misurato 2026-11-24)
+            env["MAX_THINKING_TOKENS"] = "0"
         env.pop("ANTHROPIC_AUTH_TOKEN", None)
         return env
 

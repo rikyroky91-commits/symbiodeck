@@ -16,6 +16,7 @@ import time
 from pathlib import Path
 
 from .esecutore import QUI, Esecutore
+from .memoria import componi
 
 GIORNI = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
 MESI = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre",
@@ -59,7 +60,8 @@ class Voce(Esecutore):
     def _comando(self, exe):
         return [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                 "--include-partial-messages", "--permission-mode", "bypassPermissions",
-                "--system-prompt-file", str(QUI / "persona.md"), "--tools", "",
+                "--system-prompt-file", str(componi(QUI / "persona.md", self.dati / "persona-con-memoria.md")),
+                "--tools", "",
                 "--mcp-config", str(self._file_mcp_voce()), "--strict-mcp-config", "--disable-slash-commands",
                 "--setting-sources", "", "--no-session-persistence",
                 "--model", self.imp.get("modello_voce") or "sonnet", "--effort", self.imp.get("effort_voce") or "low"]

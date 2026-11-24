@@ -13,6 +13,7 @@ import time
 import uuid
 from pathlib import Path
 
+from .memoria import componi
 from .trame import descrivi_azione
 
 QUI = Path(__file__).resolve().parent
@@ -88,7 +89,7 @@ class Esecutore:
         """Claude Code completo, come nell'app: modello e ragionamento dei compiti, guardia, schermo, Chrome."""
         cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--include-partial-messages", "--permission-mode", "bypassPermissions",
-               "--append-system-prompt-file", str(QUI / "esecutore.md"),
+               "--append-system-prompt-file", str(componi(QUI / "esecutore.md", self.dati / "esecutore-con-memoria.md")),
                "--settings", str(self._file_impostazioni()), "--mcp-config", str(self._file_mcp()),
                "--model", self.imp.get("modello_compiti") or "opus", "--effort", self.imp.get("effort_compiti") or "high"]
         if self.imp.get("chrome", True):
