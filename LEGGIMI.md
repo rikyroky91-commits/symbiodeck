@@ -349,18 +349,28 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     16 kHz) e Jarvis la trascrive sul PC come quelle del tablet; se c'è una conferma aperta, è la risposta. Le
     posizioni restano salvate nel visore; "Riordina" le rimette attorno a te. **Controller**: raggio + grilletto
     (tenuto sulla sfera = parla), impugnatura per spostare.
-  - **Aprirla nel visore**: la realtà mista vuole `https://` oppure `localhost`. Due strade:
-    1. **Tailscale Serve** (consigliata, senza cavo): sul PC `tailscale serve --bg --https=443 http://127.0.0.1:47800`
-       e `tailscale serve --bg --https=8443 http://127.0.0.1:47802`; sul Quest Tailscale attivo e nel browser
-       `https://<nome-pc>.<tailnet>.ts.net/xr.html?t=<chiave>` (la pagina usa da sola la porta 8443 per Jarvis).
-    2. **Cavo USB** (modalità sviluppatore del Quest): `adb reverse tcp:47800 tcp:47800` e
-       `adb reverse tcp:47802 tcp:47802`, poi `http://localhost:47800/xr.html?t=<chiave>`.
-    I link con la chiave sono nella pagina delle impostazioni del PC (sezione Jarvis XR). Sul PC la stessa pagina
-    è un'**anteprima** col mouse: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.
+  - **Aprirla nel visore, in Wi-Fi** (dal 2026-11-24 sera, `server/xr_https.py`): il Quest apre la realtà mista e il
+    microfono solo da pagine `https://` (o `localhost`). Il pannello allora serve le stesse pagine e API anche in
+    **HTTPS sulla porta 47443**, con un certificato che genera da solo per gli indirizzi del PC (rifatto se cambiano;
+    file in `server/xr-certificato/`, fuori da git; serve `cryptography`, in requirements-jarvis.txt). Niente cavo,
+    niente Tailscale, niente app da installare. Le chiamate `/jarvis/*` passano dal pannello a Jarvis (anche gli
+    eventi in diretta e i video a pezzi), così la pagina usa un indirizzo solo.
+    1. Impostazioni del PC > **Jarvis XR**: c'è il QR e l'indirizzo `https://<IP del PC>:47443/xr?t=<chiave>`.
+    2. Col Quest inquadra il QR, oppure apri il Browser del visore e scrivi l'indirizzo.
+    3. Solo la prima volta il visore avvisa che il certificato non è verificato: **Avanzate** > **Procedi**.
+    4. **ENTRA IN REALTÀ MISTA**, concedi microfono e mani. Dalla volta dopo basta `https://<IP del PC>:47443/xr`
+       (la chiave resta nel visore): conviene aggiungerla ai preferiti o fissarla nella barra delle app.
+    Se Windows chiede il permesso del firewall per Python sulla porta nuova, va dato per le reti private.
+    Alternative se servisse: cavo USB con `adb reverse tcp:47800 tcp:47800` e `http://localhost:47800/xr`, oppure il
+    flag `unsafely-treat-insecure-origin-as-secure` in `chrome://flags` del Browser del Quest con `http://<IP>:47800`.
+    Sul PC la stessa pagina (`http://localhost:47800/xr`) è un'**anteprima** col mouse.
   - Provato in Chrome senza visore con pannello e Jarvis finti: rendering, pulsanti col mouse (app, media, privata,
     nuova), autorizzazione e risposta, e **mani simulate** (giunti finti): il tocco preme Privata, il pizzico sposta
     la Telemetria e salva la posizione, due mani ingrandiscono le App. **Non provato su un Quest 3 vero**: tracciamento
-    delle mani reale, passthrough, microfono del visore, Tailscale Serve.
+    delle mani reale, passthrough, microfono del visore. HTTPS e inoltro provati in Python
+    (`tests/test_xr_https.py`: certificato, stretta di mano nel thread, eventi in diretta, voce, video a pezzi);
+    **non provato** che il Browser del Quest, dopo "Procedi", tratti la pagina come sicura per la realtà mista
+    (secondo la documentazione di NVIDIA CloudXR succede).
 - **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
   "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
   Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche

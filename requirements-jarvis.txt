@@ -10,6 +10,8 @@ miniaudio>=1.59
 # server MCP "schermo": Jarvis vede lo schermo e usa mouse e tastiera
 mcp>=2.0
 mss>=9.0
+# Jarvis XR senza cavo: il pannello fa da sé il certificato HTTPS per il Quest
+cryptography>=42
 pillow>=10.0
 uiautomation>=2.0; sys_platform == "win32"
 # modalità emergenza: voce italiana sul PC (senza Internet)

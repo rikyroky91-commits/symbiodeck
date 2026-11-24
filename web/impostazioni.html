@@ -118,8 +118,11 @@
     </div>
     <h2 style="margin-top:14px">App Jarvis per iPhone e Apple Watch <small>inserisci questi dati nell'app sull'iPhone (l'orologio li riceve da lì)</small></h2>
     <p class="nota" id="j-app-dati">…</p>
-    <h2 style="margin-top:14px">Jarvis XR per Meta Quest 3 <small>il pannello e Jarvis come ologrammi nella stanza (vedi LEGGIMI)</small></h2>
-    <p class="nota" id="j-xr">…</p>
+    <h2 style="margin-top:14px">Jarvis XR per Meta Quest 3 <small>il pannello e Jarvis come ologrammi nella stanza, in Wi-Fi</small></h2>
+    <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
+      <div id="j-xr-qr" style="background:#fff;padding:8px;border-radius:10px;line-height:0"></div>
+      <div class="nota" id="j-xr" style="flex:1;min-width:260px">…</div>
+    </div>
     <h2 style="margin-top:14px">Altre sessioni di Claude Code <small>possono parlarti con la voce di Jarvis e chiederti decisioni</small></h2>
     <p class="nota">Una volta sola, in un terminale: <code id="j-mcp">claude mcp add --scope user jarvis -- python …\server\jarvis\jarvis_mcp.py</code></p>
     <h2 style="margin-top:14px">Conversazioni di Jarvis <small>aprile nell'app Claude per continuarle qui sul PC</small></h2>
@@ -149,6 +152,7 @@
 </div>
 <div class="avviso" id="avviso"></div>
 
+<script src="lib/qrcode.js"></script>
 <script>
 (function () {
   "use strict";
@@ -420,18 +424,25 @@
     var a = d.app_jarvis || {};
     $("j-app-dati").textContent = "Indirizzo: " + (a.indirizzi || []).join(" oppure ") +
       " (da fuori casa: l'indirizzo Tailscale del PC, 100.x.y.z) · Chiave: " + (a.chiave || "?");
-    // il visore vuole https (Tailscale Serve) oppure localhost (cavo USB + adb reverse): con http in rete locale
-    // il browser del Quest non apre la realtà mista
-    var xr = $("j-xr"), k = encodeURIComponent(a.chiave || "");
+    // il Quest apre la realtà mista solo da https: il pannello la serve sulla porta 47443 col suo certificato
+    var xr = $("j-xr"), k = encodeURIComponent(a.chiave || ""), x = a.xr || {};
+    var lan = (a.indirizzi || []).filter(function (i) { return i.indexOf("100.") !== 0; })[0] || (a.indirizzi || [])[0] || "IP-del-PC";
+    var url = "https://" + lan + ":" + (x.porta || 47443) + "/xr?t=" + k;
     xr.innerHTML = "";
-    var riga = function (testo, url) {
-      var p = document.createElement("div"); p.textContent = testo + " ";
-      var l = document.createElement("a"); l.href = url; l.textContent = url; l.target = "_blank"; p.appendChild(l);
-      xr.appendChild(p);
-    };
-    riga("Anteprima qui sul PC:", "http://localhost:" + location.port + "/xr.html?t=" + k);
-    riga("Quest col cavo (adb reverse tcp:" + location.port + " e tcp:47802):", "http://localhost:" + location.port + "/xr.html?t=" + k);
-    riga("Quest via Tailscale Serve:", "https://<nome-pc>.<tailnet>.ts.net/xr.html?t=" + k);
+    var riga = function (html) { var p = document.createElement("div"); p.innerHTML = html; p.style.marginBottom = "6px"; xr.appendChild(p); };
+    if (!x.attivo) riga("<b style='color:#ff5468'>HTTPS non attivo</b>: " + (x.errore || "riavvia il pannello"));
+    riga("1. Col Quest inquadra il QR (o nel Browser del visore scrivi l'indirizzo sotto).");
+    riga("2. Solo la prima volta il visore avvisa che il certificato non è verificato: <b>Avanzate</b> → <b>Procedi</b>.");
+    riga("3. Premi <b>ENTRA IN REALTÀ MISTA</b>. Dalla volta dopo basta <b>https://" + lan + ":" + (x.porta || 47443) + "/xr</b> (la chiave resta nel visore).");
+    var l = document.createElement("a"); l.href = url; l.textContent = url; l.target = "_blank";
+    l.style.wordBreak = "break-all"; xr.appendChild(l);
+    var p2 = document.createElement("div"); p2.style.marginTop = "6px";
+    p2.innerHTML = "Anteprima qui sul PC: <a target='_blank' href='/xr?t=" + k + "'>/xr</a>";
+    xr.appendChild(p2);
+    try {
+      var qr = qrcode(0, "M"); qr.addData(url); qr.make();
+      $("j-xr-qr").innerHTML = qr.createSvgTag({ cellSize: 5, margin: 2 });
+    } catch (e) { $("j-xr-qr").textContent = ""; }
     if (a.cartella) $("j-mcp").textContent = 'claude mcp add --scope user jarvis -- python "' + a.cartella + '\\server\\jarvis\\jarvis_mcp.py"';
   }, function () {});
 })();

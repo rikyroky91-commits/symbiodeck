@@ -1304,6 +1304,48 @@ class Gestore(BaseHTTPRequestHandler):
             return "tablet"
         return None
 
+    def inoltra_jarvis(self, metodo):
+        """Le chiamate /jarvis/* passano a Jarvis (porta 47802): così il visore usa un indirizzo solo, anche in HTTPS
+        (una pagina https non può chiamare un http). Gli eventi (text/event-stream) passano man mano che arrivano."""
+        import http.client
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 8 * 2**20:
+            return self.manda(413, {"errore": "richiesta troppo grande"})
+        corpo = self.rfile.read(n) if n else None
+        intestazioni = {k: self.headers[k] for k in ("X-Token", "Content-Type", "Range", "Accept") if self.headers.get(k)}
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", PORTA_JARVIS, timeout=900)
+            c.request(metodo, self.path, body=corpo, headers=intestazioni)
+            r = c.getresponse()
+        except OSError:
+            return self.manda(502, {"errore": "Jarvis non risponde"})
+        eventi = (r.getheader("Content-Type") or "").startswith("text/event-stream")
+        try:
+            self.send_response(r.status)
+            for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control"):
+                if r.getheader(k):
+                    self.send_header(k, r.getheader(k))
+            if eventi or not r.getheader("Content-Length"):
+                self.send_header("Connection", "close")
+                self.close_connection = True
+            self.end_headers()
+            while True:
+                pezzo = r.read1(65536) if eventi else r.read(65536)
+                if not pezzo:
+                    break
+                self.wfile.write(pezzo)
+                if eventi:
+                    self.wfile.flush()
+        except (ConnectionError, OSError):
+            self.close_connection = True
+        finally:
+            c.close()
+
+    def do_OPTIONS(self):
+        if self.path.startswith("/jarvis/"):
+            return self.inoltra_jarvis("OPTIONS")
+        self.manda(204)
+
     def corpo_json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n > 64 * 1024:
@@ -1316,6 +1358,8 @@ class Gestore(BaseHTTPRequestHandler):
             return self.manda(403, {"errore": "solo rete locale"})
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if u.path.startswith("/jarvis/"):
+            return self.inoltra_jarvis("GET")
         if not u.path.startswith("/api/"):
             return self.statico(u.path)
         if u.path == "/api/abbina":
@@ -1348,7 +1392,8 @@ class Gestore(BaseHTTPRequestHandler):
                                     "porta": PORTA, "abbinamento": Abbinamento.secondi_rimasti(),
                                     # per l'app Jarvis su iPhone e Apple Watch (solo dal PC stesso)
                                     "app_jarvis": {"indirizzi": indirizzi_del_pc(), "chiave": cfg["token"],
-                                                   "cartella": str(WEB.resolve().parent)}})
+                                                   "cartella": str(WEB.resolve().parent),
+                                                   "xr": {"porta": 47443, **XR}}})
         return self.manda(404, {"errore": "non trovato"})
 
     def icona(self, target):
@@ -1369,7 +1414,8 @@ class Gestore(BaseHTTPRequestHandler):
         return self.manda(200, f.read_bytes(), "image/png", {"Cache-Control": "max-age=86400"})
 
     def statico(self, percorso):
-        nome = {"/": "index.html", "": "index.html", "/impostazioni": "impostazioni.html"}.get(percorso, percorso.lstrip("/"))
+        nome = {"/": "index.html", "": "index.html", "/impostazioni": "impostazioni.html",
+                "/xr": "xr.html"}.get(percorso, percorso.lstrip("/"))
         f = (WEB / nome).resolve()
         if WEB.resolve() not in f.parents or not f.is_file():
             return self.manda(404, "non trovato", "text/plain")
@@ -1405,6 +1451,8 @@ class Gestore(BaseHTTPRequestHandler):
         if not rete_locale(self.client_address[0]):
             return self.manda(403, {"errore": "solo rete locale"})
         u = urlparse(self.path)
+        if u.path.startswith("/jarvis/"):
+            return self.inoltra_jarvis("POST")
         livello = self.livello(parse_qs(u.query))
         if not livello:
             return self.manda(401, {"errore": "token mancante o sbagliato"})
@@ -1655,6 +1703,31 @@ class ServerUnico(ThreadingHTTPServer):
     allow_reuse_address = False  # su Windows SO_REUSEADDR farebbe ascoltare due server sulla stessa porta
 
 
+XR = {"attivo": False, "errore": ""}   # HTTPS per Jarvis XR (Quest 3): stato mostrato nelle impostazioni
+
+
+def avvia_https_xr(principale):
+    """Le stesse pagine e API anche in HTTPS sulla porta 47443, con un certificato fatto qui (xr_https.py): il Quest
+    apre la realtà mista solo da pagine sicure, così basta il Wi-Fi di casa."""
+    try:
+        import xr_https
+        ctx = xr_https.contesto(indirizzi_del_pc())
+        srv = ServerUnico(("0.0.0.0", xr_https.PORTA_XR), Gestore)
+        srv.daemon_threads = True
+        for k in ("tablet", "cfg", "campionatore", "jarvis"):
+            setattr(srv, k, getattr(principale, k))
+        xr_https.avvolgi(srv, ctx)
+        XR["attivo"] = True
+        log("Jarvis XR in HTTPS sulla porta", xr_https.PORTA_XR)
+        srv.serve_forever()
+    except ImportError:
+        XR["errore"] = "manca il pacchetto cryptography: python -m pip install --user cryptography"
+        log("HTTPS per Jarvis XR non attivo:", XR["errore"])
+    except OSError as e:
+        XR["errore"] = f"porta 47443 non disponibile: {e}"
+        log("HTTPS per Jarvis XR non attivo:", XR["errore"])
+
+
 def main():
     if "--collegamenti" in sys.argv:  # solo crea config.json (se manca) e i collegamenti, poi esce
         crea_collegamenti(carica_config())
@@ -1692,6 +1765,7 @@ def main():
     srv.campionatore = camp
     srv.jarvis = cfg.get("jarvis") is not False and jarvis_installato()
     threading.Thread(target=custode_jarvis, args=(cfg,), daemon=True).start()
+    threading.Thread(target=avvia_https_xr, args=(srv,), daemon=True).start()
     log("pannello in ascolto sulla porta", PORTA)
     if "--stampa" in sys.argv:
         print(f"http://127.0.0.1:{PORTA}/?t={cfg['token']}")
