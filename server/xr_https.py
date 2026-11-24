@@ -18,7 +18,8 @@ CARTELLA = Path(__file__).resolve().parent / "xr-certificato"
 
 
 def _nomi(indirizzi):
-    nomi = {"localhost", socket.gethostname().lower()}
+    nome_pc = socket.gethostname().lower()
+    nomi = {"localhost", nome_pc, nome_pc + ".local"}
     ip = {"127.0.0.1"} | {str(ipaddress.ip_address(a)) for a in indirizzi}
     return sorted(nomi), sorted(ip)
 

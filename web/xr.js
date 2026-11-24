@@ -15,7 +15,7 @@ import * as THREE from "./lib/three.min.js";
 
 // ------------------------------------------------------------------ indirizzi e chiave
 const q = new URLSearchParams(location.search);
-const TOKEN = q.get("t") || leggi("token") || "";
+let TOKEN = q.get("t") || leggi("token") || "";
 if (q.get("t")) scrivi("token", TOKEN);
 const PANNELLO = location.origin;
 // Jarvis passa dal pannello stesso (/jarvis/* inoltrato alla porta 47802): un indirizzo solo, anche in HTTPS
@@ -1554,10 +1554,47 @@ renderer.setAnimationLoop(() => {
 });
 
 const bottone = document.getElementById("entra"), nota = document.getElementById("nota");
-async function avvia() {
-  if (!TOKEN) {
-    nota.innerHTML = "Manca la chiave del pannello: apri questa pagina dal link nelle impostazioni del PC (<b>?t=…</b>).";
+// collegamento senza chiave: il visore mostra un codice, Jarvis lo chiede sul tablet (o lo consenti dal PC)
+async function abbina() {
+  bottone.disabled = true;
+  bottone.textContent = "COLLEGO IL VISORE…";
+  let r;
+  try {
+    r = await fetch(PANNELLO + "/api/xr/abbina", { method: "POST" }).then((x) => x.json().then((j) => {
+      if (!x.ok) throw new Error(j.errore || "errore " + x.status); return j; }));
+  } catch (e) {
+    nota.innerHTML = "Non riesco a chiedere il collegamento: " + e.message;
+    bottone.textContent = "RIPROVA"; bottone.disabled = false; bottone.onclick = () => location.reload();
+    return false;
   }
+  document.getElementById("codice").textContent = r.codice.split("").join(" ");
+  document.getElementById("abbina").classList.add("visto");
+  nota.innerHTML = "Jarvis ti chiede sul tablet se consentire il visore: rispondi <b>Consenti</b> (a voce o toccando).<br>" +
+    "Oppure dalle impostazioni del PC, sezione Jarvis XR.";
+  for (;;) {
+    await new Promise((ok) => setTimeout(ok, 1500));
+    const e = await fetch(PANNELLO + "/api/xr/abbina?id=" + encodeURIComponent(r.id)).then((x) => x.json()).catch(() => ({}));
+    if (e.token) {
+      scrivi("token", e.token);
+      location.replace(location.pathname);   // ricarica, con la chiave salvata nel visore
+      return false;
+    }
+    if (e.stato === "no" || e.stato === "scaduta" || e.stato === "sconosciuta") {
+      document.getElementById("abbina").classList.remove("visto");
+      nota.innerHTML = e.stato === "no" ? "Collegamento rifiutato." : "Tempo scaduto: nessuno ha confermato.";
+      bottone.textContent = "RIPROVA"; bottone.disabled = false; bottone.onclick = () => location.reload();
+      return false;
+    }
+  }
+}
+
+async function avvia() {
+  // senza chiave, o con una chiave non più valida: si collega il visore col codice
+  if (TOKEN) {
+    const prova = await fetch(PANNELLO + "/api/config", { headers: { "X-Token": TOKEN } }).catch(() => null);
+    if (prova && prova.status === 401) { scrivi("token", ""); TOKEN = ""; }
+  }
+  if (!TOKEN && !(await abbina())) return;
   flusso(JARVIS + "/jarvis/flusso?xr=1", eventoJarvis, (ok) => { S.jarvisOk = ok; sporca("conversazione"); });
   flusso(PANNELLO + "/api/flusso", eventoPannello, (ok) => { S.pannelloOk = ok; sporca("telemetria"); });
   caricaConfig();

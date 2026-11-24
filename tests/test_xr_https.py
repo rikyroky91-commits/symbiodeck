@@ -75,8 +75,21 @@ class _JarvisFinto(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(corpo)
 
+    risposta_domanda = "Consenti"
+    domande = []
+
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
+        if self.path == "/jarvis/domanda":
+            d = json.loads(self.rfile.read(n))
+            _JarvisFinto.domande.append((d, self.headers.get("X-Token")))
+            corpo = json.dumps({"risposta": _JarvisFinto.risposta_domanda}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(corpo)))
+            self.end_headers()
+            self.wfile.write(corpo)
+            return
         corpo = json.dumps({"ricevuto": len(self.rfile.read(n)), "tipo": self.headers.get("Content-Type")}).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -128,3 +141,78 @@ def test_https_e_inoltro_a_jarvis():
         assert c.getresponse().status == 502
     srv.shutdown()
     jarvis.shutdown()
+
+
+def test_abbinamento_del_visore_e_pagina_corta():
+    p = _pannello()
+    jarvis = ThreadingHTTPServer(("127.0.0.1", 0), _JarvisFinto)
+    threading.Thread(target=jarvis.serve_forever, daemon=True).start()
+    srv = p.ServerUnico(("127.0.0.1", 0), p.Gestore)
+    srv.daemon_threads = True
+    srv.cfg = {"token": "chiave-del-pannello", "token_pc": "chiave-pc", "abbinato": True}
+    srv.xr = True
+    xr_https.avvolgi(srv, xr_https.contesto(["127.0.0.1"], Path(tempfile.mkdtemp())))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    porta = srv.server_address[1]
+    ctx = ssl._create_unverified_context()
+
+    def chiama(metodo, percorso, corpo=None, intestazioni=None):
+        c = http.client.HTTPSConnection("127.0.0.1", porta, context=ctx, timeout=10)
+        c.request(metodo, percorso, body=corpo, headers=intestazioni or {})
+        r = c.getresponse()
+        return r.status, r.read()
+    p.AbbinaVisore._richieste.clear(); p.AbbinaVisore._quando.clear()
+    with mock.patch.object(p, "PORTA_JARVIS", jarvis.server_address[1]):
+        stato, pagina = chiama("GET", "/")
+        assert stato == 200 and b"Jarvis XR" in pagina                    # l'indirizzo nudo apre la pagina del visore
+        stato, r = chiama("POST", "/api/xr/abbina")
+        r = json.loads(r)
+        assert stato == 200 and len(r["codice"]) == 4 and "token" not in r
+        for _ in range(50):
+            e = json.loads(chiama("GET", "/api/xr/abbina?id=" + r["id"])[1])
+            if e["stato"] != "attesa":
+                break
+            time.sleep(0.05)
+        assert e["token"] == "chiave-del-pannello"
+        domanda, chiave = _JarvisFinto.domande[-1]
+        assert " ".join(r["codice"]) in domanda["domanda"] and domanda["opzioni"] == ["Consenti", "Rifiuta"]
+        assert chiave == "chiave-del-pannello"
+        assert "token" not in json.loads(chiama("GET", "/api/xr/abbina?id=" + r["id"])[1])   # consegnata una volta
+        # rifiutato a voce
+        _JarvisFinto.risposta_domanda = "no, non lo conosco"
+        r = json.loads(chiama("POST", "/api/xr/abbina")[1])
+        for _ in range(50):
+            e = json.loads(chiama("GET", "/api/xr/abbina?id=" + r["id"])[1])
+            if e["stato"] != "attesa":
+                break
+            time.sleep(0.05)
+        assert e["stato"] == "no" and "token" not in e
+        # dal PC: serve la chiave del PC, e solo da questo PC
+        _JarvisFinto.risposta_domanda = ""
+        r = json.loads(chiama("POST", "/api/xr/abbina")[1])
+        assert chiama("POST", "/api/xr/consenti", json.dumps({"id": r["id"], "ok": True}),
+                      {"X-Token": "chiave-del-pannello", "Content-Type": "application/json"})[0] in (401, 403, 404)
+        stato, _ = chiama("POST", "/api/xr/consenti", json.dumps({"id": r["id"], "ok": True}),
+                          {"X-Token": "chiave-pc", "Content-Type": "application/json"})
+        assert stato == 200 and json.loads(chiama("GET", "/api/xr/abbina?id=" + r["id"])[1])["token"]
+    srv.shutdown()
+    jarvis.shutdown()
+
+
+def test_rimando_da_http_a_https():
+    p = _pannello()
+    gestore = None
+
+    class Cattura(p.ServerUnico):
+        pass
+    with mock.patch.object(p, "ServerUnico", lambda indirizzo, classe: Cattura(("127.0.0.1", 0), classe)), \
+            mock.patch.object(Cattura, "serve_forever", lambda self: setattr(Cattura, "srv", self)):
+        p.rimanda_a_https()
+    srv = Cattura.srv
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = http.client.HTTPConnection("127.0.0.1", srv.server_address[1], timeout=5)
+    c.request("GET", "/", headers={"Host": "192.168.1.50"})
+    r = c.getresponse()
+    assert r.status == 301 and r.getheader("Location") == "https://192.168.1.50/"
+    srv.shutdown()
+    del gestore
