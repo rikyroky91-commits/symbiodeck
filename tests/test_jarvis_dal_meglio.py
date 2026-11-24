@@ -203,6 +203,8 @@ class _Controllo:
 
 
 def _schermo_finto(radice):
+    # mcp si carica prima del ctypes finto: su Windows trascina click, che usa windll davvero all'import
+    import mcp.server.mcpserver  # noqa: F401
     ctypes_finto = mock.MagicMock()
     wt = types.ModuleType("ctypes.wintypes")
     wt.__getattr__ = lambda n: ctypes.c_ulong

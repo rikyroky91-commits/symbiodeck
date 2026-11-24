@@ -17,6 +17,11 @@ from jarvis.guardia import copia_per_annullare  # noqa: E402
 from jarvis.principale import Jarvis  # noqa: E402
 from jarvis.promemoria import Promemoria  # noqa: E402
 
+if not hasattr(tastiera, "PREMUTI"):
+    # su Windows la tastiera premerebbe davvero i tasti nella finestra in primo piano: nei test si registra soltanto
+    tastiera.PREMUTI = []
+    tastiera._invia = lambda vk=0, scan=0, flag=0: tastiera.PREMUTI.append((vk, scan, flag))
+
 
 def _tmp():
     return Path(tempfile.mkdtemp())
