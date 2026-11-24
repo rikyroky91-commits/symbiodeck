@@ -243,10 +243,9 @@ const MONO = "Consolas, 'Roboto Mono', monospace";
 class Pannello {
   constructor(id, titolo, w, h, opz = {}) {
     Object.assign(this, { id, titolo, w, h, sporco: true, bottoni: [], hover: -1, premuto: -1, premutoT: 0,
-      sempreDavanti: !!opz.sempreDavanti, comparsa: 0, visibile: opz.visibile !== false, colore: opz.colore || "57,213,255" });
-    this.cw = Math.round(w * PX_M); this.ch = Math.round(h * PX_M);
+      sempreDavanti: !!opz.sempreDavanti, comparsa: 0, visibile: opz.visibile !== false, colore: opz.colore || "57,213,255",
+      chiudibile: !!opz.chiudibile, denso: !!opz.denso, volo: null });
     this.canvas = document.createElement("canvas");
-    this.canvas.width = this.cw; this.canvas.height = this.ch;
     this.ctx = this.canvas.getContext("2d");
     this.tex = new THREE.CanvasTexture(this.canvas);
     this.tex.colorSpace = THREE.SRGBColorSpace;
@@ -257,17 +256,11 @@ class Pannello {
     this.mesh.userData.pannello = this;
     this.gruppo.add(this.mesh);
     // angoli luminosi in 3D, appena davanti al vetro
-    const a = Math.min(w, h) * 0.12, pts = [];
-    for (const [sx, sy] of [[-1, 1], [1, 1], [1, -1], [-1, -1]]) {
-      const x = sx * w / 2, y = sy * h / 2;
-      pts.push(x, y, 0.002, x - sx * a, y, 0.002, x, y, 0.002, x, y - sy * a, 0.002);
-    }
-    const gA = new THREE.BufferGeometry();
-    gA.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
-    this.angoli = new THREE.LineSegments(gA, new THREE.LineBasicMaterial({ color: new THREE.Color("rgb(" + this.colore + ")"), opacity: 0, ...ADD }));
+    this.angoli = new THREE.LineSegments(new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({ color: new THREE.Color("rgb(" + this.colore + ")"), opacity: 0, ...ADD }));
     this.gruppo.add(this.angoli);
     // linea di scansione che scorre
-    this.scansione = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.98, 0.004),
+    this.scansione = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.004),
       new THREE.MeshBasicMaterial({ color: new THREE.Color("rgb(" + this.colore + ")"), opacity: 0.22, ...ADD }));
     this.scansione.position.z = 0.001;
     this.gruppo.add(this.scansione);
@@ -280,7 +273,37 @@ class Pannello {
       [this.mesh, this.angoli, this.scansione, this.cursore].forEach((o) => { o.renderOrder = 20; o.material.depthTest = false; });
     }
     this.gruppo.visible = this.visibile;
+    this.dimensioni(w, h);
     pannelli.push(this);
+  }
+
+  // misure del vetro (si possono cambiare: le finestre del PC prendono le proporzioni della finestra vera)
+  dimensioni(w, h) {
+    this.w = w; this.h = h;
+    this.cw = Math.round(w * PX_M); this.ch = Math.round(h * PX_M);
+    this.canvas.width = this.cw; this.canvas.height = this.ch;
+    this.tex.dispose();
+    this.mesh.geometry.dispose();
+    this.mesh.geometry = new THREE.PlaneGeometry(w, h);
+    const a = Math.min(w, h) * 0.12, pts = [];
+    for (const [sx, sy] of [[-1, 1], [1, 1], [1, -1], [-1, -1]]) {
+      const x = sx * w / 2, y = sy * h / 2;
+      pts.push(x, y, 0.002, x - sx * a, y, 0.002, x, y, 0.002, x, y - sy * a, 0.002);
+    }
+    this.angoli.geometry.dispose();
+    this.angoli.geometry = new THREE.BufferGeometry();
+    this.angoli.geometry.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    this.scansione.scale.x = w * 0.98;
+    this.sporco = true;
+  }
+
+  chiudi() {
+    const i = pannelli.indexOf(this);
+    if (i >= 0) pannelli.splice(i, 1);
+    if (this.gruppo.parent) this.gruppo.parent.remove(this.gruppo);
+    this.alla_chiusura && this.alla_chiusura();
+    this.tex.dispose(); this.mesh.geometry.dispose(); this.angoli.geometry.dispose();
+    bip(330, 0.09, 0.05);
   }
 
   // ---- disegno
@@ -290,7 +313,7 @@ class Pannello {
     c.clearRect(0, 0, W, H);
     const col = this.colore;
     const g = c.createLinearGradient(0, 0, 0, H);
-    const fondo = this.sempreDavanti ? [0.96, 0.93] : [0.78, 0.66];   // conferme e avvisi: niente in trasparenza
+    const fondo = this.sempreDavanti || this.denso ? [0.96, 0.93] : [0.78, 0.66];   // conferme, foto, finestre: opachi
     g.addColorStop(0, "rgba(" + (this.sempreDavanti ? "24,6,12," : "6,22,34,") + fondo[0] + ")");
     g.addColorStop(1, "rgba(" + (this.sempreDavanti ? "12,2,6," : "2,10,18,") + fondo[1] + ")");
     rettangolo(c, 3, 3, W - 6, H - 6, 26); c.fillStyle = g; c.fill();
@@ -307,6 +330,7 @@ class Pannello {
     c.shadowBlur = 0; c.letterSpacing = "0px";
     c.fillStyle = "rgba(" + col + ",0.35)"; c.fillRect(34, 76, W - 68, 2);
     this.contenuto(c, W, H);
+    if (this.chiudibile) this.bottone(c, W - 92, 16, 64, 56, "✕", () => this.chiudi(), { dim: 30, colore: "255,84,104" });
     this.tex.needsUpdate = true;
     this.sporco = false;
   }
@@ -348,7 +372,15 @@ class Pannello {
     const i = u === null ? -1 : this.indiceIn(u, v);
     if (i !== this.hover) { this.hover = i; this.sporco = true; if (i >= 0) bip(1500, 0.015, 0.015); }
   }
+  // un pannello piccolo di lato, toccato, torna davanti (e il tocco non fa altro)
+  portaAvanti() {
+    const k = dinamici.indexOf(this);
+    if (k < 0 || k === dinamici.length - 1 || this.spostatoDaTe || this.gruppo.scale.x >= 0.9) return false;
+    dinamici.splice(k, 1); dinamici.push(this); aVentaglio(); bip(700, 0.06, 0.05);
+    return true;
+  }
   premi(u, v, origine) {
+    if (this.portaAvanti()) return true;
     const i = this.indiceIn(u, v);
     if (i < 0) return false;
     this.premuto = i; this.premutoT = performance.now(); this.sporco = true;
@@ -366,6 +398,16 @@ class Pannello {
 
   aggiorna(dt, t) {
     if (!this.gruppo.visible) return;
+    if (this.volo) {   // esce dalla sfera e vola al suo posto
+      this.volo.t = Math.min(1, this.volo.t + dt * 2.4);
+      const k = 1 - Math.pow(1 - this.volo.t, 3);
+      this.gruppo.position.lerpVectors(this.volo.da, this.volo.a, k);
+      if (!this.volato) this.gruppo.scale.setScalar((0.15 + 0.85 * k) * (this.volo.s1 || 1));
+      else if (this.volo.s1) this.gruppo.scale.setScalar(this.volo.s0 + (this.volo.s1 - this.volo.s0) * k);
+      this.gruppo.lookAt(posizioneTesta());
+      if (this.volo.t >= 1) { this.volo = null; this.volato = true; }
+    }
+    if (this.ogni) this.ogni(dt, t);
     if (this.sporco) this.disegna();
     this.comparsa = Math.min(1, this.comparsa + dt * 2.2);
     const c = Math.max(0, this.comparsa), k = c ? uscitaElastica(c) : 0;
@@ -669,11 +711,425 @@ function avviso(testo) {
   pAvviso.gruppo.lookAt(testa);
 }
 
+// ------------------------------------------------------------------ il PC nel visore: cartelle, foto, video, finestre
+const INTESTAZIONI = { "X-Token": TOKEN };
+const urlJ = (percorso, parametri) => JARVIS + percorso + "?" + new URLSearchParams(parametri).toString();
+async function bitmapDa(url) {
+  const r = await fetch(url, { headers: INTESTAZIONI });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).errore || "errore " + r.status);
+  return createImageBitmap(await r.blob());
+}
+// anteprime: al massimo 4 richieste insieme, in cache per percorso
+const anteprime = new Map(), codaAnteprime = [];
+let anteprimeInCorso = 0;
+function anteprimaDi(percorso, lato, pannello) {
+  const k = lato + "|" + percorso, c = anteprime.get(k);
+  if (c && c !== "carico") return c === "errore" ? null : c;
+  if (!c) { anteprime.set(k, "carico"); codaAnteprime.push({ k, percorso, lato, pannello }); pompa(); }
+  return null;
+}
+function pompa() {
+  while (anteprimeInCorso < 4 && codaAnteprime.length) {
+    const x = codaAnteprime.shift();
+    anteprimeInCorso++;
+    bitmapDa(urlJ("/jarvis/file/anteprima", { percorso: x.percorso, lato: x.lato }))
+      .then((b) => { anteprime.set(x.k, b); x.pannello.sporco = true; })
+      .catch(() => anteprime.set(x.k, "errore"))
+      .finally(() => { anteprimeInCorso--; pompa(); });
+  }
+  if (anteprime.size > 500) {
+    for (const [k, v] of anteprime) { if (v && v.close) v.close(); anteprime.delete(k); if (anteprime.size < 400) break; }
+  }
+}
+function disegnaCopri(c, img, x, y, w, h) {   // l'immagine riempie il riquadro (ritagliata al centro)
+  const s = Math.max(w / img.width, h / img.height), sw = w / s, sh = h / s;
+  c.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, x, y, w, h);
+}
+function disegnaContieni(c, img, x, y, w, h) {   // l'immagine intera nel riquadro
+  const s = Math.min(w / img.width, h / img.height), dw = img.width * s, dh = img.height * s;
+  c.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+  return { x: x + (w - dw) / 2, y: y + (h - dh) / 2, w: dw, h: dh };
+}
+function iconaCartella(c, x, y, w, h, col) {
+  c.save();
+  c.fillStyle = "rgba(" + col + ",0.18)"; c.strokeStyle = "rgba(" + col + ",0.95)"; c.lineWidth = 4;
+  c.shadowColor = "rgba(" + col + ",0.8)"; c.shadowBlur = 16;
+  c.beginPath();
+  c.moveTo(x, y + h * 0.18); c.lineTo(x + w * 0.38, y + h * 0.18); c.lineTo(x + w * 0.46, y + h * 0.04);
+  c.lineTo(x + w, y + h * 0.04); c.lineTo(x + w, y + h); c.lineTo(x, y + h); c.closePath();
+  c.fill(); c.stroke();
+  c.shadowBlur = 0; c.fillStyle = "rgba(" + col + ",0.35)"; c.fillRect(x + 6, y + h * 0.3, w - 12, 3);
+  c.restore();
+}
+function iconaFile(c, x, y, w, h, etichetta, col) {
+  c.save();
+  c.strokeStyle = "rgba(" + col + ",0.9)"; c.fillStyle = "rgba(" + col + ",0.12)"; c.lineWidth = 4;
+  const p = w * 0.28;
+  c.beginPath(); c.moveTo(x, y); c.lineTo(x + w - p, y); c.lineTo(x + w, y + p); c.lineTo(x + w, y + h); c.lineTo(x, y + h);
+  c.closePath(); c.fill(); c.stroke();
+  c.beginPath(); c.moveTo(x + w - p, y); c.lineTo(x + w - p, y + p); c.lineTo(x + w, y + p); c.stroke();
+  c.fillStyle = "rgba(" + col + ",1)"; c.font = "700 " + Math.round(w * 0.24) + "px " + MONO; c.textAlign = "center";
+  c.fillText(etichetta, x + w / 2, y + h * 0.66); c.textAlign = "left";
+  c.restore();
+}
+const COLORE_TIPO = { cartella: "57,213,255", disco: "57,213,255", immagine: "77,255,184", video: "255,179,65",
+  testo: "223,246,255", pdf: "255,84,104", audio: "190,140,255", file: "143,180,200" };
+
+// pannelli che si aprono a richiesta: davanti a te, uscendo dalla sfera
+const dinamici = [];
+function apriDinamico(p, larghezzaOccupata) {
+  while (dinamici.length >= 5) dinamici.shift().chiudi();
+  dinamici.push(p);
+  const vecchio = p.alla_chiusura;
+  p.alla_chiusura = () => { const i = dinamici.indexOf(p); if (i >= 0) dinamici.splice(i, 1); vecchio && vecchio(); aVentaglio(); };
+  ancora.add(p.gruppo);
+  p.gruppo.position.copy(ancora.worldToLocal(sfera.gruppo.getWorldPosition(new THREE.Vector3())));
+  p.gruppo.lookAt(posizioneTesta());
+  p.comparsa = 0.25;
+  aVentaglio();
+  bip(520, 0.06, 0.05); setTimeout(() => bip(780, 0.08, 0.05), 70);
+  return p;
+}
+// il più recente davanti agli occhi, gli altri si spostano ai lati ad arco (come Tony Stark che sposta gli schermi)
+function aVentaglio() {
+  const testa = posizioneTesta(), avanti = new THREE.Vector3(0, 0, -1).applyQuaternion(orientamentoTesta());
+  avanti.y = 0; avanti.normalize();
+  const ANGOLI = [0, -60, 60, -92, 92];
+  [...dinamici].reverse().forEach((p, k) => {
+    if (p.spostatoDaTe) return;   // quelli che hai messo tu con le mani restano dove sono
+    const a = THREE.MathUtils.degToRad(ANGOLI[k] || 0), r = k === 0 ? 0.64 : 0.86;
+    const dir = avanti.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -a);
+    const dest = testa.clone().addScaledVector(dir, r);
+    dest.y = testa.y - (k === 0 ? 0.06 : 0.02);
+    // quello davanti a grandezza piena, gli altri più piccoli ai lati: si riprendono toccandoli o col pizzico
+    p.volo = { t: 0, da: p.gruppo.position.clone(), a: ancora.worldToLocal(dest),
+      s0: p.gruppo.scale.x, s1: k === 0 ? 1 : 0.62 };
+  });
+}
+function chiudiDinamici() { [...dinamici].forEach((p) => p.chiudi()); }
+
+// ---- esploratore delle cartelle
+class Esplora extends Pannello {
+  constructor(percorso) {
+    super("esplora", "FILE", 0.9, 0.64, { chiudibile: true, denso: true });
+    this.dati = null; this.pagina = 0; this.errore = "";
+    this.vai(percorso || "");
+  }
+  vai(percorso) {
+    this.percorso = percorso; this.pagina = 0; this.dati = null; this.errore = ""; this.sporco = true;
+    api(JARVIS, "/jarvis/file/elenco?percorso=" + encodeURIComponent(percorso))
+      .then((d) => { this.dati = d; this.sporco = true; })
+      .catch((e) => { this.errore = e.message; this.sporco = true; });
+  }
+  swipe(dir) {
+    const pagine = this.dati ? Math.ceil(this.dati.voci.length / 18) : 1;
+    this.pagina = Math.max(0, Math.min(pagine - 1, this.pagina + dir)); this.sporco = true;
+  }
+  contenuto(c, W, H) {
+    const d = this.dati;
+    this.titolo = "FILE · " + (d ? d.nome : "…").toUpperCase();
+    this.bottone(c, W - 270, 16, 76, 56, "⌂", () => this.vai(""), { dim: 30 });
+    this.bottone(c, W - 180, 16, 76, 56, "⬆", () => d && d.su !== null && this.vai(d.su || ""), { dim: 30 });
+    if (this.errore || !d) {
+      c.font = "400 30px " + FONT; c.fillStyle = this.errore ? "#ff5468" : "rgba(223,246,255,0.5)";
+      c.fillText(this.errore || "Leggo la cartella…", 40, 170); return;
+    }
+    c.font = "400 20px " + MONO; c.fillStyle = "rgba(223,246,255,0.45)";
+    c.fillText(taglia(c, d.percorso || "Questo PC", W - 80), 36, 104);
+    const col = 6, righe = 3, gap = 16, tw = (W - 68 - gap * (col - 1)) / col, th = (H - 250 - gap * (righe - 1)) / righe;
+    const per = col * righe, pagine = Math.max(1, Math.ceil(d.voci.length / per));
+    const immagini = d.voci.filter((v) => v.tipo === "immagine");
+    d.voci.slice(this.pagina * per, this.pagina * per + per).forEach((v, i) => {
+      const x = 34 + (i % col) * (tw + gap), y = 126 + Math.floor(i / col) * (th + gap), tc = COLORE_TIPO[v.tipo] || COLORE_TIPO.file;
+      this.bottone(c, x, y, tw, th, "", () => {
+        if (v.tipo === "cartella" || v.tipo === "disco") this.vai(v.percorso);
+        else if (v.tipo === "immagine") apriDinamico(new Visualizzatore(immagini, immagini.indexOf(v)));
+        else if (v.tipo === "video" || v.tipo === "testo") apriDinamico(new Visualizzatore([v], 0));
+        else apriSulPc(v);
+      }, { colore: tc, raggio: 14 });
+      const area = { x: x + 10, y: y + 10, w: tw - 20, h: th - 54 };
+      if (v.tipo === "immagine") {
+        const img = anteprimaDi(v.percorso, 256, this);
+        if (img) { c.save(); rettangolo(c, area.x, area.y, area.w, area.h, 10); c.clip(); disegnaCopri(c, img, area.x, area.y, area.w, area.h); c.restore(); }
+        else iconaFile(c, area.x + area.w * 0.3, area.y + 10, area.w * 0.4, area.h - 20, "IMG", tc);
+      } else if (v.tipo === "cartella" || v.tipo === "disco") {
+        iconaCartella(c, area.x + area.w * 0.18, area.y + area.h * 0.18, area.w * 0.64, area.h * 0.64, tc);
+      } else {
+        const est = (v.nome.split(".").pop() || "").slice(0, 4).toUpperCase();
+        iconaFile(c, area.x + area.w * 0.3, area.y + 10, area.w * 0.4, area.h - 20, v.tipo === "video" ? "▶" : est, tc);
+      }
+      c.font = "500 20px " + FONT; c.fillStyle = "#e8fbff"; c.textAlign = "center";
+      c.fillText(taglia(c, v.nome, tw - 16), x + tw / 2, y + th - 20); c.textAlign = "left";
+    });
+    if (!d.voci.length) { c.font = "400 28px " + FONT; c.fillStyle = "rgba(223,246,255,0.5)"; c.fillText("Cartella vuota", 40, 190); }
+    const by = H - 104;
+    this.bottone(c, 34, by, 150, 76, "◀", () => this.swipe(-1), { dim: 34 });
+    this.bottone(c, W - 184, by, 150, 76, "▶", () => this.swipe(1), { dim: 34 });
+    c.font = "500 24px " + MONO; c.fillStyle = "rgba(223,246,255,0.7)"; c.textAlign = "center";
+    c.fillText("pagina " + (this.pagina + 1) + " / " + pagine + " · " + d.voci.length + " elementi · scorri con la mano", W / 2, by + 40);
+    c.textAlign = "left";
+  }
+}
+function apriSulPc(v) {
+  api(JARVIS, "/jarvis/file/apri", { percorso: v.percorso }).then(() => avviso("Aperto sul PC: " + v.nome))
+    .catch((e) => avviso(e.message));
+}
+
+// ---- foto, video e testi
+class Visualizzatore extends Pannello {
+  constructor(elenco, indice) {
+    super("visualizzatore", "FOTO", 1.02, 0.7, { chiudibile: true, denso: true, colore: "77,255,184" });
+    this.elenco = elenco; this.indice = Math.max(0, indice); this.img = null; this.testo = null; this.scorri = 0;
+    this.video = null; this.pianoVideo = null;
+    this.carica();
+  }
+  get voce() { return this.elenco[this.indice]; }
+  swipe(dir) { if (this.elenco.length > 1) { this.indice = (this.indice + dir + this.elenco.length) % this.elenco.length; this.carica(); bip(900 + dir * 120, 0.05, 0.04); } }
+  carica() {
+    const v = this.voce;
+    this.img = null; this.testo = null; this.scorri = 0; this.sporco = true;
+    this.fermaVideo();
+    if (v.tipo === "immagine") {
+      const k = this.indice;
+      bitmapDa(urlJ("/jarvis/file/anteprima", { percorso: v.percorso, lato: 2048 }))
+        .then((b) => { if (k === this.indice) { this.img = b; this.sporco = true; } }).catch((e) => avviso(e.message));
+      // la successiva si prepara già
+      const s = this.elenco[(this.indice + 1) % this.elenco.length];
+      if (s && s.tipo === "immagine") anteprimaDi(s.percorso, 256, this);
+    } else if (v.tipo === "testo") {
+      fetch(urlJ("/jarvis/file/dati", { percorso: v.percorso }), { headers: INTESTAZIONI })
+        .then((r) => r.text()).then((t) => { this.testo = t; this.sporco = true; });
+    } else if (v.tipo === "video") {
+      const el = document.createElement("video");
+      el.crossOrigin = "anonymous"; el.playsInline = true; el.loop = false;
+      el.src = urlJ("/jarvis/file/dati", { percorso: v.percorso, t: TOKEN });
+      el.play().catch(() => {});
+      el.addEventListener("loadedmetadata", () => { this.posizionaVideo(); this.sporco = true; });
+      this.video = el;
+      const tex = new THREE.VideoTexture(el);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      this.pianoVideo = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+      this.pianoVideo.position.z = 0.002;
+      this.pianoVideo.visible = false;
+      this.gruppo.add(this.pianoVideo);
+    }
+  }
+  posizionaVideo() {
+    const el = this.video;
+    if (!el || !el.videoWidth) return;
+    const aw = this.w - 0.07, ah = this.h - 0.22;
+    const s = Math.min(aw / el.videoWidth, ah / el.videoHeight);
+    this.pianoVideo.scale.set(el.videoWidth * s, el.videoHeight * s, 1);
+    this.pianoVideo.position.y = 0.01;
+    this.pianoVideo.visible = true;
+  }
+  fermaVideo() {
+    if (this.video) { this.video.pause(); this.video.removeAttribute("src"); this.video.load(); this.video = null; }
+    if (this.pianoVideo) { this.gruppo.remove(this.pianoVideo); this.pianoVideo.material.map.dispose(); this.pianoVideo = null; }
+  }
+  ogni() { if (this.video && !this.video.paused) this.sporcoVideo = (this.sporcoVideo || 0) + 1; if (this.sporcoVideo > 15) { this.sporcoVideo = 0; this.sporco = true; } }
+  contenuto(c, W, H) {
+    const v = this.voce;
+    this.titolo = (v.tipo === "video" ? "VIDEO" : v.tipo === "testo" ? "TESTO" : "FOTO") +
+      (this.elenco.length > 1 ? " · " + (this.indice + 1) + " / " + this.elenco.length : "");
+    c.font = "400 22px " + FONT; c.fillStyle = "rgba(223,246,255,0.7)"; c.textAlign = "right";
+    c.fillText(taglia(c, v.nome, W * 0.45), W - 120, 46); c.textAlign = "left";
+    const area = { x: 34, y: 92, w: W - 68, h: H - 92 - 118 };
+    if (v.tipo === "immagine") {
+      if (this.img) { c.save(); rettangolo(c, area.x, area.y, area.w, area.h, 14); c.clip(); disegnaContieni(c, this.img, area.x, area.y, area.w, area.h); c.restore(); }
+      else { c.font = "400 30px " + FONT; c.fillStyle = "rgba(223,246,255,0.5)"; c.textAlign = "center"; c.fillText("Carico la foto…", W / 2, H / 2); c.textAlign = "left"; }
+      // striscia di miniature: tocca per saltare
+      const n = Math.min(9, this.elenco.length);
+      if (n > 1) {
+        const tw = 100, gap = 10, x0 = W / 2 - (n * (tw + gap) - gap) / 2, y0 = H - 104;
+        for (let k = 0; k < n; k++) {
+          const idx = (this.indice - Math.floor(n / 2) + k + this.elenco.length) % this.elenco.length, e = this.elenco[idx];
+          const x = x0 + k * (tw + gap);
+          this.bottone(c, x, y0, tw, 76, "", () => { this.indice = idx; this.carica(); },
+            { colore: idx === this.indice ? "255,255,255" : "77,255,184", raggio: 10 });
+          const mini = anteprimaDi(e.percorso, 256, this);
+          if (mini) { c.save(); rettangolo(c, x + 4, y0 + 4, tw - 8, 68, 8); c.clip(); disegnaCopri(c, mini, x + 4, y0 + 4, tw - 8, 68); c.restore(); }
+        }
+        this.bottone(c, 34, y0, 120, 76, "‹", () => this.swipe(-1), { dim: 44 });
+        this.bottone(c, W - 154, y0, 120, 76, "›", () => this.swipe(1), { dim: 44 });
+      } else this.bottone(c, W - 260, H - 104, 226, 76, "⧉ APRI SUL PC", () => apriSulPc(v), { dim: 24 });
+    } else if (v.tipo === "testo") {
+      c.font = "400 24px " + MONO; c.fillStyle = "#dff6ff";
+      const righe = aCapo(c, this.testo == null ? "Carico…" : this.testo, area.w - 20);
+      const per = Math.floor(area.h / 32);
+      this.scorri = Math.max(0, Math.min(this.scorri, Math.max(0, righe.length - per)));
+      righe.slice(this.scorri, this.scorri + per).forEach((r, k) => c.fillText(r, area.x + 10, area.y + 26 + k * 32));
+      this.bottone(c, 34, H - 104, 160, 76, "▲", () => { this.scorri -= per - 2; this.sporco = true; }, { dim: 30 });
+      this.bottone(c, 210, H - 104, 160, 76, "▼", () => { this.scorri += per - 2; this.sporco = true; }, { dim: 30 });
+      this.bottone(c, W - 260, H - 104, 226, 76, "⧉ APRI SUL PC", () => apriSulPc(v), { dim: 24 });
+    } else if (v.tipo === "video") {
+      const el = this.video;
+      c.fillStyle = "#000"; c.fillRect(area.x, area.y, area.w, area.h);
+      const y0 = H - 104, durata = el && el.duration || 0, ora = el ? el.currentTime : 0;
+      this.bottone(c, 34, y0, 110, 76, "−10", () => { if (el) el.currentTime = Math.max(0, el.currentTime - 10); }, { dim: 26 });
+      this.bottone(c, 154, y0, 110, 76, el && !el.paused ? "❚❚" : "▶", () => { if (el) { el.paused ? el.play() : el.pause(); this.sporco = true; } }, { dim: 30 });
+      this.bottone(c, 274, y0, 110, 76, "+10", () => { if (el) el.currentTime = Math.min(durata, el.currentTime + 10); }, { dim: 26 });
+      // barra di avanzamento: toccala per saltare
+      const bx = 404, bw = W - bx - 270;
+      this.bottone(c, bx, y0, bw, 76, "", () => {}, { colore: "255,179,65" });
+      const i = this.bottoni.length - 1;
+      this.bottoni[i].azione = () => { if (el && durata) el.currentTime = durata * this.ultimaX; };
+      this.bottoni[i].barra = { x: bx, w: bw };
+      c.fillStyle = "rgba(255,179,65,0.9)"; c.fillRect(bx + 10, y0 + 34, (bw - 20) * (durata ? ora / durata : 0), 8);
+      c.font = "500 22px " + MONO; c.fillStyle = "#fff1d6";
+      c.fillText(tempo(ora) + " / " + tempo(durata), bx + 14, y0 + 26);
+      this.bottone(c, W - 254, y0, 220, 76, "⧉ SUL PC", () => apriSulPc(v), { dim: 24 });
+      if (!this.pianoVideo || !this.pianoVideo.visible) {
+        c.font = "400 26px " + FONT; c.fillStyle = "rgba(223,246,255,0.6)"; c.textAlign = "center";
+        c.fillText(/\.(mkv)$/i.test(v.nome) ? "MKV non si riproduce nel visore: aprilo sul PC" : "Carico il video…", W / 2, H / 2);
+        c.textAlign = "left";
+      }
+    }
+  }
+  premi(u, v, origine) {
+    const i = this.indiceIn(u, v), b = this.bottoni[i];
+    if (b && b.barra) this.ultimaX = Math.max(0, Math.min(1, (u * this.cw - b.x - 10) / (b.barra.w - 20)));
+    return super.premi(u, v, origine);
+  }
+  chiudi() { this.fermaVideo(); super.chiudi(); }
+}
+function tempo(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+
+// ---- una finestra del PC (o lo schermo intero) in diretta: si usa toccandola
+class FinestraPc extends Pannello {
+  constructor(hwnd, titolo, numeroSchermo) {
+    super("finestra", "FINESTRA", 1.0, 0.66, { chiudibile: true, denso: true, colore: "143,240,255" });
+    this.hwnd = hwnd || 0; this.nome = titolo || "Schermo"; this.schermo = numeroSchermo || 0;
+    this.img = null; this.carico = false; this.ultimo = 0; this.errore = ""; this.modo = "clic"; this.proporzione = 0;
+    this.barra = 84;   // altezza in pixel della barra dei comandi sopra l'immagine
+  }
+  ogni(dt, t) {
+    // un fotogramma ogni ~180 ms finché è aperta (più lento se sta caricando)
+    if (this.carico || performance.now() - this.ultimo < 180) return;
+    this.carico = true; this.ultimo = performance.now();
+    const url = this.schermo ? urlJ("/jarvis/schermo/immagine", { numero: this.schermo, lato: 1600 })
+      : urlJ("/jarvis/finestre/immagine", { hwnd: this.hwnd, lato: 1600 });
+    bitmapDa(url).then((b) => {
+      if (this.img && this.img.close) this.img.close();
+      this.img = b; this.errore = "";
+      const p = b.width / b.height;
+      if (Math.abs(p - this.proporzione) > 0.02) {   // il vetro prende le proporzioni della finestra
+        this.proporzione = p;
+        const w = Math.min(1.25, Math.max(0.7, 0.62 * p));
+        this.dimensioni(w, w / p + (84 + this.barra) / PX_M);
+      }
+      this.sporco = true;
+    }).catch((e) => { this.errore = e.message; this.sporco = true; this.ultimo += 1500; })
+      .finally(() => { this.carico = false; });
+  }
+  contenuto(c, W, H) {
+    this.titolo = (this.schermo ? "SCHERMO " + this.schermo : "FINESTRA") + " · " + this.nome.toUpperCase();
+    const b = this.barra, y = H - b + 8;   // comandi in basso, l'immagine sopra
+    if (this.img) c.drawImage(this.img, 6, 84, W - 12, H - 84 - b);
+    else { c.font = "400 28px " + FONT; c.fillStyle = this.errore ? "#ff5468" : "rgba(223,246,255,0.5)"; c.fillText(this.errore || "Collego la finestra…", 40, 160); }
+    const bw = 140, gap = 10;
+    [["clic", "TOCCO"], ["doppio", "DOPPIO"], ["destro", "DESTRO"]].forEach(([m, n], i) =>
+      this.bottone(c, 34 + i * (bw + gap), y, bw, b - 16, n, () => { this.modo = m; this.sporco = true; },
+        { dim: 22, pieno: this.modo === m }));
+    this.bottone(c, 34 + 3 * (bw + gap) + 20, y, 90, b - 16, "▲", () => this.manda({ tipo: "rotella", scatti: 5, x: 0.5, y: 0.5 }), { dim: 26 });
+    this.bottone(c, 34 + 3 * (bw + gap) + 120, y, 90, b - 16, "▼", () => this.manda({ tipo: "rotella", scatti: -5, x: 0.5, y: 0.5 }), { dim: 26 });
+    this.bottone(c, 34 + 3 * (bw + gap) + 220, y, 120, b - 16, "INVIO", () => this.manda({ tipo: "tasti", tasti: "enter" }), { dim: 22 });
+    this.bottone(c, W - 190, y, 156, b - 16, "⟳ DAVANTI", () => this.manda({ tipo: "davanti" }), { dim: 22 });
+  }
+  manda(azione) {
+    return api(JARVIS, "/jarvis/finestre/azione", Object.assign({ hwnd: this.hwnd }, azione))
+      .then(() => { this.ultimo = 0; }).catch((e) => avviso(e.message));
+  }
+  // un tocco sull'immagine diventa un clic nello stesso punto della finestra vera
+  premi(u, v, origine) {
+    if (this.portaAvanti()) return true;
+    const x = u * this.cw, y = (1 - v) * this.ch;
+    if (y > 84 && y < this.ch - this.barra && this.indiceIn(u, v) < 0) {
+      const rx = (x - 6) / (this.cw - 12), ry = (y - 84) / (this.ch - 84 - this.barra);
+      bip(1300, 0.04, 0.05); vibra(origine);
+      this.manda({ tipo: this.modo, x: rx, y: ry });
+      if (this.modo !== "clic") { this.modo = "clic"; this.sporco = true; }
+      return true;
+    }
+    return super.premi(u, v, origine);
+  }
+  swipe(dir) { this.manda({ tipo: "rotella", scatti: dir * 4, x: 0.5, y: 0.5 }); }
+  chiudi() { if (this.img && this.img.close) this.img.close(); super.chiudi(); }
+}
+
+// ---- elenco delle finestre aperte sul PC
+class ElencoFinestre extends Pannello {
+  constructor() {
+    super("finestre", "FINESTRE DEL PC", 0.6, 0.62, { chiudibile: true, denso: true, colore: "143,240,255" });
+    this.elenco = null; this.aggiorna_();
+  }
+  aggiorna_() { api(JARVIS, "/jarvis/finestre").then((d) => { this.elenco = d.finestre; this.sporco = true; }).catch((e) => avviso(e.message)); }
+  contenuto(c, W, H) {
+    this.bottone(c, W - 180, 16, 76, 56, "⟳", () => this.aggiorna_(), { dim: 30 });
+    const l = this.elenco;
+    if (!l) { c.font = "400 28px " + FONT; c.fillStyle = "rgba(223,246,255,0.5)"; c.fillText("Leggo le finestre…", 40, 160); return; }
+    l.slice(0, 7).forEach((f, i) => {
+      const y = 100 + i * 106;
+      this.bottone(c, 34, y, W - 68, 92, "", () => { apriDinamico(new FinestraPc(f.hwnd, f.titolo)); this.chiudi(); }, { colore: f.davanti ? "77,255,184" : "143,240,255" });
+      c.font = "600 28px " + FONT; c.fillStyle = "#e8fbff"; c.fillText(taglia(c, f.titolo, W - 140), 60, y + 40);
+      c.font = "400 20px " + MONO; c.fillStyle = "rgba(223,246,255,0.55)";
+      c.fillText((f.processo || "") + (f.ridotta ? " · ridotta a icona" : "") + (f.davanti ? " · davanti" : ""), 60, y + 72);
+    });
+    c.font = "400 26px " + MONO; c.fillStyle = "rgba(223,246,255,0.6)"; c.textAlign = "center";
+    c.fillText("SCHERMO INTERO", W / 2, H - 140); c.textAlign = "left";
+    this.bottone(c, 34, H - 112, W - 68, 84, "🖥  MOSTRA LO SCHERMO DEL PC", () => { apriDinamico(new FinestraPc(0, "Schermo 1", 1)); this.chiudi(); }, { dim: 26 });
+  }
+}
+
+// ---- barra dei comandi sopra la sfera
+const pDock = new Pannello("dock", "PC", 0.56, 0.12);
+pDock.contenuto = function (c, W, H) {
+  const voci = [["📁 FILE", () => apriEsplora("")], ["🪟 FINESTRE", () => apriDinamico(new ElencoFinestre())],
+    ["🖥 SCHERMO", () => apriDinamico(new FinestraPc(0, "Schermo 1", 1))], ["✕ CHIUDI", chiudiDinamici]];
+  const gap = 12, bw = (W - 150 - gap * (voci.length - 1)) / voci.length;
+  voci.forEach(([n, f], i) => this.bottone(c, 116 + i * (bw + gap), 22, bw, H - 44, n, f, { dim: 24, colore: i === 3 ? "255,84,104" : "57,213,255" }));
+};
+pDock.disegna = function () {   // niente titolo grande: è una barra
+  const c = this.ctx, W = this.cw, H = this.ch;
+  this.bottoni = [];
+  c.clearRect(0, 0, W, H);
+  rettangolo(c, 3, 3, W - 6, H - 6, 30); c.fillStyle = "rgba(4,18,28,0.72)"; c.fill();
+  c.lineWidth = 3; c.strokeStyle = "rgba(57,213,255,0.45)"; c.stroke();
+  c.font = "600 26px " + MONO; c.fillStyle = "#39d5ff"; c.textBaseline = "middle"; c.fillText("PC", 34, H / 2);
+  this.contenuto(c, W, H);
+  this.tex.needsUpdate = true; this.sporco = false;
+};
+
+function apriEsplora(percorso) {
+  const gia = dinamici.find((p) => p instanceof Esplora);
+  if (gia) { gia.vai(percorso); gia.comparsa = 0.4; return gia; }
+  return apriDinamico(new Esplora(percorso));
+}
+// richieste dalla voce di Jarvis ("aprimi la cartella delle foto sul desktop")
+function eventoVisore(v) {
+  if (v.cosa === "cartella") apriEsplora(v.percorso);
+  else if (v.cosa === "file_radici") apriEsplora("");
+  else if (v.cosa === "file") {
+    const voce = { percorso: v.percorso, nome: v.percorso.split(/[\\/]/).pop(), tipo: v.tipo };
+    if (v.tipo === "immagine") {   // con le altre foto della stessa cartella, da sfogliare
+      const cartella = v.percorso.replace(/[\\/][^\\/]*$/, "");
+      api(JARVIS, "/jarvis/file/elenco?percorso=" + encodeURIComponent(cartella)).then((d) => {
+        const foto = d.voci.filter((x) => x.tipo === "immagine");
+        const i = foto.findIndex((x) => x.percorso === v.percorso);
+        apriDinamico(new Visualizzatore(i >= 0 ? foto : [voce], Math.max(0, i)));
+      }).catch(() => apriDinamico(new Visualizzatore([voce], 0)));
+    } else apriDinamico(new Visualizzatore([voce], 0));
+  } else if (v.cosa === "finestra") apriDinamico(new FinestraPc(v.hwnd, v.titolo));
+  else if (v.cosa === "schermo") apriDinamico(new FinestraPc(0, "Schermo " + (v.numero || 1), v.numero || 1));
+  else if (v.cosa === "finestre") apriDinamico(new ElencoFinestre());
+  else if (v.cosa === "chiudi") chiudiDinamici();
+}
+
 // ------------------------------------------------------------------ disposizione
-const FISSI = [pConversazione, pTelemetria, pApp, pMedia, pPromemoria];
+const FISSI = [pConversazione, pTelemetria, pApp, pMedia, pPromemoria, pDock];
 const DEFAULT = {   // [angolo in gradi, distanza, altezza rispetto agli occhi]
   conversazione: [0, 0.8, -0.46], telemetria: [-40, 0.82, -0.06], app: [40, 0.82, -0.06],
-  media: [40, 0.78, -0.43], promemoria: [-40, 0.78, -0.53],
+  media: [40, 0.78, -0.43], promemoria: [-40, 0.78, -0.53], dock: [0, 0.8, 0.27],
 };
 FISSI.forEach((p) => ancora.add(p.gruppo));
 ancora.add(pConferma.gruppo, pAvviso.gruppo, sfera.gruppo);
@@ -807,6 +1263,8 @@ const mani = [0, 1].map((i) => {
   const punti = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8),
     new THREE.MeshBasicMaterial({ color: 0x8ff0ff, opacity: 0.9, ...ADD }), GIUNTI.length);
   punti.frustumCulled = false;
+  const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (let k = 0; k < GIUNTI.length; k++) punti.setMatrixAt(k, zero);
   const gOssa = new THREE.BufferGeometry();
   gOssa.setAttribute("position", new THREE.BufferAttribute(new Float32Array(OSSA.length * 3), 3));
   const ossa = new THREE.LineSegments(gOssa, new THREE.LineBasicMaterial({ color: 0x39d5ff, opacity: 0.55, ...ADD }));
@@ -833,7 +1291,7 @@ function aggiornaMani() {
     const pos = m.ossa.geometry.attributes.position.array;
     GIUNTI.forEach((nome, k) => {
       const g = j[nome];
-      if (!g) return;
+      if (!g || g.visible === false) { m.punti.setMatrixAt(k, _m.makeScale(0, 0, 0)); return; }
       g.getWorldPosition(_v);
       const r = nome.endsWith("tip") ? 0.0055 : 0.0042;
       m.punti.setMatrixAt(k, _m.compose(_v, _q.identity(), _s.setScalar(r)));
@@ -851,8 +1309,8 @@ function aggiornaMani() {
     m.pizzica = pizzicaOra;
     m.punti.material.color.set(m.parla ? 0x4dffb8 : m.presa ? 0xffb341 : 0x8ff0ff);
 
-    // tocco con l'indice (solo se non sta pizzicando)
-    if (!m.pizzica) toccoIndice(m);
+    // tocco con l'indice (solo se non sta pizzicando) e gesto di scorrimento
+    if (!m.pizzica) { toccoIndice(m); gestoScorri(m); }
     if (m.presa) trascina(m, testa);
   }
   // presa a due mani sullo stesso pannello: si ingrandisce
@@ -887,6 +1345,35 @@ function toccoIndice(m) {
   m.zPrima.set(p, l.z);
 }
 
+// scorrimento come in Minority Report: la mano passa veloce davanti a un pannello (senza toccarlo), da un lato
+// all'altro: foto successiva o precedente, pagina dopo nelle cartelle, rotella nelle finestre
+function gestoScorri(m) {
+  const ora = performance.now();
+  let sotto = null, l = null;
+  for (const p of visibili()) {
+    if (!p.swipe) continue;
+    const q = p.mesh.worldToLocal(m.punta.clone());
+    if (Math.abs(q.x) <= p.w / 2 + 0.05 && Math.abs(q.y) <= p.h / 2 && q.z > 0.02 && q.z < 0.2) { sotto = p; l = q; break; }
+  }
+  if (!sotto) { m.scia = null; return; }
+  if (!m.scia || m.scia.p !== sotto) m.scia = { p: sotto, punti: [] };
+  const s = m.scia;
+  s.punti.push({ t: ora, x: l.x, y: l.y });
+  while (s.punti.length && ora - s.punti[0].t > 350) s.punti.shift();
+  const a = s.punti[0], b = s.punti[s.punti.length - 1], dx = b.x - a.x, dy = b.y - a.y;
+  if (s.bloccato) {
+    // un gesto lungo vale una volta sola: si riarma quando la mano si ferma (o esce da davanti al pannello)
+    const recenti = s.punti.filter((p) => ora - p.t < 160);
+    if (recenti.length > 1 && Math.abs(recenti[recenti.length - 1].x - recenti[0].x) < 0.02) s.bloccato = false;
+    return;
+  }
+  if (Math.abs(dx) > 0.16 && Math.abs(dy) < Math.abs(dx) * 0.5) {
+    sotto.swipe(dx < 0 ? 1 : -1);   // mano verso sinistra = avanti, come sfogliare
+    s.punti = []; s.bloccato = true;
+    vibra(m.sorgente);
+  }
+}
+
 function iniziaPizzico(m) {
   const sferaPos = sfera.gruppo.getWorldPosition(new THREE.Vector3());
   if (m.centro.distanceTo(sferaPos) < 0.14) { m.parla = iniziaParlato(); return; }
@@ -914,7 +1401,7 @@ function trascina(m, testa) {
 }
 function rilascia(m) {
   if (m.parla) { m.parla = false; fineParlato(); }
-  if (m.presa) { const p = m.presa; m.presa = null; p.dueMani = null; salvaDisposizione(); bip(300, 0.06, 0.04); }
+  if (m.presa) { const p = m.presa; m.presa = null; p.dueMani = null; p.spostatoDaTe = true; salvaDisposizione(); bip(300, 0.06, 0.04); }
 }
 
 // ------------------------------------------------------------------ controller: raggio, grilletto, impugnatura
@@ -1027,6 +1514,7 @@ function eventoJarvis(d) {
   if (d.avviso) avviso(d.avviso);
   if (d.dettatura !== undefined) { S.dettatura = !!d.dettatura; sporca("promemoria"); }
   if (d.nuova) { S.messaggi = []; sporca("conversazione"); }
+  if (d.visore) eventoVisore(d.visore);
 }
 function aggiungi(tipo, testo) {
   S.messaggi.push({ tipo, testo });
@@ -1070,7 +1558,7 @@ async function avvia() {
   if (!TOKEN) {
     nota.innerHTML = "Manca la chiave del pannello: apri questa pagina dal link nelle impostazioni del PC (<b>?t=…</b>).";
   }
-  flusso(JARVIS + "/jarvis/flusso", eventoJarvis, (ok) => { S.jarvisOk = ok; sporca("conversazione"); });
+  flusso(JARVIS + "/jarvis/flusso?xr=1", eventoJarvis, (ok) => { S.jarvisOk = ok; sporca("conversazione"); });
   flusso(PANNELLO + "/api/flusso", eventoPannello, (ok) => { S.pannelloOk = ok; sporca("telemetria"); });
   caricaConfig();
   setInterval(caricaConfig, 60000);

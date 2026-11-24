@@ -8,10 +8,10 @@ Stati: spento, riposo (aspetta "Ehi Jarvis"), ascolto, penso (trascrizione), lav
 parlo, conferma (aspetta sì/no), seguito (dopo una risposta ascolta ancora qualche secondo senza parola chiave).
 """
 import ipaddress
-import re
 import json
 import os
 import queue
+import re
 import secrets
 import subprocess
 import sys
@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import annulla, audio, llm_locale, memoria, tastiera
+from . import annulla, audio, llm_locale, memoria, tastiera, visore
 from .cervello import Cervello
 from .emergenza import CervelloLocale, Emergenza, SintesiLocale
 from .esecutore import trova_claude
@@ -176,6 +176,7 @@ class Jarvis:
         self.dettatura = False     # "detta": quello che dici si scrive nella finestra in primo piano, senza IA
         self.blocco_domande = threading.Lock()   # una conferma o domanda per volta
         self.meteo = {"t": 0, "testo": ""}
+        self.visori = 0            # visori (Quest, web/xr.js) collegati al flusso di eventi
         self.emergenza = Emergenza(self, log)
         self.tts_locale = SintesiLocale(log)
         self.claude = None
@@ -224,6 +225,7 @@ class Jarvis:
                 "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo(),
                 "emergenza": {"attiva": self.emergenza.attiva, "motivo": self.emergenza.motivo},
                 "privata": bool(self.imp.get("privata")), "promemoria": self.promemoria.elenco(),
+                "visore": self.visori > 0,
                 "gioco": self.in_gioco}
 
     def impostazioni_pubbliche(self):
@@ -650,6 +652,43 @@ class Jarvis:
         self.meteo = {"t": time.time(), "testo": testo, "citta": citta}
         return testo
 
+    def mostra_nel_visore(self, d):
+        """Dalla voce, dall'esecutore o dal cervello locale (visore_mcp.py): apre nel visore una cartella, un file,
+        una finestra o lo schermo. Restituisce un messaggio per chi l'ha chiesto."""
+        if not self.visori:
+            return {"ok": False, "messaggio": "Il visore non è collegato (l'app Jarvis XR non è aperta)."}
+        cosa = str(d.get("cosa", ""))
+        if cosa == "cartella":
+            percorso = visore.risolvi_cartella(d.get("nome") or d.get("percorso") or "", d.get("dove") or "")
+            if not percorso:
+                return {"ok": False, "messaggio": "Cartella non trovata: fatti dare il percorso esatto dall'esecutore "
+                                                  "e richiamami con quello."}
+            try:
+                n = len(visore.elenco(percorso)["voci"])
+            except (OSError, PermissionError) as e:
+                return {"ok": False, "messaggio": f"Non posso mostrarla: {e}"}
+            self.evento(visore={"cosa": "cartella", "percorso": percorso})
+            return {"ok": True, "messaggio": f"Aperta nel visore: {percorso} ({n} elementi)."}
+        if cosa == "file":
+            percorso = str(d.get("percorso", ""))
+            try:
+                visore.leggibile(percorso)
+            except PermissionError as e:
+                return {"ok": False, "messaggio": str(e)}
+            self.evento(visore={"cosa": "file", "percorso": percorso, "tipo": visore.tipo_di(percorso)})
+            return {"ok": True, "messaggio": f"Mostrato nel visore: {os.path.basename(percorso)}."}
+        if cosa == "finestra":
+            f = visore.trova_finestra(d.get("titolo", ""))
+            if not f:
+                elenco = ", ".join(x["titolo"][:40] for x in visore.finestre()[:8])
+                return {"ok": False, "messaggio": f"Nessuna finestra così. Aperte: {elenco or 'nessuna'}."}
+            self.evento(visore={"cosa": "finestra", "hwnd": f["hwnd"], "titolo": f["titolo"]})
+            return {"ok": True, "messaggio": f"Finestra nel visore: {f['titolo']}."}
+        if cosa in ("schermo", "finestre", "file_radici", "chiudi"):
+            self.evento(visore={"cosa": cosa, "numero": int(d.get("numero") or 1)})
+            return {"ok": True, "messaggio": "Fatto nel visore."}
+        return {"ok": False, "messaggio": "Cosa mostrare? cartella, file, finestra, schermo, finestre o chiudi."}
+
     def _torna_libero(self):
         if not self.claude.occupato and not self.claude.lavora_in_sottofondo():
             self.imposta_stato("seguito" if self.imp.get("seguito") else "riposo")
@@ -839,6 +878,8 @@ class Jarvis:
             classe = CervelloLocale if locale else Cervello
             nuovo = classe(DATI, self.imp, PORTA, self.chiave_interna, CONFIG, log)
             nuovo.ascoltatori(self._claude_testo, self._claude_azione, self._claude_fine)
+            nuovo.contesto = lambda: " [l'utente indossa il visore Quest: per mostrare cartelle, foto, video e " \
+                                     "finestre usa gli strumenti visore_*]" if self.visori else ""
             if not locale:
                 nuovo.su_errore = self.emergenza.errore_claude
             self.claude = nuovo
@@ -1252,6 +1293,49 @@ class Gestore(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "X-Token, Content-Type")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
+    def manda_dati(self, dati, tipo, cache="no-store"):
+        self.send_response(200)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(dati)))
+        self.send_header("Cache-Control", cache)
+        self._cors()
+        self.end_headers()
+        self.wfile.write(dati)
+
+    def manda_file(self, percorso):
+        """File così com'è, a pezzi se il browser chiede un intervallo (Range): i video si possono scorrere."""
+        p = visore.leggibile(percorso)
+        totale = p.stat().st_size
+        inizio, fine = 0, totale - 1
+        intervallo = self.headers.get("Range") or ""
+        m = re.match(r"bytes=(\d*)-(\d*)", intervallo)
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                inizio = int(m.group(1))
+                fine = min(int(m.group(2)), totale - 1) if m.group(2) else min(inizio + 4 * 2**20 - 1, totale - 1)
+            else:
+                inizio = max(0, totale - int(m.group(2)))
+        if visore.tipo_di(p.name) == "testo" and not m:
+            fine = min(fine, 400 * 1024 - 1)   # i testi lunghi si mostrano a metà
+        self.send_response(206 if m else 200)
+        self.send_header("Content-Type", visore.tipo_mime(p))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(fine - inizio + 1))
+        if m:
+            self.send_header("Content-Range", f"bytes {inizio}-{fine}/{totale}")
+        self.send_header("Cache-Control", "private, max-age=300")
+        self._cors()
+        self.end_headers()
+        with open(p, "rb") as f:
+            f.seek(inizio)
+            resto = fine - inizio + 1
+            while resto > 0:
+                pezzo = f.read(min(256 * 1024, resto))
+                if not pezzo:
+                    break
+                self.wfile.write(pezzo)
+                resto -= len(pezzo)
+
     def manda(self, codice, corpo):
         dati = json.dumps(corpo, ensure_ascii=False).encode("utf-8")
         self.send_response(codice)
@@ -1317,8 +1401,36 @@ class Gestore(BaseHTTPRequestHandler):
         if u.path == "/jarvis/memoria":
             return self.manda(200, {"attiva": bool(self.j.imp.get("memoria", True)), "fatti": self.j.memoria.elenco(),
                                     "permessi": self.j.permessi.elenco()})
+        if u.path.startswith("/jarvis/file/") or u.path.startswith("/jarvis/finestre") or u.path.startswith("/jarvis/schermo/"):
+            return self.visore_get(u, q)
         if u.path == "/jarvis/conversazioni":
             return self.manda(200, {"attuale": self.j.claude.sessione, "conversazioni": self.j.claude.conversazioni()})
+        return self.manda(404, {"errore": "non trovato"})
+
+    def visore_get(self, u, q):
+        """File, anteprime, finestre e schermo per il visore (web/xr.js)."""
+        a = lambda k, d="": (q.get(k) or [d])[0]  # noqa: E731
+        try:
+            if u.path == "/jarvis/file/elenco":
+                return self.manda(200, visore.elenco(a("percorso")))
+            if u.path == "/jarvis/file/anteprima":
+                return self.manda_dati(visore.anteprima(a("percorso"), int(a("lato", "320"))), "image/jpeg",
+                                       "private, max-age=600")
+            if u.path == "/jarvis/file/dati":
+                return self.manda_file(a("percorso"))
+            if u.path == "/jarvis/finestre":
+                return self.manda(200, {"finestre": visore.finestre()})
+            if u.path == "/jarvis/finestre/immagine":
+                return self.manda_dati(visore.cattura_finestra(int(a("hwnd", "0")), int(a("lato", "1600"))), "image/jpeg")
+            if u.path == "/jarvis/schermo/immagine":
+                return self.manda_dati(visore.cattura_schermo(int(a("numero", "1")), int(a("lato", "1920"))), "image/jpeg")
+        except (PermissionError, LookupError, ValueError, FileNotFoundError) as e:
+            return self.manda(404, {"errore": str(e)})
+        except (ConnectionError, BrokenPipeError):
+            return None
+        except Exception as e:
+            log("visore:", traceback.format_exc()[-600:])
+            return self.manda(500, {"errore": str(e)})
         return self.manda(404, {"errore": "non trovato"})
 
     def do_POST(self):
@@ -1390,6 +1502,21 @@ class Gestore(BaseHTTPRequestHandler):
                     raise ValueError("testo vuoto")
                 attesa = max(3, min(60, int(d.get("attesa", 30))))
                 return self.manda(200, j.chiedi_e_aspetta(testo, attesa))
+            if u.path == "/jarvis/interno/visore":
+                return self.manda(200, j.mostra_nel_visore(d))
+            if u.path == "/jarvis/file/apri":
+                try:
+                    visore.apri_sul_pc(str(d.get("percorso", "")))
+                except (PermissionError, OSError) as e:
+                    return self.manda(403, {"errore": str(e)})
+                return self.manda(200, {"ok": True})
+            if u.path == "/jarvis/finestre/azione":
+                try:
+                    esito = visore.azione(int(d.get("hwnd") or 0), str(d.get("tipo", "")), d.get("x", 0.5), d.get("y", 0.5),
+                                          int(d.get("scatti") or 0), str(d.get("testo") or ""), str(d.get("tasti") or ""))
+                except LookupError as e:
+                    return self.manda(404, {"errore": str(e)})
+                return self.manda(200, {"ok": True, "esito": esito})
             if u.path == "/jarvis/annuncia":
                 testo = str(d.get("testo", "")).strip()[:300]
                 if not testo:
@@ -1440,6 +1567,19 @@ class Gestore(BaseHTTPRequestHandler):
         return self.manda(404, {"errore": "non trovato"})
 
     def flusso(self):
+        visore_qui = (parse_qs(urlparse(self.path).query).get("xr") or ["0"])[0] == "1"
+        if visore_qui:
+            self.j.visori += 1
+            self.j.evento(visore_collegato=True)
+            log("visore collegato:", self.client_address[0])
+        try:
+            self._flusso()
+        finally:
+            if visore_qui:
+                self.j.visori -= 1
+                log("visore scollegato")
+
+    def _flusso(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-store")

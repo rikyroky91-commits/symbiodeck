@@ -80,10 +80,16 @@ class Esecutore:
         """Server MCP in più rispetto al Claude Code normale: "schermo" (vedere lo schermo, mouse e tastiera), che
         la riga di comando su Windows non ha e l'app Claude sì."""
         python = str(Path(sys.executable).with_name("python.exe"))  # stdio: serve la console, non pythonw
-        mcp = {"mcpServers": {"schermo": {"command": python, "args": [str(QUI / "schermo_mcp.py")]}}}
+        mcp = {"mcpServers": {"schermo": {"command": python, "args": [str(QUI / "schermo_mcp.py")]},
+                              "visore": self._mcp_visore(python)}}
         f = self.dati / "mcp-jarvis.json"
         f.write_text(json.dumps(mcp, indent=2), encoding="utf-8")
         return f
+
+    def _mcp_visore(self, python):
+        """Server MCP "visore" (visore_mcp.py): aprire cartelle, foto e finestre nel Quest 3 dell'utente."""
+        return {"command": python, "args": [str(QUI / "visore_mcp.py")],
+                "env": {"JARVIS_PORTA": str(self.porta), "JARVIS_INTERNO": self.chiave_interna}}
 
     def _comando(self, exe):
         """Claude Code completo, come nell'app: modello e ragionamento dei compiti, guardia, schermo, Chrome."""

@@ -53,7 +53,8 @@ class Voce(Esecutore):
         python = str(Path(sys.executable).with_name("python.exe"))
         mcp = {"mcpServers": {"jarvis": {"command": python, "args": [str(QUI / "voce_mcp.py")],
                                          "env": {"JARVIS_PORTA": str(self.porta),
-                                                 "JARVIS_INTERNO": self.chiave_interna}}}}
+                                                 "JARVIS_INTERNO": self.chiave_interna}},
+                              "visore": self._mcp_visore(python)}}
         f = self.dati / "mcp-voce.json"
         f.write_text(json.dumps(mcp, indent=2), encoding="utf-8")
         return f
@@ -86,6 +87,7 @@ class Cervello:
         self._ultima_frase = ""
         self._affidato_nel_turno = False
         self.su_errore = lambda testo: False   # True se l'errore fa partire la modalità emergenza
+        self.contesto = lambda: ""             # es. " [visore Quest indossato]" (lo imposta principale.py)
         self.locale = False
 
     def ascoltatori(self, testo, azione, fine):
@@ -106,7 +108,7 @@ class Cervello:
 
     def chiedi(self, testo):
         self._ultima_frase = testo
-        self.voce.chiedi(f"[{adesso()}] {testo}")
+        self.voce.chiedi(f"[{adesso()}]{self.contesto()} {testo}")
 
     def interrompi(self):
         self.voce.interrompi()
@@ -176,7 +178,8 @@ class Cervello:
         else:
             self.richiesta_lavoro += " / " + richiesta   # un'aggiunta al lavoro in corso: si accoda
         self._azione("Passo all'esecutore: " + (richiesta[:70] + "…" if len(richiesta) > 70 else richiesta))
-        testo = f"Richiesta dell'utente (a voce): «{self._ultima_frase}»\nIstruzioni di Jarvis: {richiesta}"
+        testo = (f"Richiesta dell'utente (a voce): «{self._ultima_frase}»{self.contesto()}\n"
+                 f"Istruzioni di Jarvis: {richiesta}")
         self.log("esecutore:", richiesta[:200])
         threading.Thread(target=self._chiedi_esecutore, args=(testo,), daemon=True).start()
 

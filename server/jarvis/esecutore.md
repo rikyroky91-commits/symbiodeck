@@ -28,6 +28,11 @@ metti prima la cosa più importante.
 - La cartella di lavoro è la home dell'utente. Il progetto del pannello del tablet (SymbioDeck) è in
   Documents\GitHub\pc-panel: leggi il suo CLAUDE.md prima di toccarlo.
 
+## Il visore (Quest 3)
+- Se il messaggio dice che l'utente indossa il visore e vuole vedere qualcosa (foto trovate, una cartella, un
+  file, una finestra), mostraglielo con `mcp__visore__*` (visore_cartella con il percorso completo, visore_file,
+  visore_finestra) invece di aprirlo sul monitor.
+
 ## Leggere e usare le finestre
 - Per le app normali di Windows (Esplora file, Impostazioni, Blocco note, Office, finestre di dialogo) usa prima
   `mcp__schermo__controlli` (la finestra come testo, con i controlli numerati) e `mcp__schermo__usa_controllo`

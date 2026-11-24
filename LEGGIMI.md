@@ -361,6 +361,39 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     nuova), autorizzazione e risposta, e **mani simulate** (giunti finti): il tocco preme Privata, il pizzico sposta
     la Telemetria e salva la posizione, due mani ingrandiscono le App. **Non provato su un Quest 3 vero**: tracciamento
     delle mani reale, passthrough, microfono del visore, Tailscale Serve.
+- **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
+  "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
+  Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche
+  se spostati in OneDrive, poi cartella utente e altri dischi, fino a 3 livelli, con sinonimi come foto/photos/
+  immagini) e il visore la apre: il pannello esce dalla sfera e vola davanti agli occhi. Il messaggio alla voce dice
+  "[l'utente indossa il visore…]" quando l'app è aperta (`/jarvis/flusso?xr=1` conta i visori collegati).
+  - **Esploratore**: griglia 6×3 con anteprime vere delle foto (JPEG ridotti sul PC, girati secondo l'EXIF, in
+    cache), cartelle, video, testi; ⌂ (Questo PC), ⬆, pagine col gesto o con ◀ ▶.
+  - **Foto, video, testi**: la foto grande con la striscia di miniature sotto (tocca per saltare); **scorri con la
+    mano** davanti al pannello, senza toccarlo, per la successiva o la precedente (un gesto = una foto, si riarma
+    quando la mano si ferma). Video riprodotti nel visore (mp4, webm, mov; a pezzi con Range, si può saltare
+    toccando la barra); testi con ▲ ▼. "Apri sul PC" per tutto il resto (mai programmi o script).
+  - **Finestre del PC in diretta**: "aprimi Chrome nel visore", oppure 🪟 FINESTRE nella barra sopra la sfera.
+    L'immagine arriva ~5 volte al secondo anche se la finestra è coperta (PrintWindow); il pannello prende le
+    proporzioni della finestra. **Tocchi l'immagine e il clic avviene nello stesso punto della finestra vera**; modo
+    DOPPIO e DESTRO per il tocco dopo, ▲ ▼ rotella (anche scorrendo con la mano), INVIO, ⟳ DAVANTI. Per scrivere:
+    tocca il campo e usa la dettatura. 🖥 SCHERMO mostra lo schermo intero allo stesso modo.
+  - **Disposizione alla Iron Man**: il pannello più recente davanti, gli altri si spostano ai lati ad arco, più
+    piccoli; toccandone uno torna davanti. Quelli spostati con le mani restano dove li hai messi. Al massimo 5.
+  - **Barra sopra la sfera**: 📁 FILE, 🪟 FINESTRE, 🖥 SCHERMO, ✕ CHIUDI (tutti i pannelli aperti).
+  - Strumenti per voce, esecutore e cervello locale: `visore_cartella`, `visore_file`, `visore_finestra`,
+    `visore_schermo`, `visore_elenco_finestre`, `visore_chiudi`. Se la cartella non si trova la voce chiede il
+    percorso all'esecutore e richiama; se il visore è spento la cosa si apre sul PC come prima.
+  - API (chiave del pannello): `GET /jarvis/file/elenco|anteprima|dati`, `POST /jarvis/file/apri`, `GET /jarvis/finestre`,
+    `/jarvis/finestre/immagine`, `/jarvis/schermo/immagine`, `POST /jarvis/finestre/azione`. **Cosa si vede**: solo la
+    cartella utente e i dischi diversi da quello di sistema; mai Windows, Program Files, ProgramData, AppData, cartelle
+    con il punto (.ssh…) e file nascosti o di sistema. Sola lettura, tranne "apri sul PC" (non per .exe, .bat, .ps1,
+    .lnk e simili) e i comandi alle finestre, che con la chiave equivalgono a mouse e tastiera.
+  - Provato in Chrome con Jarvis finto: cartella aperta "a voce" con le anteprime, foto aperta toccando, scorrimento
+    con la mano simulata (una foto per gesto), disposizione a ventaglio, finestra in diretta con tocco → clic nel
+    punto giusto e rotella, elenco delle finestre. In Python (`tests/test_jarvis_visore.py`, 8 test): elenco e
+    permessi, cartelle a parole, anteprime, file a pezzi, niente programmi, richieste della voce. **Non provato sul PC
+    di Jarvis né sul Quest**: cattura vera delle finestre (PrintWindow, DPI, più monitor), clic veri, video nel visore.
 - **Autorizzazioni a tutto schermo sul tablet** (2026-11-24, richiesta dell'utente): la conferma occupa tutto lo
   schermo con SÌ e NO alti 190 px, "Sì, sempre" / "No, mai" sotto, il comando in piccolo, una barra col tempo che
   resta (`scade` nell'evento) e i pulsanti attivi solo dopo 450 ms (un tocco partito prima non conferma). Le azioni

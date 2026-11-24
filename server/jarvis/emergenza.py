@@ -131,6 +131,7 @@ class CervelloLocale:
         self.esec.ascoltatori(lambda p: self._testo(p), self._e_azione, lambda r, e: self._fine(r, e))
         self.azioni, self.richiesta_lavoro, self.inizio_lavoro = [], "", 0.0
         self.locale = True
+        self.contesto = lambda: ""
 
     def ascoltatori(self, testo, azione, fine):
         self._testo, self._azione, self._fine = testo, azione, fine
@@ -142,7 +143,7 @@ class CervelloLocale:
     def chiedi(self, testo):
         from .cervello import adesso
         self.richiesta_lavoro, self.inizio_lavoro, self.azioni = testo, time.time(), []
-        self.esec.chiedi(f"[{adesso()}] {testo}")
+        self.esec.chiedi(f"[{adesso()}]{self.contesto()} {testo}")
 
     def interrompi(self):
         self.esec.interrompi()
