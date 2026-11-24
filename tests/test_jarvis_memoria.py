@@ -18,6 +18,10 @@ from jarvis.permessi import Permessi  # noqa: E402
 from jarvis.sicurezza import oscura, sospetto  # noqa: E402
 from jarvis.trame import risposta_conferma  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+from jarvis import principale  # noqa: E402
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 
 def _tmp():
     return Path(tempfile.mkdtemp())

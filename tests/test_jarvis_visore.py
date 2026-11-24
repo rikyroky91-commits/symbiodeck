@@ -14,6 +14,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 from jarvis import principale, visore  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 
 @pytest.fixture
 def casa(monkeypatch):

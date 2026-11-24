@@ -576,6 +576,16 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   pannello Jarvis in anteprima 960x600. **Non ancora provato**: parola chiave detta da una persona vera al tablet,
   tablet a schermo spento e a batteria per ore (Doze), casse e microfono del PC. Dopo un riavvio del tablet si è
   ricollegato a Jarvis da solo in Wi-Fi (microfono compreso).
+- **Unione di stamattina e del pomeriggio** (2026-11-24 sera, ramo `jarvis-unione`): il lavoro "in prova" della
+  mattina (eco sul PC, conferme da lontano, Whisper medium sulla CPU, frasi spezzate unite) era solo sul ramo
+  `jarvis-in-prova`; ora è unito a `main` + Jarvis XR senza cavo. Nelle conferme da lontano il conto alla rovescia
+  mostrato è di 90 s come l'attesa vera (prima diceva 45), e le azioni delicate chiedono il tocco "sul telefono o
+  sull'orologio" se sei fuori casa. Test: tutti passano sul PC di casa (Windows); i test della dettatura su Windows
+  premevano tasti veri nella finestra davanti e ora registrano soltanto; i test non scrivono più in `jarvis.log` e
+  `pannello.log` veri; quelli del visore e dell'HTTPS si lanciano con `python -m pytest`. **Provato sul PC**: pannello
+  riavviato in ascolto su 47800, 443 (HTTPS, risponde 200) e 80 (rimando a https); Jarvis da amministratore
+  ripartito con `/jarvis/riavvia`, eco sul PC attiva, Claude Code trovato, tablet ricollegato (altoparlante e
+  microfono). **Non provato**: Quest vero, conferma da telefono/orologio dal vivo, interruzione a voce con l'eco.
 
 ## Abbinamento automatico (APK generico, dal 2026-11-15)
 - `python android/costruisci.py --generico` crea in `android/build-generico/` un APK senza IP né chiave: è quello

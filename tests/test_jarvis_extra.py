@@ -17,6 +17,9 @@ from jarvis.guardia import copia_per_annullare  # noqa: E402
 from jarvis.principale import Jarvis  # noqa: E402
 from jarvis.promemoria import Promemoria  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 if not hasattr(tastiera, "PREMUTI"):
     # su Windows la tastiera premerebbe davvero i tasti nella finestra in primo piano: nei test si registra soltanto
     tastiera.PREMUTI = []

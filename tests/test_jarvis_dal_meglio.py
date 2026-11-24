@@ -22,6 +22,9 @@ from jarvis.principale import Jarvis  # noqa: E402
 from jarvis.promemoria import Promemoria, capisci  # noqa: E402
 from jarvis.sicurezza import ordini_nascosti  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 ORA = datetime(2026, 11, 24, 15, 0)
 
 

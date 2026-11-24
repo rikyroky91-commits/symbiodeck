@@ -1,11 +1,15 @@
 """Prove delle novità per iPhone, Apple Watch e Comandi Rapidi (/jarvis/eventi): python tests/test_jarvis_remoto.py"""
 import sys
+import tempfile
 import threading
 import types
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 import jarvis.principale as p  # noqa: E402
+
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+p.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
 
 
 def finto():

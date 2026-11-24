@@ -25,6 +25,7 @@ def _pannello():
             mock.patch.object(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, create=True):
         sys.modules.pop("pannello", None)
         import pannello
+    pannello.REGISTRO = Path(tempfile.gettempdir()) / "pannello-prove.log"   # non il registro vero del pannello
     return pannello
 
 
