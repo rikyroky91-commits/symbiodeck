@@ -14,6 +14,11 @@ import re
 import sys
 import urllib.request
 
+try:
+    from . import annulla
+except ImportError:          # avviata come script dall'hook di Claude Code
+    import annulla
+
 # parole brevi (del, rd, format...) contano solo all'inizio di un comando: "Immagini del mare" o
 # "Get-Date -Format" non devono chiedere conferma
 _INIZIO = r"(?:^|[;&|(\n{]\s*|\bcmd(?:\.exe)?\s+/[ck]\s+|\b(?:sudo|xargs)\s+)"
@@ -178,6 +183,17 @@ def solo_esecutore(dati):
     }}
 
 
+def copia_per_annullare(dati):
+    """Prima di scrivere o modificare un file, la copia per "annulla l'ultima modifica" (annulla.py)."""
+    if dati.get("tool_name") not in ("Write", "Edit", "NotebookEdit") or not os.environ.get("JARVIS_CONFIG"):
+        return
+    i = dati.get("tool_input") or {}
+    percorso = i.get("file_path") or i.get("notebook_path")
+    if percorso:
+        cartella = os.path.join(os.path.dirname(os.environ["JARVIS_CONFIG"]), "jarvis-dati", "annulla")
+        annulla.registra(cartella, percorso, str(dati.get("session_id", "")))
+
+
 def main():
     try:
         dati = json.loads(_leggi_ingresso().decode("utf-8") or "{}")
@@ -187,6 +203,7 @@ def main():
     if rifiuto:
         os.write(1, json.dumps(rifiuto, ensure_ascii=False).encode("utf-8"))
         return
+    copia_per_annullare(dati)
     descrizione = valuta(dati.get("tool_name", ""), dati.get("tool_input") or {}, _livello())
     if not descrizione:
         return  # nessuna uscita: decide la modalità dei permessi (qui: procede)

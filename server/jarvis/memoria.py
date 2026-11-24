@@ -191,7 +191,7 @@ class Memoria:
         if not self.estrai or not self.attiva():
             return
         utente = (utente or "").strip()
-        if len(utente.split()) < 4 or utente.startswith("[Esito del lavoro"):
+        if len(utente.split()) < 4 or utente.startswith("["):   # messaggi interni: esiti, briefing
             return
         try:
             self._coda.put_nowait((utente[:2000], (risposta or "")[:2000]))

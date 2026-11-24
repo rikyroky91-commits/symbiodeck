@@ -184,6 +184,8 @@ def test_conferma_di_jarvis_con_permessi():
     j.imposta_stato = lambda s: setattr(j, "stato", s)
     j._ascolta_conferma_dopo_domanda = lambda c: None
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
+    j.blocco_domande = threading.Lock()
+    j._chiedi_conferma = lambda *a, **k: Jarvis._chiedi_conferma(j, *a, **k)
 
     def rispondi(ok, sempre):
         while not j.conferma:

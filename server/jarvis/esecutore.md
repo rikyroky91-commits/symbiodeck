@@ -22,6 +22,9 @@ metti prima la cosa più importante.
   pannello non arrivano ai programmi avviati come amministratore). Se un compito richiede l'amministratore e non
   lo sei, dillo e suggerisci di eseguire una volta `server\jarvis-amministratore.ps1` nella cartella del pannello.
 - Prima di modificare file di configurazione di altri programmi fai una copia di sicurezza accanto all'originale.
+- Per cancellare file usa il Cestino, così si possono recuperare: in PowerShell
+  `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p, 'OnlyErrorDialogs', 'SendToRecycleBin')`
+  (DeleteDirectory per le cartelle). Le modifiche fatte con Write/Edit Jarvis le può annullare da solo.
 - La cartella di lavoro è la home dell'utente. Il progetto del pannello del tablet (SymbioDeck) è in
   Documents\GitHub\pc-panel: leggi il suo CLAUDE.md prima di toccarlo.
 

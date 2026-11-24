@@ -38,11 +38,6 @@
           '<button class="j-btn" id="j-nuova">↺ Nuova</button>' +
           '<button class="j-btn" id="j-app" title="Continua questa conversazione nell&#39;app Claude sul PC">⧉ Sul PC</button>' +
         '</div>' +
-        '<div class="j-conferma" id="j-conferma">' +
-          '<div class="j-titolo">CONFERMA RICHIESTA</div><p id="j-conferma-testo"></p>' +
-          '<button class="j-btn rosso" id="j-si">Sì, procedi</button> <button class="j-btn" id="j-sempre">Sì, sempre</button> ' +
-          '<button class="j-btn" id="j-no">No</button> <button class="j-btn" id="j-mai">No, mai</button>' +
-        '</div>' +
       '</div>' +
       '<div class="j-lato">' +
         '<div class="j-schede"><button class="attiva" data-pagina="j-p-chat">Conversazione</button>' +
@@ -55,7 +50,28 @@
         '</div>' +
         '<div class="j-pagina" id="j-p-imp"><div class="j-impostazioni" id="j-imp"></div></div>' +
       '</div>' +
-    '</div>';
+    '</div>' +
+    // autorizzazioni e domande: a tutto schermo, pulsanti grandi per un tocco preciso
+    '<div class="j-conferma" id="j-conferma">' +
+      '<div class="j-c-alone"></div>' +
+      '<div class="j-c-testa"><span class="j-c-anello"></span><span class="j-titolo" id="j-conferma-titolo">' +
+        'AUTORIZZAZIONE RICHIESTA</span><span class="j-c-badge" id="j-conferma-badge">AZIONE DELICATA · SOLO TOCCO</span></div>' +
+      '<p class="j-c-testo" id="j-conferma-testo"></p>' +
+      '<p class="j-c-dettaglio" id="j-conferma-dettaglio"></p>' +
+      '<div class="j-c-tempo"><i id="j-conferma-tempo"></i></div>' +
+      '<div class="j-c-pulsanti" id="j-conferma-pulsanti">' +
+        '<button class="j-c-btn si" id="j-si"><b>SÌ</b><small>procedi</small></button>' +
+        '<button class="j-c-btn no" id="j-no"><b>NO</b><small>lascia stare</small></button>' +
+      '</div>' +
+      '<div class="j-c-secondari" id="j-conferma-secondari">' +
+        '<button class="j-c-btn piccolo" id="j-sempre">Sì, sempre<small>solo questo comando esatto</small></button>' +
+        '<button class="j-c-btn piccolo" id="j-mai">No, mai<small>non chiederlo più</small></button>' +
+      '</div>' +
+      '<div class="j-c-opzioni" id="j-conferma-opzioni"></div>' +
+      '<div class="j-c-voce" id="j-conferma-voce">puoi rispondere anche a voce</div>' +
+    '</div>' +
+    '<div class="j-avviso" id="j-avviso"></div>' +
+    '<div class="j-dettatura" id="j-dettatura">DETTATURA · scrivo nella finestra del PC · di\' <b>fine dettatura</b></div>';
   document.body.appendChild(radice);
   var linguetta = document.createElement("div");
   linguetta.id = "jarvis-linguetta";
@@ -143,11 +159,14 @@
       messaggio("azione", d.gioco ? "Modalità gioco: scheda video libera, ascolto con il processore" : "Fine partita: torno a usare la scheda video");
     }
     if (d.promemoria) { promemoria = d.promemoria; disegnaPromemoria(); }
-    if (d.avviso) { chiudiCorrente(); messaggio("azione", "⚠ " + d.avviso); }
+    if (d.avviso) { chiudiCorrente(); messaggio("azione", "⚠ " + d.avviso); mostraAvviso(d.avviso); }
+    if (d.dettatura !== undefined) $("j-dettatura").classList.toggle("vista", !!d.dettatura);
     if (d.nell_app) { messaggio("azione", "Conversazione visibile nell'app Claude sul PC (progetto pc-panel)"); corrente = null; }
   }
 
+  var cambioStato = 0;
   function impostaStato(s) {
+    if ((s || "riposo") !== stato) cambioStato = Date.now();
     stato = s || "riposo";
     radice.setAttribute("data-stato", stato);
     linguetta.setAttribute("data-stato", stato);
@@ -160,8 +179,9 @@
 
   function chip(id, testo, ok) {
     var c = $(id);
+    if (c.textContent !== testo) { c.classList.remove("lampo"); void c.offsetWidth; setTimeout(function () { c.classList.add("lampo"); }, 0); }
     c.textContent = testo;
-    c.className = "j-chip " + (ok === undefined ? "" : ok ? "ok" : "no");
+    c.className = "j-chip " + (ok === undefined ? "" : ok ? "ok" : "no") + " lampo";
   }
   var ultimoTablet = null;
   function aggiornaChip(tablet) {
@@ -170,6 +190,7 @@
     var micOk = imp.microfono === "pc" ? true : (tablet ? tablet.microfono : false);
     if (nativo && nativo.microfono && imp.microfono !== "pc" && !nativo.microfono()) { mic = "MIC: PERMESSO"; micOk = false; }
     chip("j-chip-mic", mic + (micOk ? " ✓" : " ✕"), micOk);
+    radice.classList.toggle("privata", !!imp.privata);
     if (imp.privata) chip("j-chip-modo", emergenza ? "PRIVATA · SOLO PC" : "PRIVATA · CERVELLO SPENTO", !!emergenza);
     else if (emergenza) chip("j-chip-modo", "EMERGENZA · CERVELLO LOCALE", false);
     else chip("j-chip-modo", "VOCE " + String(imp.modello_voce || "").toUpperCase() + " · COMPITI " +
@@ -194,20 +215,63 @@
   }
   function scorri() { var c = $("j-chat"); c.scrollTop = c.scrollHeight; }
 
+  var confermaAperta = 0, tempoConferma = null;
   function mostraConferma(c) {
+    var box = $("j-conferma");
+    if (c && c.id === confermaId) return;          // già mostrata (arriva anche nell'istantanea)
     confermaId = c ? c.id : null;
-    $("j-conferma").classList.toggle("vista", !!c);
-    if (c) $("j-conferma-testo").textContent = "Devo " + c.descrizione + ". Procedo?";
+    clearInterval(tempoConferma);
+    if (!c) { box.classList.remove("vista"); return; }
+    if (!aperto) apri();
+    // cosa (prima dei due punti) grande, il comando sotto in piccolo
+    var parti = String(c.descrizione || "").split(/:(.+)/);
+    var domanda = !!c.domanda;
+    $("j-conferma-titolo").textContent = domanda ? "JARVIS TI CHIEDE" : "AUTORIZZAZIONE RICHIESTA";
+    $("j-conferma-testo").textContent = domanda ? c.descrizione : "Devo " + parti[0].trim() + ". Procedo?";
+    $("j-conferma-dettaglio").textContent = domanda ? "" : (parti[1] || "").trim();
+    $("j-conferma-badge").style.display = c.alto ? "" : "none";
+    $("j-conferma-voce").textContent = c.alto ? "a voce puoi solo dire no: per il sì serve il tocco" :
+      "puoi rispondere anche a voce";
+    var opz = $("j-conferma-opzioni");
+    opz.innerHTML = "";
+    $("j-conferma-pulsanti").style.display = domanda && c.opzioni && c.opzioni.length ? "none" : "";
+    $("j-conferma-secondari").style.display = domanda ? "none" : "";
     // "sì, sempre" solo dove la guardia lo ammette (stesso comando esatto, mai per dischi, registro, messaggi...)
-    $("j-sempre").style.display = c && c.sempre_ok ? "" : "none";
-    if (c && c.alto) $("j-conferma-testo").textContent = "Devo " + c.descrizione +
-      ". Azione delicata: a voce non basta, serve questo tocco.";
+    $("j-sempre").style.display = c.sempre_ok ? "" : "none";
+    if (domanda) (c.opzioni || []).forEach(function (o) {
+      var b = document.createElement("button");
+      b.className = "j-c-btn opzione"; b.textContent = o;
+      b.onclick = function () { rispondi(true, false, o); };
+      opz.appendChild(b);
+    });
+    box.classList.toggle("alto", !!c.alto);
+    box.classList.remove("vista"); void box.offsetWidth; box.classList.add("vista");
+    // i pulsanti si attivano dopo un attimo: un tocco partito prima non conferma per sbaglio
+    confermaAperta = Date.now();
+    var scade = c.scade ? c.scade * 1000 : Date.now() + 45000, durata = Math.max(1000, scade - Date.now());
+    var barra = $("j-conferma-tempo");
+    tempoConferma = setInterval(function () {
+      barra.style.width = Math.max(0, (scade - Date.now()) / durata * 100) + "%";
+    }, 200);
   }
-  function rispondi(ok, sempre) {
-    if (!confermaId) return;
-    api("/jarvis/conferma", { id: confermaId, ok: ok, sempre: !!sempre }).catch(function (e) { avviso(e.message); });
-    mostraConferma(null);
+  function rispondi(ok, sempre, testo) {
+    if (!confermaId || Date.now() - confermaAperta < 450) return;
+    var corpo = { id: confermaId, ok: ok, sempre: !!sempre };
+    if (testo !== undefined) corpo.testo = testo;
+    api("/jarvis/conferma", corpo).catch(function (e) { avviso(e.message); });
+    var box = $("j-conferma");
+    box.classList.add(ok ? "esito-si" : "esito-no");
+    setTimeout(function () { box.classList.remove("esito-si", "esito-no"); mostraConferma(null); }, 380);
   }
+  var timerAvviso = null;
+  function mostraAvviso(testo) {
+    var a = $("j-avviso");
+    a.textContent = testo;
+    a.classList.remove("visto"); void a.offsetWidth; a.classList.add("visto");
+    clearTimeout(timerAvviso);
+    timerAvviso = setTimeout(function () { a.classList.remove("visto"); }, 9000);
+  }
+  $("j-avviso").onclick = function () { this.classList.remove("visto"); };
   $("j-si").onclick = function () { rispondi(true); };
   $("j-no").onclick = function () { rispondi(false); };
   $("j-sempre").onclick = function () { rispondi(true, true); };
@@ -303,6 +367,12 @@
     r.onchange = function () { cambia(k, Number(r.value)); };
     box.appendChild(r); box.appendChild(v);
     return box;
+  }
+  function campo(k, suggerimento) {
+    var i = document.createElement("input");
+    i.type = "text"; i.value = imp[k] || ""; i.placeholder = suggerimento || "";
+    i.onchange = function () { cambia(k, i.value.trim()); };
+    return i;
   }
   function tendina(k, opzioni) {
     var s = document.createElement("select");
@@ -454,6 +524,8 @@
       scelte("conferma_alta", [["tocco", "Solo tocco"], ["voce", "Anche voce"]])));
     c.appendChild(riga("Avvisi di temperatura", "dice se processore (" + imp.soglia_cpu + " °C) o scheda video (" +
       imp.soglia_gpu + " °C) scaldano troppo per mezzo minuto", interruttore("avvisi_temperatura")));
+    c.appendChild(riga("Città per il meteo", "nel briefing del mattino (\"buongiorno\"); mai in modalità privata",
+      campo("citta", "es. Catania")));
     gruppo(c, "Promemoria");
     var pm = document.createElement("div");
     pm.id = "j-promemoria";
@@ -537,6 +609,21 @@
       ctx.restore();
     }
     arco(108, 0, Math.PI * 2, 1, c(0.5));
+    // onda d'urto quando cambia stato
+    var dal = (Date.now() - cambioStato) / 1000;
+    if (dal < 0.9) {
+      var ro = 60 + dal * 150;
+      arco(ro, 0, Math.PI * 2, 3 * (1 - dal), c(0.7 * (1 - dal / 0.9)));
+    }
+    // particelle in orbita: più veloci quando lavora
+    for (var p = 0; p < 28; p++) {
+      var raggio = 120 + (p * 37 % 50), velo = 0.15 + (p % 7) * 0.05;
+      var angp = p * 2.39996 + fase * velo * (p % 2 ? 1 : -1);
+      ctx.beginPath();
+      ctx.arc(Math.cos(angp) * raggio, Math.sin(angp) * raggio, p % 5 === 0 ? 2 : 1.1, 0, Math.PI * 2);
+      ctx.fillStyle = c(0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * 2 + p)));
+      ctx.fill();
+    }
     // nucleo
     var rn = 52 + livelloVisto * 22 + Math.sin(t * 2) * 2;
     var gn = ctx.createRadialGradient(0, 0, 4, 0, 0, rn * 1.6);

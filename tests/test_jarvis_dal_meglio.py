@@ -67,7 +67,8 @@ def test_promemoria_scattano_e_sopravvivono_al_riavvio():
 # ------------------------------------------------------------ Jarvis finto attorno ai metodi veri
 def _jarvis(**imp):
     j = types.SimpleNamespace(imp=dict(principale.PREDEFINITE, **imp), detti=[], eventi=[], stato="lavoro",
-                              in_gioco=False, conferma=None, da_dire=queue.Queue(), cambiate=[])
+                              in_gioco=False, conferma=None, da_dire=queue.Queue(), cambiate=[],
+                              dettatura=False, conversazione=False)
     j.di = j.di_subito = lambda t: j.detti.append(t)
     j.evento = lambda **d: j.eventi.append(d)
     j.imposta_stato = lambda s: setattr(j, "stato", s)
@@ -111,6 +112,8 @@ def test_azioni_delicate_solo_col_tocco():
     j.uscita = types.SimpleNamespace(riprendi=lambda: None, parla=False)
     j._ascolta_conferma_dopo_domanda = lambda c: None
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
+    j.blocco_domande = threading.Lock()
+    j._chiedi_conferma = lambda *a, **k: Jarvis._chiedi_conferma(j, *a, **k)
     esito = {}
 
     def chiedi():
@@ -207,10 +210,21 @@ def _schermo_finto(radice):
     auto.ControlFromHandle = lambda h: radice
     auto.UIAutomationInitializerInThread = mock.MagicMock()
     moduli = {"mss": mock.MagicMock(), "ctypes.wintypes": wt, "uiautomation": auto}
-    with mock.patch.dict(sys.modules, moduli), mock.patch.object(ctypes, "windll", ctypes_finto, create=True), \
-            mock.patch.object(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, create=True):
-        sys.modules.pop("jarvis.schermo_mcp", None)
-        import jarvis.schermo_mcp as s
+    # solo questi tre moduli finti, poi si rimettono: rimettere tutto sys.modules toglierebbe i moduli importati
+    # nel frattempo (cryptography, mcp) e i test dopo troverebbero classi doppie
+    vecchi = {k: sys.modules.get(k) for k in moduli}
+    sys.modules.update(moduli)
+    try:
+        with mock.patch.object(ctypes, "windll", ctypes_finto, create=True), \
+                mock.patch.object(ctypes, "WINFUNCTYPE", ctypes.CFUNCTYPE, create=True):
+            sys.modules.pop("jarvis.schermo_mcp", None)
+            import jarvis.schermo_mcp as s
+    finally:
+        for k, v in vecchi.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
     s._elenco = lambda: [(1, "Blocco note")]
     s.user32 = mock.MagicMock()
     s.user32.GetForegroundWindow.return_value = 1

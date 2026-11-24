@@ -1,0 +1,1109 @@
+/* Jarvis XR: il pannello del PC e Jarvis come ologrammi nella stanza, per Meta Quest 3 (WebXR, realtà mista).
+   Si apre nel browser del visore: https://<pc>/xr.html?t=<chiave del pannello> (vedi LEGGIMI, "App per Quest 3").
+
+   Con le mani (come in Minority Report):
+     - tocca i pulsanti con la punta dell'indice, come uno schermo sospeso;
+     - pizzica (pollice + indice) un pannello e trascinalo dove vuoi; con due mani lo ingrandisci o rimpicciolisci;
+     - pizzica e tieni la sfera di Jarvis per parlargli (si registra finché tieni, poi la frase va al PC);
+   Con i controller: raggio + grilletto per premere (tenuto sulla sfera = parla), impugnatura per spostare.
+   Sul PC (senza visore) la stessa scena si vede in anteprima: clic per premere, trascina per guardarti intorno,
+   tieni premuto sulla sfera per parlare.
+
+   Dati: /api/flusso e /api/config del pannello (stessa origine), /jarvis/flusso e le API di Jarvis (porta 47802, o
+   8443 dietro HTTPS). Le posizioni dei pannelli restano salvate nel visore. */
+import * as THREE from "./lib/three.min.js";
+
+// ------------------------------------------------------------------ indirizzi e chiave
+const q = new URLSearchParams(location.search);
+const TOKEN = q.get("t") || leggi("token") || "";
+if (q.get("t")) scrivi("token", TOKEN);
+const PANNELLO = location.origin;
+const JARVIS = q.get("jarvis") || (location.protocol === "https:"
+  ? "https://" + location.hostname + ":8443" : location.protocol + "//" + location.hostname + ":47802");
+
+function leggi(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function scrivi(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* niente memoria nel browser */ } }
+
+function api(base, percorso, corpo) {
+  const opz = { headers: { "X-Token": TOKEN } };
+  if (corpo !== undefined) {
+    opz.method = "POST";
+    opz.headers["Content-Type"] = "application/json";
+    opz.body = JSON.stringify(corpo);
+  }
+  return fetch(base + percorso, opz).then((r) => r.json().then((j) => {
+    if (!r.ok) throw new Error(j.errore || "errore " + r.status);
+    return j;
+  }));
+}
+const apiJ = (p, c) => api(JARVIS, p, c);
+const apiP = (p, c) => api(PANNELLO, p, c);
+
+function flusso(url, suMessaggio, suStato) {
+  let es = null;
+  const apri = () => {
+    es = new EventSource(url + (url.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(TOKEN));
+    es.onopen = () => suStato(true);
+    es.onmessage = (e) => { try { suMessaggio(JSON.parse(e.data)); } catch (err) { /* evento non valido */ } };
+    es.onerror = () => { suStato(false); es.close(); setTimeout(apri, 3000); };
+  };
+  apri();
+}
+
+// ------------------------------------------------------------------ stato condiviso
+const COLORI = { riposo: 0x39d5ff, ascolto: 0x8ff0ff, seguito: 0x8ff0ff, penso: 0xffb341, lavoro: 0xffb341,
+  parlo: 0x4dffb8, conferma: 0xff5468, spento: 0x56606c };
+const NOMI = { spento: "SPENTO", riposo: "IN ATTESA", ascolto: "TI ASCOLTO", penso: "ELABORO", lavoro: "AL LAVORO",
+  parlo: "PARLO", conferma: "CONFERMA", seguito: "TI ASCOLTO" };
+const S = {
+  stato: "riposo", livello: 0, imp: {}, messaggi: [], corrente: null, azione: "", conferma: null, promemoria: [],
+  emergenza: false, pc: null, storia: { fps: [], gpu: [], cpu: [] }, config: { app: [], scorciatoie: [] },
+  jarvisOk: false, pannelloOk: false, registra: false, dettatura: false,
+};
+const pannelli = [];
+const sporca = (...ids) => pannelli.forEach((p) => { if (!ids.length || ids.includes(p.id)) p.sporco = true; });
+
+// ------------------------------------------------------------------ scena
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.xr.enabled = true;
+renderer.xr.setReferenceSpaceType("local-floor");
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scena = new THREE.Scene();
+const sfondoAnteprima = new THREE.Color(0x02060b);
+scena.background = sfondoAnteprima;
+const camera = new THREE.PerspectiveCamera(68, innerWidth / innerHeight, 0.01, 60);
+camera.position.set(0, 1.58, 0.62);   // anteprima: un passo indietro, per vedere tutto
+const ancora = new THREE.Group();
+scena.add(ancora);
+let altezzaOcchi = 1.6;
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const ADD = { transparent: true, blending: THREE.AdditiveBlending, depthWrite: false };
+
+// pavimento olografico: un anello attorno ai piedi e una griglia (la griglia solo in anteprima)
+const pedana = new THREE.Group();
+ancora.add(pedana);
+const anelloPedana = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.565, 96),
+  new THREE.MeshBasicMaterial({ color: 0x39d5ff, opacity: 0.45, ...ADD, side: THREE.DoubleSide }));
+anelloPedana.rotation.x = -Math.PI / 2;
+pedana.add(anelloPedana);
+const tacche = new THREE.Mesh(new THREE.RingGeometry(0.6, 0.64, 72, 1, 0, Math.PI * 2),
+  new THREE.MeshBasicMaterial({ color: 0x39d5ff, opacity: 0.18, ...ADD, side: THREE.DoubleSide, wireframe: true }));
+tacche.rotation.x = -Math.PI / 2;
+pedana.add(tacche);
+const griglia = new THREE.GridHelper(14, 56, 0x0f3a4a, 0x0a2230);
+griglia.material.transparent = true;
+griglia.material.opacity = 0.6;
+scena.add(griglia);
+
+// pulviscolo luminoso nella stanza
+const pulviscolo = (() => {
+  const n = 260, pos = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const r = 0.6 + Math.random() * 2.2, a = Math.random() * Math.PI * 2;
+    pos.set([Math.cos(a) * r, 0.2 + Math.random() * 2.2, Math.sin(a) * r], i * 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({ color: 0x39d5ff, size: 0.006, opacity: 0.55, ...ADD }));
+  ancora.add(p);
+  return p;
+})();
+
+// ------------------------------------------------------------------ la sfera di Jarvis
+const sfera = (() => {
+  const g = new THREE.Group();
+  const colore = new THREE.Color(COLORI.riposo);
+  const nucleoMat = new THREE.ShaderMaterial({
+    uniforms: { colore: { value: colore }, t: { value: 0 }, livello: { value: 0 } },
+    vertexShader: `varying vec3 vN; varying vec3 vV; uniform float t; uniform float livello;
+      void main() { vN = normalize(normalMatrix * normal);
+        vec3 p = position * (1.0 + 0.06 * sin(t * 3.0 + position.y * 40.0) * (0.3 + livello));
+        vec4 mv = modelViewMatrix * vec4(p, 1.0); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `varying vec3 vN; varying vec3 vV; uniform vec3 colore; uniform float t;
+      void main() { float f = pow(1.0 - abs(dot(vN, vV)), 2.2);
+        float bande = 0.5 + 0.5 * sin(vN.y * 30.0 - t * 4.0);
+        vec3 c = colore * (0.35 + 1.6 * f) + vec3(1.0) * pow(1.0 - f, 6.0) * 0.55 + colore * bande * 0.12;
+        gl_FragColor = vec4(c, 0.35 + f * 0.65); }`,
+    ...ADD,
+  });
+  const nucleo = new THREE.Mesh(new THREE.SphereGeometry(0.055, 48, 32), nucleoMat);
+  g.add(nucleo);
+  const reticolo = new THREE.Mesh(new THREE.IcosahedronGeometry(0.072, 1),
+    new THREE.MeshBasicMaterial({ color: colore, wireframe: true, opacity: 0.35, ...ADD }));
+  g.add(reticolo);
+  const anelli = [0.095, 0.115, 0.14].map((r, i) => {
+    const a = new THREE.Mesh(new THREE.TorusGeometry(r, i === 1 ? 0.0012 : 0.0022, 8, 128, Math.PI * (1.2 + i * 0.3)),
+      new THREE.MeshBasicMaterial({ color: colore, opacity: 0.8 - i * 0.18, ...ADD }));
+    a.rotation.set(Math.PI / 2 + i * 0.5, i * 0.7, 0);
+    g.add(a);
+    return a;
+  });
+  // barre del livello audio attorno
+  const n = 56;
+  const barre = new THREE.InstancedMesh(new THREE.BoxGeometry(0.0025, 1, 0.0025),
+    new THREE.MeshBasicMaterial({ color: colore, opacity: 0.85, ...ADD }), n);
+  g.add(barre);
+  const alone = new THREE.Sprite(new THREE.SpriteMaterial({ map: alonetexture(), color: colore, opacity: 0.55, ...ADD }));
+  alone.scale.set(0.42, 0.42, 1);
+  g.add(alone);
+  const onda = new THREE.Mesh(new THREE.RingGeometry(0.06, 0.064, 64),
+    new THREE.MeshBasicMaterial({ color: colore, opacity: 0, ...ADD, side: THREE.DoubleSide }));
+  g.add(onda);
+  const etichetta = new Etichetta(0.3, 0.05);
+  etichetta.mesh.position.y = -0.2;
+  g.add(etichetta.mesh);
+  const collisione = new THREE.Mesh(new THREE.SphereGeometry(0.13, 12, 8), new THREE.MeshBasicMaterial({ visible: false }));
+  collisione.userData.sfera = true;
+  g.add(collisione);
+
+  const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+  let fase = 0, livelloVisto = 0, statoVisto = "", ondaT = 9;
+  return {
+    gruppo: g, collisione,
+    aggiorna(dt, t, testa) {
+      const st = S.registra ? "ascolto" : S.stato;
+      if (st !== statoVisto) { statoVisto = st; ondaT = 0; etichetta.scrivi(S.registra ? "REGISTRO… LASCIA PER INVIARE" : NOMI[st] || st); }
+      colore.lerp(new THREE.Color(COLORI[st] || COLORI.riposo), Math.min(1, dt * 6));
+      const veloce = { lavoro: 3.2, penso: 2.4, ascolto: 1.6, seguito: 1.2, parlo: 1.8, conferma: 0.7 }[st] || 0.5;
+      fase += dt * veloce;
+      const parla = st === "parlo" ? 0.35 + 0.25 * Math.sin(t * 9) * Math.sin(t * 3.3) : 0;
+      livelloVisto += (Math.max(S.livello, parla, S.registra ? micLivello * 4 : 0) - livelloVisto) * 0.25;
+      S.livello *= 0.92;
+      nucleoMat.uniforms.t.value = t;
+      nucleoMat.uniforms.livello.value = livelloVisto;
+      nucleo.scale.setScalar(1 + livelloVisto * 0.35 + Math.sin(t * 2) * 0.02);
+      reticolo.rotation.set(fase * 0.4, fase * 0.6, 0);
+      anelli.forEach((a, i) => { a.rotation.z += dt * veloce * (i % 2 ? -0.8 : 0.6); a.material.color = colore; });
+      for (let i = 0; i < n; i++) {
+        const ang = i / n * Math.PI * 2;
+        const h = 0.004 + livelloVisto * 0.06 * (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(ang * 5 + t * 6) * Math.sin(ang * 3 - t * 4)));
+        v.set(Math.cos(ang) * (0.16 + h / 2), Math.sin(ang) * (0.16 + h / 2), 0);
+        qq.setFromAxisAngle(new THREE.Vector3(0, 0, 1), ang - Math.PI / 2);
+        m.compose(v, qq, sc.set(1, h, 1));
+        barre.setMatrixAt(i, m);
+      }
+      barre.instanceMatrix.needsUpdate = true;
+      ondaT += dt;
+      onda.material.opacity = Math.max(0, 0.8 - ondaT * 1.1);
+      onda.scale.setScalar(1 + ondaT * 4);
+      // le barre, l'onda e l'etichetta guardano sempre verso di te
+      if (testa) { barre.lookAt(testa); onda.lookAt(testa); etichetta.mesh.lookAt(testa); }
+    },
+  };
+})();
+
+function alonetexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const x = c.getContext("2d");
+  const gr = x.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, "rgba(255,255,255,0.9)"); gr.addColorStop(0.25, "rgba(255,255,255,0.25)");
+  gr.addColorStop(1, "rgba(255,255,255,0)");
+  x.fillStyle = gr; x.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// testo semplice su un piano (etichette)
+function Etichetta(w, h) {
+  const PX = 1400;
+  const c = document.createElement("canvas");
+  c.width = Math.round(w * PX); c.height = Math.round(h * PX);
+  const x = c.getContext("2d");
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex, ...ADD }));
+  this.scrivi = (testo) => {
+    x.clearRect(0, 0, c.width, c.height);
+    x.font = "600 " + Math.round(c.height * 0.42) + "px Consolas, 'Roboto Mono', monospace";
+    x.textAlign = "center"; x.textBaseline = "middle";
+    x.fillStyle = "#bff4ff"; x.shadowColor = "#39d5ff"; x.shadowBlur = 14;
+    x.letterSpacing = "6px";
+    x.fillText(testo, c.width / 2, c.height / 2);
+    tex.needsUpdate = true;
+  };
+}
+
+// ------------------------------------------------------------------ pannelli olografici
+const PX_M = 1500;                  // pixel per metro delle texture: nitido anche da vicino nel Quest 3
+const FONT = "'Segoe UI', Roboto, 'Inter', system-ui, sans-serif";
+const MONO = "Consolas, 'Roboto Mono', monospace";
+
+class Pannello {
+  constructor(id, titolo, w, h, opz = {}) {
+    Object.assign(this, { id, titolo, w, h, sporco: true, bottoni: [], hover: -1, premuto: -1, premutoT: 0,
+      sempreDavanti: !!opz.sempreDavanti, comparsa: 0, visibile: opz.visibile !== false, colore: opz.colore || "57,213,255" });
+    this.cw = Math.round(w * PX_M); this.ch = Math.round(h * PX_M);
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = this.cw; this.canvas.height = this.ch;
+    this.ctx = this.canvas.getContext("2d");
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    this.tex.anisotropy = 8;
+    this.gruppo = new THREE.Group();
+    this.mat = new THREE.MeshBasicMaterial({ map: this.tex, transparent: true, depthWrite: false, opacity: 0 });
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), this.mat);
+    this.mesh.userData.pannello = this;
+    this.gruppo.add(this.mesh);
+    // angoli luminosi in 3D, appena davanti al vetro
+    const a = Math.min(w, h) * 0.12, pts = [];
+    for (const [sx, sy] of [[-1, 1], [1, 1], [1, -1], [-1, -1]]) {
+      const x = sx * w / 2, y = sy * h / 2;
+      pts.push(x, y, 0.002, x - sx * a, y, 0.002, x, y, 0.002, x, y - sy * a, 0.002);
+    }
+    const gA = new THREE.BufferGeometry();
+    gA.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+    this.angoli = new THREE.LineSegments(gA, new THREE.LineBasicMaterial({ color: new THREE.Color("rgb(" + this.colore + ")"), opacity: 0, ...ADD }));
+    this.gruppo.add(this.angoli);
+    // linea di scansione che scorre
+    this.scansione = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.98, 0.004),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color("rgb(" + this.colore + ")"), opacity: 0.22, ...ADD }));
+    this.scansione.position.z = 0.001;
+    this.gruppo.add(this.scansione);
+    // cursore del dito sul vetro
+    this.cursore = new THREE.Mesh(new THREE.RingGeometry(0.006, 0.0085, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, opacity: 0, ...ADD }));
+    this.cursore.position.z = 0.003;
+    this.gruppo.add(this.cursore);
+    if (this.sempreDavanti) {
+      [this.mesh, this.angoli, this.scansione, this.cursore].forEach((o) => { o.renderOrder = 20; o.material.depthTest = false; });
+    }
+    this.gruppo.visible = this.visibile;
+    pannelli.push(this);
+  }
+
+  // ---- disegno
+  disegna() {
+    const c = this.ctx, W = this.cw, H = this.ch;
+    this.bottoni = [];
+    c.clearRect(0, 0, W, H);
+    const col = this.colore;
+    const g = c.createLinearGradient(0, 0, 0, H);
+    const fondo = this.sempreDavanti ? [0.96, 0.93] : [0.78, 0.66];   // conferme e avvisi: niente in trasparenza
+    g.addColorStop(0, "rgba(" + (this.sempreDavanti ? "24,6,12," : "6,22,34,") + fondo[0] + ")");
+    g.addColorStop(1, "rgba(" + (this.sempreDavanti ? "12,2,6," : "2,10,18,") + fondo[1] + ")");
+    rettangolo(c, 3, 3, W - 6, H - 6, 26); c.fillStyle = g; c.fill();
+    c.lineWidth = 3; c.strokeStyle = "rgba(" + col + ",0.45)"; c.stroke();
+    // trama a righe sottili
+    c.save(); rettangolo(c, 3, 3, W - 6, H - 6, 26); c.clip();
+    c.fillStyle = "rgba(" + col + ",0.035)";
+    for (let y = 0; y < H; y += 6) c.fillRect(0, y, W, 1);
+    c.restore();
+    // titolo
+    c.font = "600 30px " + MONO; c.letterSpacing = "6px"; c.fillStyle = "rgba(" + col + ",1)";
+    c.shadowColor = "rgba(" + col + ",0.8)"; c.shadowBlur = 12; c.textBaseline = "middle";
+    c.fillText(this.titolo, 34, 46);
+    c.shadowBlur = 0; c.letterSpacing = "0px";
+    c.fillStyle = "rgba(" + col + ",0.35)"; c.fillRect(34, 76, W - 68, 2);
+    this.contenuto(c, W, H);
+    this.tex.needsUpdate = true;
+    this.sporco = false;
+  }
+  contenuto() {}
+
+  bottone(c, x, y, w, h, testo, azione, o = {}) {
+    const i = this.bottoni.length;
+    this.bottoni.push({ x, y, w, h, azione });
+    const col = o.colore || this.colore;
+    const sopra = this.hover === i, premuto = this.premuto === i && performance.now() - this.premutoT < 260;
+    rettangolo(c, x, y, w, h, o.raggio || 18);
+    c.fillStyle = o.pieno ? "rgba(" + col + "," + (premuto ? 1 : sopra ? 0.95 : 0.82) + ")"
+      : "rgba(" + col + "," + (premuto ? 0.55 : sopra ? 0.28 : 0.1) + ")";
+    c.fill();
+    c.lineWidth = sopra ? 4 : 2.5; c.strokeStyle = "rgba(" + col + "," + (sopra ? 1 : 0.7) + ")";
+    if (sopra) { c.shadowColor = "rgba(" + col + ",0.9)"; c.shadowBlur = 22; }
+    c.stroke(); c.shadowBlur = 0;
+    c.fillStyle = o.pieno ? "#02131a" : "#e8fbff";
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.font = (o.peso || 600) + " " + (o.dim || 32) + "px " + (o.mono ? MONO : FONT);
+    if (o.sotto) {
+      c.fillText(testo, x + w / 2, y + h / 2 - (o.dim || 32) * 0.35);
+      c.font = "400 " + Math.round((o.dim || 32) * 0.45) + "px " + FONT; c.globalAlpha = 0.75;
+      c.fillText(o.sotto, x + w / 2, y + h / 2 + (o.dim || 32) * 0.5); c.globalAlpha = 1;
+    } else c.fillText(testo, x + w / 2, y + h / 2 + 1);
+    if (o.immagine && o.immagine.complete && o.immagine.naturalWidth) {
+      const s = Math.min(w, h) * 0.42;
+      c.drawImage(o.immagine, x + w / 2 - s / 2, y + h * 0.16, s, s);
+    }
+    c.textAlign = "left";
+  }
+
+  // ---- interazione (u, v in 0..1 sul vetro)
+  indiceIn(u, v) {
+    const x = u * this.cw, y = (1 - v) * this.ch;
+    return this.bottoni.findIndex((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+  }
+  sopra(u, v) {
+    const i = u === null ? -1 : this.indiceIn(u, v);
+    if (i !== this.hover) { this.hover = i; this.sporco = true; if (i >= 0) bip(1500, 0.015, 0.015); }
+  }
+  premi(u, v, origine) {
+    const i = this.indiceIn(u, v);
+    if (i < 0) return false;
+    this.premuto = i; this.premutoT = performance.now(); this.sporco = true;
+    setTimeout(() => { this.sporco = true; }, 280);
+    bip(1100, 0.05, 0.06); vibra(origine);
+    try { this.bottoni[i].azione(); } catch (e) { avviso("Errore: " + e.message); }
+    return true;
+  }
+  mostraCursore(local, vicino) {
+    if (!local) { this.cursore.material.opacity = 0; return; }
+    this.cursore.position.set(local.x, local.y, 0.003);
+    this.cursore.material.opacity = 0.9 * (1 - vicino);
+    this.cursore.scale.setScalar(1 + vicino * 2.5);
+  }
+
+  aggiorna(dt, t) {
+    if (!this.gruppo.visible) return;
+    if (this.sporco) this.disegna();
+    this.comparsa = Math.min(1, this.comparsa + dt * 2.2);
+    const c = Math.max(0, this.comparsa), k = c ? uscitaElastica(c) : 0;
+    // mentre c'è una conferma, il resto si attenua: l'attenzione va lì
+    this.attenua = THREE.MathUtils.lerp(this.attenua || 1, S.conferma && !this.sempreDavanti ? 0.22 : 1, Math.min(1, dt * 8));
+    this.mat.opacity = Math.min(1, c * 1.4) * this.attenua;
+    this.angoli.material.opacity = 0.9 * c * this.attenua;
+    this.mesh.scale.set(1, 0.02 + 0.98 * k, 1);
+    this.scansione.position.y = this.h / 2 - ((t * 0.12 + this.w) % 1) * this.h;
+    this.scansione.material.opacity = 0.18 * c;
+  }
+}
+
+function rettangolo(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y); c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r); c.closePath();
+}
+function uscitaElastica(x) { const c1 = 1.5, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); }
+function aCapo(c, testo, larghezza) {
+  const righe = [];
+  for (const paragrafo of String(testo).split("\n")) {
+    let riga = "";
+    for (const parola of paragrafo.split(" ")) {
+      const prova = riga ? riga + " " + parola : parola;
+      if (c.measureText(prova).width > larghezza && riga) { righe.push(riga); riga = parola; } else riga = prova;
+    }
+    righe.push(riga);
+  }
+  return righe;
+}
+
+// ---- conversazione e comandi di Jarvis
+const pConversazione = new Pannello("conversazione", "JARVIS · CONVERSAZIONE", 0.66, 0.4);
+pConversazione.contenuto = function (c, W, H) {
+  const modo = S.imp.privata ? (S.emergenza ? "PRIVATA · SOLO PC" : "PRIVATA · CERVELLO SPENTO")
+    : S.emergenza ? "EMERGENZA · LOCALE" : "CLAUDE";
+  c.font = "600 22px " + MONO; c.textAlign = "right";
+  c.fillStyle = S.imp.privata ? "#4dffb8" : S.emergenza ? "#ffb341" : "rgba(223,246,255,0.6)";
+  c.fillText((S.jarvisOk ? "● " : "○ ") + modo, W - 34, 46);
+  c.textAlign = "left";
+  // messaggi dal basso verso l'alto
+  const basso = H - 150, sinistra = 40, larg = W - 80;
+  let y = basso;
+  const msg = S.messaggi.slice(-12);
+  for (let i = msg.length - 1; i >= 0 && y > 110; i--) {
+    const m = msg[i];
+    c.font = (m.tipo === "azione" ? "400 22px " + MONO : "400 27px " + FONT);
+    const righe = aCapo(c, m.testo, larg * 0.82).slice(-6);
+    const h = righe.length * 34 + 22;
+    y -= h + 10;
+    if (y < 96) break;
+    const destra = m.tipo === "utente";
+    const bw = Math.min(larg * 0.86, Math.max(...righe.map((r) => c.measureText(r).width)) + 34);
+    const x = destra ? W - sinistra - bw : sinistra;
+    if (m.tipo !== "azione") {
+      rettangolo(c, x, y, bw, h, 16);
+      c.fillStyle = destra ? "rgba(57,213,255,0.16)" : "rgba(255,255,255,0.06)"; c.fill();
+      c.strokeStyle = destra ? "rgba(57,213,255,0.45)" : "rgba(255,255,255,0.12)"; c.lineWidth = 2; c.stroke();
+    }
+    c.fillStyle = m.tipo === "azione" ? "#ffb341" : m.tipo === "errore" ? "#ff5468" : "#e8fbff";
+    righe.forEach((r, k) => c.fillText((m.tipo === "azione" && k === 0 ? "▸ " : "") + r, x + 17, y + 28 + k * 34));
+  }
+  if (!S.messaggi.length) {
+    c.font = "400 28px " + FONT; c.fillStyle = "rgba(223,246,255,0.5)"; c.textAlign = "center";
+    c.fillText("Pizzica e tieni la sfera per parlare a Jarvis", W / 2, H / 2 - 20);
+    c.fillText("o di' \"Ehi Jarvis\" vicino al tablet", W / 2, H / 2 + 22);
+    c.textAlign = "left";
+  }
+  const by = H - 118, bh = 84, gap = 18, n = 4, bw = (W - 68 - gap * (n - 1)) / n;
+  this.bottone(c, 34, by, bw, bh, "■ STOP", () => apiJ("/jarvis/taci", {}));
+  this.bottone(c, 34 + (bw + gap), by, bw, bh, "↺ NUOVA", () => { S.messaggi = []; apiJ("/jarvis/nuova", {}); sporca("conversazione"); });
+  this.bottone(c, 34 + (bw + gap) * 2, by, bw, bh, S.imp.privata ? "🔒 PRIVATA" : "🔓 PRIVATA",
+    () => apiJ("/jarvis/impostazioni", { privata: !S.imp.privata }), { pieno: !!S.imp.privata, colore: "77,255,184" });
+  this.bottone(c, 34 + (bw + gap) * 3, by, bw, bh, "⟲ RIORDINA", () => disposizioneIniziale(true));
+};
+
+// ---- telemetria del PC
+const pTelemetria = new Pannello("telemetria", "PC · TELEMETRIA", 0.62, 0.44);
+pTelemetria.contenuto = function (c, W, H) {
+  const d = S.pc;
+  if (!d) {
+    c.font = "400 28px " + FONT; c.fillStyle = "rgba(223,246,255,0.5)"; c.textAlign = "center";
+    c.fillText(S.pannelloOk ? "In attesa dei dati…" : "Pannello del PC non raggiungibile", W / 2, H / 2);
+    c.textAlign = "left"; return;
+  }
+  const quadrante = (cx, cy, r, nome, carico, temp, colore) => {
+    c.lineCap = "round";
+    c.lineWidth = 16; c.strokeStyle = "rgba(" + colore + ",0.14)";
+    c.beginPath(); c.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25); c.stroke();
+    const f = Math.max(0, Math.min(1, (carico || 0) / 100));
+    c.strokeStyle = "rgba(" + colore + ",1)"; c.shadowColor = "rgba(" + colore + ",0.9)"; c.shadowBlur = 18;
+    c.beginPath(); c.arc(cx, cy, r, Math.PI * 0.75, Math.PI * (0.75 + 1.5 * f)); c.stroke();
+    c.shadowBlur = 0; c.lineCap = "butt";
+    c.textAlign = "center"; c.fillStyle = "#e8fbff";
+    c.font = "700 64px " + FONT; c.fillText(carico == null ? "—" : Math.round(carico) + "%", cx, cy - 6);
+    c.font = "600 24px " + MONO; c.fillStyle = "rgba(" + colore + ",1)"; c.fillText(nome, cx, cy + 44);
+    c.font = "400 26px " + FONT; c.fillStyle = temp >= 85 ? "#ff5468" : "rgba(223,246,255,0.75)";
+    c.fillText(temp == null ? "" : Math.round(temp) + " °C", cx, cy + 80);
+    c.textAlign = "left";
+  };
+  quadrante(170, 250, 118, "CPU", d.cpu && d.cpu.carico, d.cpu && d.cpu.temp, "57,213,255");
+  quadrante(450, 250, 118, "GPU", d.gpu && d.gpu.carico, d.gpu && d.gpu.temp, "77,255,184");
+  // FPS grande con la sua storia
+  const fx = 620, fw = W - fx - 40;
+  c.font = "600 22px " + MONO; c.fillStyle = "rgba(255,179,65,1)"; c.fillText("FPS", fx, 130);
+  c.font = "700 92px " + FONT; c.fillStyle = "#fff1d6";
+  c.fillText(d.fps && d.fps.ora ? Math.round(d.fps.ora) : "—", fx, 205);
+  grafico(c, S.storia.fps, fx, 250, fw, 90, "255,179,65", 0);
+  grafico(c, S.storia.gpu, fx, 360, fw, 60, "77,255,184", 100);
+  c.font = "400 20px " + MONO; c.fillStyle = "rgba(223,246,255,0.5)"; c.fillText("GPU 90 s", fx, 446);
+  // barre di RAM e VRAM
+  const barra = (y, nome, usata, tot, colore) => {
+    const f = usata && tot ? Math.min(1, usata / tot) : 0;
+    c.font = "600 22px " + MONO; c.fillStyle = "rgba(" + colore + ",1)"; c.fillText(nome, 40, y);
+    c.fillStyle = "rgba(" + colore + ",0.15)"; c.fillRect(150, y - 12, W - 400, 18);
+    c.fillStyle = "rgba(" + colore + ",0.9)"; c.fillRect(150, y - 12, (W - 400) * f, 18);
+    c.font = "400 22px " + FONT; c.fillStyle = "rgba(223,246,255,0.75)";
+    c.fillText(usata && tot ? (usata / 1024).toFixed(1) + " / " + (tot / 1024).toFixed(0) + " GB" : "—", W - 230, y + 2);
+  };
+  barra(H - 150, "RAM", d.ram && d.ram.usata, d.ram && d.ram.totale, "57,213,255");
+  barra(H - 108, "VRAM", d.gpu && d.gpu.vram, d.gpu && d.gpu.vram_tot, "77,255,184");
+  c.font = "400 22px " + FONT; c.fillStyle = "rgba(223,246,255,0.55)";
+  c.fillText("In primo piano: " + (d.primo_piano || "—"), 40, H - 50);
+};
+function grafico(c, serie, x, y, w, h, colore, massimo) {
+  c.strokeStyle = "rgba(" + colore + ",0.15)"; c.lineWidth = 1; c.strokeRect(x, y, w, h);
+  const v = serie.filter((n) => n != null);
+  if (v.length < 2) return;
+  const top = massimo || Math.max(30, ...v) * 1.15;
+  c.beginPath();
+  serie.forEach((n, i) => {
+    const px = x + i / 89 * w, py = y + h - Math.min(1, (n || 0) / top) * h;
+    i ? c.lineTo(px, py) : c.moveTo(px, py);
+  });
+  c.strokeStyle = "rgba(" + colore + ",1)"; c.lineWidth = 3; c.shadowColor = "rgba(" + colore + ",0.8)"; c.shadowBlur = 10;
+  c.stroke(); c.shadowBlur = 0;
+  c.lineTo(x + (serie.length - 1) / 89 * w, y + h); c.lineTo(x, y + h); c.closePath();
+  c.fillStyle = "rgba(" + colore + ",0.08)"; c.fill();
+}
+
+// ---- app e scorciatoie del pannello
+const icone = {};
+const pApp = new Pannello("app", "APP · SCORCIATOIE", 0.6, 0.46);
+pApp.pagina = 0;
+pApp.contenuto = function (c, W, H) {
+  const app = S.config.app || [], sc = S.config.scorciatoie || [];
+  const col = 4, per = 8, gap = 16, tw = (W - 68 - gap * (col - 1)) / col, th = 122;
+  const pagine = Math.max(1, Math.ceil(app.length / per));
+  this.pagina = Math.min(this.pagina, pagine - 1);
+  app.slice(this.pagina * per, this.pagina * per + per).forEach((a, i) => {
+    if (!icone[a.target]) {
+      const img = new Image();
+      img.onload = () => sporca("app");
+      img.src = PANNELLO + "/api/icona?t=" + encodeURIComponent(TOKEN) + "&target=" + encodeURIComponent(a.target);
+      icone[a.target] = img;
+    }
+    const x = 34 + (i % col) * (tw + gap), y = 100 + Math.floor(i / col) * (th + gap);
+    this.bottone(c, x, y, tw, th, "", () => apiP("/api/azione", { tipo: "app", id: a.id }).then(() => avviso("Apro " + a.nome)),
+      { immagine: icone[a.target] });
+    c.font = "500 20px " + FONT; c.fillStyle = "#dff6ff"; c.textAlign = "center";
+    c.fillText(taglia(c, a.nome, tw - 16), x + tw / 2, y + th - 20); c.textAlign = "left";
+  });
+  if (!app.length) {
+    c.font = "400 26px " + FONT; c.fillStyle = "rgba(223,246,255,0.5)";
+    c.fillText("Nessuna app: aggiungile dal pannello del tablet.", 40, 170);
+  }
+  if (pagine > 1) {
+    this.bottone(c, W - 180, 22, 64, 48, "‹", () => { this.pagina = (this.pagina + pagine - 1) % pagine; this.sporco = true; }, { dim: 34 });
+    this.bottone(c, W - 100, 22, 64, 48, "›", () => { this.pagina = (this.pagina + 1) % pagine; this.sporco = true; }, { dim: 34 });
+  }
+  const sy = 100 + 2 * (th + gap) + 8, sw = (W - 68 - gap * 3) / 4;
+  sc.slice(0, 8).forEach((s, i) => {
+    const x = 34 + (i % 4) * (sw + gap), y = sy + Math.floor(i / 4) * 84;
+    this.bottone(c, x, y, sw, 70, (s.icona || "⌨") + " " + taglia(c, s.nome, sw - 60),
+      () => apiP("/api/azione", { tipo: "scorciatoia", id: s.id }), { dim: 22, colore: "255,179,65" });
+  });
+};
+function taglia(c, t, w) {
+  t = String(t || "");
+  if (c.measureText(t).width <= w) return t;
+  while (t.length > 1 && c.measureText(t + "…").width > w) t = t.slice(0, -1);
+  return t + "…";
+}
+
+// ---- media
+const pMedia = new Pannello("media", "MEDIA", 0.5, 0.17);
+pMedia.contenuto = function (c, W, H) {
+  const tasti = [["⏮", "media_prev"], ["⏯", "media_play_pause"], ["⏭", "media_next"],
+    ["🔉", "volume_down"], ["🔇", "volume_mute"], ["🔊", "volume_up"]];
+  const gap = 14, bw = (W - 68 - gap * 5) / 6;
+  tasti.forEach(([s, k], i) => this.bottone(c, 34 + i * (bw + gap), 100, bw, H - 130, s,
+    () => apiP("/api/azione", { tipo: "media", tasto: k }), { dim: 46, colore: "143,240,255" }));
+};
+
+// ---- promemoria e comandi rapidi di Jarvis
+const pPromemoria = new Pannello("promemoria", "PROMEMORIA · OGGI", 0.46, 0.42);
+pPromemoria.contenuto = function (c, W, H) {
+  const ora = new Date();
+  c.font = "700 70px " + FONT; c.fillStyle = "#e8fbff";
+  c.fillText(ora.toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" }), 36, 150);
+  c.font = "400 24px " + FONT; c.fillStyle = "rgba(223,246,255,0.6)";
+  c.fillText(ora.toLocaleDateString("it-IT", { weekday: "long", day: "numeric", month: "long" }), 40, 196);
+  let y = 236;
+  const lista = S.promemoria.slice(0, 4);
+  if (!lista.length) {
+    c.font = "400 24px " + FONT; c.fillStyle = "rgba(223,246,255,0.45)";
+    c.fillText("Nessun promemoria", 40, y + 26);
+  }
+  lista.forEach((p) => {
+    c.font = "600 22px " + MONO; c.fillStyle = "#ffb341"; c.fillText(p.ora, 40, y + 26);
+    c.font = "400 24px " + FONT; c.fillStyle = "#e8fbff"; c.fillText(taglia(c, p.testo, W - 330), 210, y + 26);
+    this.bottone(c, W - 96, y, 60, 50, "✕", () => apiJ("/jarvis/promemoria", { togli: p.id }).then((d) => {
+      S.promemoria = d.promemoria; sporca("promemoria"); }), { dim: 24, colore: "255,84,104" });
+    y += 62;
+  });
+  const bw = (W - 68 - 16) / 2;
+  this.bottone(c, 34, H - 108, bw, 80, "☀ BRIEFING", () => apiJ("/jarvis/scrivi", { testo: "buongiorno" }), { dim: 26 });
+  this.bottone(c, 50 + bw, H - 108, bw, 80, S.dettatura ? "✎ FINE DETTATURA" : "✎ DETTATURA",
+    () => apiJ("/jarvis/scrivi", { testo: S.dettatura ? "fine dettatura" : "dettatura" }), { dim: 24, pieno: S.dettatura });
+};
+
+// ---- autorizzazioni e domande: grandi, davanti agli occhi
+const pConferma = new Pannello("conferma", "AUTORIZZAZIONE RICHIESTA", 0.72, 0.46,
+  { sempreDavanti: true, visibile: false, colore: "255,84,104" });
+pConferma.contenuto = function (c, W, H) {
+  const k = S.conferma;
+  if (!k) return;
+  this.titolo = k.domanda ? "JARVIS TI CHIEDE" : "AUTORIZZAZIONE RICHIESTA";
+  const parti = String(k.descrizione || "").split(/:(.+)/);
+  c.textAlign = "center"; c.fillStyle = "#ffffff"; c.font = "600 44px " + FONT;
+  const testo = k.domanda ? k.descrizione : "Devo " + parti[0].trim() + ". Procedo?";
+  aCapo(c, testo, W - 120).slice(0, 2).forEach((r, i) => c.fillText(r, W / 2, 146 + i * 54));
+  if (!k.domanda && parti[1]) {
+    c.font = "400 24px " + MONO; c.fillStyle = "rgba(255,211,217,0.7)";
+    c.fillText(taglia(c, parti[1].trim(), W - 120), W / 2, 252);
+  }
+  if (k.alto) {
+    c.font = "700 22px " + MONO; c.fillStyle = "#ff5468";
+    c.fillText("AZIONE DELICATA · SERVE IL TOCCO, A VOCE SOLO NO", W / 2, 292);
+  }
+  c.textAlign = "left";
+  const top = 316, gap = 22;
+  if (k.domanda && k.opzioni && k.opzioni.length) {
+    const n = k.opzioni.length, bw = (W - 68 - gap * (n - 1)) / n;
+    k.opzioni.forEach((o, i) => this.bottone(c, 34 + i * (bw + gap), top, bw, H - top - 34, o,
+      () => rispondiConferma(true, false, o), { dim: 34, colore: "57,213,255" }));
+    return;
+  }
+  const secondari = !k.domanda;
+  const bh = secondari ? H - top - 34 - 86 : H - top - 34, bw = (W - 68 - gap) / 2;
+  this.bottone(c, 34, top, bw, bh, "SÌ", () => rispondiConferma(true), { dim: 64, peso: 800, colore: "77,255,184", sotto: "procedi" });
+  this.bottone(c, 34 + bw + gap, top, bw, bh, "NO", () => rispondiConferma(false), { dim: 64, peso: 800, colore: "255,84,104", sotto: "lascia stare" });
+  if (secondari) {
+    if (k.sempre_ok) this.bottone(c, 34, H - 108, bw, 74, "Sì, sempre", () => rispondiConferma(true, true), { dim: 26 });
+    this.bottone(c, 34 + bw + gap, H - 108, bw, 74, "No, mai", () => rispondiConferma(false, true), { dim: 26 });
+  }
+};
+let confermaAperta = 0;
+function rispondiConferma(ok, sempre, testo) {
+  const k = S.conferma;
+  if (!k || performance.now() - confermaAperta < 500) return;   // niente conferme per un tocco di passaggio
+  const corpo = { id: k.id, ok, sempre: !!sempre };
+  if (testo !== undefined) corpo.testo = testo;
+  apiJ("/jarvis/conferma", corpo).catch((e) => avviso(e.message));
+  mostraConferma(null);
+}
+function mostraConferma(k) {
+  if (k && S.conferma && k.id === S.conferma.id) return;
+  S.conferma = k;
+  pConferma.gruppo.visible = !!k;
+  if (!k) return;
+  confermaAperta = performance.now();
+  pConferma.comparsa = 0; pConferma.sporco = true;
+  // davanti agli occhi, a 55 cm, appena sotto la linea dello sguardo
+  const testa = posizioneTesta(), avanti = new THREE.Vector3(0, 0, -1).applyQuaternion(orientamentoTesta());
+  avanti.y = 0; avanti.normalize();
+  const p = testa.clone().addScaledVector(avanti, 0.55); p.y = testa.y - 0.08;
+  ancora.worldToLocal(p);
+  pConferma.gruppo.position.copy(p);
+  pConferma.gruppo.lookAt(testa);
+  bip(660, 0.12, 0.08); setTimeout(() => bip(880, 0.12, 0.08), 140);
+}
+
+// ---- avvisi volanti (promemoria, temperature, errori)
+const pAvviso = new Pannello("avviso", "AVVISO", 0.5, 0.12, { sempreDavanti: true, visibile: false, colore: "255,179,65" });
+pAvviso.testo = "";
+pAvviso.contenuto = function (c, W) {
+  c.font = "600 34px " + FONT; c.fillStyle = "#fff1d6";
+  c.fillText(taglia(c, this.testo, W - 80), 36, 126);
+};
+let avvisoFino = 0;
+function avviso(testo) {
+  pAvviso.testo = testo; pAvviso.sporco = true; pAvviso.comparsa = 0; pAvviso.gruppo.visible = true;
+  avvisoFino = performance.now() + 6000;
+  const testa = posizioneTesta(), avanti = new THREE.Vector3(0, 0, -1).applyQuaternion(orientamentoTesta());
+  avanti.y = 0; avanti.normalize();
+  const p = testa.clone().addScaledVector(avanti, 0.75); p.y = testa.y + 0.22;
+  ancora.worldToLocal(p);
+  pAvviso.gruppo.position.copy(p);
+  pAvviso.gruppo.lookAt(testa);
+}
+
+// ------------------------------------------------------------------ disposizione
+const FISSI = [pConversazione, pTelemetria, pApp, pMedia, pPromemoria];
+const DEFAULT = {   // [angolo in gradi, distanza, altezza rispetto agli occhi]
+  conversazione: [0, 0.8, -0.46], telemetria: [-40, 0.82, -0.06], app: [40, 0.82, -0.06],
+  media: [40, 0.78, -0.43], promemoria: [-40, 0.78, -0.53],
+};
+FISSI.forEach((p) => ancora.add(p.gruppo));
+ancora.add(pConferma.gruppo, pAvviso.gruppo, sfera.gruppo);
+
+function disposizioneIniziale(dimentica) {
+  if (dimentica) scrivi("xr-disposizione", "");
+  centraAncora();
+  let salvata = {};
+  try { salvata = JSON.parse(leggi("xr-disposizione") || "{}"); } catch (e) { salvata = {}; }
+  const occhi = new THREE.Vector3(0, altezzaOcchi, 0);
+  FISSI.forEach((p, i) => {
+    const s = salvata[p.id];
+    if (s) {
+      p.gruppo.position.fromArray(s.p); p.gruppo.quaternion.fromArray(s.q); p.gruppo.scale.setScalar(s.s || 1);
+    } else {
+      const [ang, r, dy] = DEFAULT[p.id], a = THREE.MathUtils.degToRad(ang);
+      p.gruppo.position.set(Math.sin(a) * r, altezzaOcchi + dy, -Math.cos(a) * r);
+      p.gruppo.scale.setScalar(1);
+      p.gruppo.lookAt(ancora.localToWorld(occhi.clone()));   // lookAt tiene già conto della rotazione dell'ancora
+    }
+    p.comparsa = -i * 0.12;   // entrano uno dopo l'altro
+  });
+  sfera.gruppo.position.set(0, altezzaOcchi + 0.02, -0.74);
+  if (dimentica) { bip(520, 0.1, 0.06); avviso("Pannelli rimessi attorno a te"); }
+}
+function salvaDisposizione() {
+  const d = {};
+  FISSI.forEach((p) => { d[p.id] = { p: p.gruppo.position.toArray(), q: p.gruppo.quaternion.toArray(), s: p.gruppo.scale.x }; });
+  scrivi("xr-disposizione", JSON.stringify(d));
+}
+function centraAncora() {
+  if (!renderer.xr.isPresenting) {   // anteprima: la scena attorno all'origine, la camera un passo indietro
+    ancora.position.set(0, 0, 0); ancora.rotation.set(0, 0, 0); ancora.updateMatrixWorld(true); altezzaOcchi = 1.6;
+    return;
+  }
+  const t = posizioneTesta(), o = orientamentoTesta();
+  const yaw = new THREE.Euler().setFromQuaternion(o, "YXZ").y;
+  ancora.position.set(t.x, 0, t.z);
+  ancora.rotation.set(0, yaw, 0);
+  ancora.updateMatrixWorld(true);
+  altezzaOcchi = Math.max(1.0, Math.min(2.0, t.y));
+}
+const _tp = new THREE.Vector3(), _tq = new THREE.Quaternion();
+function camAttiva() { return renderer.xr.isPresenting ? renderer.xr.getCamera() : camera; }
+function posizioneTesta() { return camAttiva().getWorldPosition(_tp).clone(); }
+function orientamentoTesta() { return camAttiva().getWorldQuaternion(_tq).clone(); }
+
+// ------------------------------------------------------------------ suoni e vibrazione
+let audioUI = null;
+function bip(freq, durata, volume) {
+  try {
+    audioUI = audioUI || new AudioContext();
+    const o = audioUI.createOscillator(), g = audioUI.createGain(), t = audioUI.currentTime;
+    o.type = "sine"; o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(freq * 1.25, t + durata);
+    g.gain.setValueAtTime(volume, t); g.gain.exponentialRampToValueAtTime(0.0001, t + durata);
+    o.connect(g); g.connect(audioUI.destination); o.start(t); o.stop(t + durata + 0.02);
+  } catch (e) { /* audio non disponibile */ }
+}
+function vibra(sorgente) {
+  const h = sorgente && sorgente.gamepad && sorgente.gamepad.hapticActuators && sorgente.gamepad.hapticActuators[0];
+  if (h && h.pulse) h.pulse(0.45, 35);
+}
+
+// ------------------------------------------------------------------ microfono del visore (tieni e parla)
+let micCtx = null, micCampioni = [], micLivello = 0;
+async function preparaMicrofono() {
+  if (micCtx) return true;
+  try {
+    const flusso = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true,
+      noiseSuppression: true, autoGainControl: true } });
+    try { micCtx = new AudioContext({ sampleRate: 16000 }); } catch (e) { micCtx = new AudioContext(); }
+    const sorgente = micCtx.createMediaStreamSource(flusso);
+    const proc = micCtx.createScriptProcessor(4096, 1, 1);
+    proc.onaudioprocess = (e) => {
+      const d = e.inputBuffer.getChannelData(0);
+      let s = 0;
+      for (let i = 0; i < d.length; i += 8) s += d[i] * d[i];
+      micLivello = Math.sqrt(s / (d.length / 8));
+      if (S.registra) micCampioni.push(new Float32Array(d));
+    };
+    sorgente.connect(proc); proc.connect(micCtx.destination);
+    return true;
+  } catch (e) {
+    avviso("Microfono non disponibile: " + e.message);
+    return false;
+  }
+}
+function iniziaParlato() {
+  if (!micCtx) { preparaMicrofono(); avviso("Concedi il microfono e riprova"); return false; }
+  micCtx.resume();
+  micCampioni = []; S.registra = true;
+  bip(880, 0.07, 0.06);
+  return true;
+}
+function fineParlato() {
+  if (!S.registra) return;
+  S.registra = false;
+  bip(620, 0.08, 0.06);
+  const n = micCampioni.reduce((a, b) => a + b.length, 0), freq = micCtx.sampleRate;
+  if (n < freq * 0.35) { avviso("Troppo breve: tieni il pizzico mentre parli"); return; }
+  const tutto = new Float32Array(n);
+  let o = 0;
+  micCampioni.forEach((b) => { tutto.set(b, o); o += b.length; });
+  const pcm = a16k(tutto, freq);
+  fetch(JARVIS + "/jarvis/voce", { method: "POST", headers: { "X-Token": TOKEN, "Content-Type": "application/octet-stream" },
+    body: pcm.buffer }).then((r) => { if (!r.ok) r.json().then((j) => avviso(j.errore || "Errore " + r.status)); })
+    .catch((e) => avviso("Jarvis non raggiungibile: " + e.message));
+}
+function a16k(f32, freq) {
+  const passo = freq / 16000, n = Math.floor(f32.length / passo), out = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const v = f32[Math.floor(i * passo)];
+    out[i] = Math.max(-32768, Math.min(32767, v * 32767));
+  }
+  return out;
+}
+
+// ------------------------------------------------------------------ mani: tocco, pizzico, presa a due mani
+const GIUNTI = ["wrist", "thumb-metacarpal", "thumb-phalanx-proximal", "thumb-phalanx-distal", "thumb-tip",
+  "index-finger-metacarpal", "index-finger-phalanx-proximal", "index-finger-phalanx-intermediate", "index-finger-phalanx-distal", "index-finger-tip",
+  "middle-finger-metacarpal", "middle-finger-phalanx-proximal", "middle-finger-phalanx-intermediate", "middle-finger-phalanx-distal", "middle-finger-tip",
+  "ring-finger-metacarpal", "ring-finger-phalanx-proximal", "ring-finger-phalanx-intermediate", "ring-finger-phalanx-distal", "ring-finger-tip",
+  "pinky-finger-metacarpal", "pinky-finger-phalanx-proximal", "pinky-finger-phalanx-intermediate", "pinky-finger-phalanx-distal", "pinky-finger-tip"];
+const OSSA = [];
+[[0, 1, 2, 3, 4], [0, 5, 6, 7, 8, 9], [0, 10, 11, 12, 13, 14], [0, 15, 16, 17, 18, 19], [0, 20, 21, 22, 23, 24]]
+  .forEach((dito) => { for (let i = 0; i < dito.length - 1; i++) OSSA.push(dito[i], dito[i + 1]); });
+
+const mani = [0, 1].map((i) => {
+  const mano = renderer.xr.getHand(i);
+  scena.add(mano);
+  const punti = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8),
+    new THREE.MeshBasicMaterial({ color: 0x8ff0ff, opacity: 0.9, ...ADD }), GIUNTI.length);
+  punti.frustumCulled = false;
+  const gOssa = new THREE.BufferGeometry();
+  gOssa.setAttribute("position", new THREE.BufferAttribute(new Float32Array(OSSA.length * 3), 3));
+  const ossa = new THREE.LineSegments(gOssa, new THREE.LineBasicMaterial({ color: 0x39d5ff, opacity: 0.55, ...ADD }));
+  ossa.frustumCulled = false;
+  punti.visible = ossa.visible = false;
+  scena.add(punti, ossa);
+  return { mano, punti, ossa, pizzica: false, presa: null, parla: false, zPrima: new Map(), ultimoTocco: 0,
+    punta: new THREE.Vector3(), pollice: new THREE.Vector3(), centro: new THREE.Vector3(), offset: new THREE.Vector3(),
+    sorgente: null };
+});
+mani.forEach((m) => m.mano.addEventListener("connected", (e) => { m.sorgente = e.data; }));
+
+const _m = new THREE.Matrix4(), _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _s = new THREE.Vector3();
+const visibili = () => pannelli.filter((p) => p.gruppo.visible && p.comparsa > 0.6 && p !== pAvviso);
+
+function aggiornaMani() {
+  const testa = posizioneTesta();
+  for (const m of mani) {
+    const j = m.mano.joints, tip = j && j["index-finger-tip"], th = j && j["thumb-tip"];
+    const visibile = tip && th && tip.visible !== false && m.mano.visible !== false;
+    m.punti.visible = m.ossa.visible = !!visibile;
+    if (!visibile) { rilascia(m); continue; }
+    // disegno della mano olografica
+    const pos = m.ossa.geometry.attributes.position.array;
+    GIUNTI.forEach((nome, k) => {
+      const g = j[nome];
+      if (!g) return;
+      g.getWorldPosition(_v);
+      const r = nome.endsWith("tip") ? 0.0055 : 0.0042;
+      m.punti.setMatrixAt(k, _m.compose(_v, _q.identity(), _s.setScalar(r)));
+    });
+    OSSA.forEach((k, idx) => { const g = j[GIUNTI[k]]; if (g) { g.getWorldPosition(_v); pos.set([_v.x, _v.y, _v.z], idx * 3); } });
+    m.punti.instanceMatrix.needsUpdate = true;
+    m.ossa.geometry.attributes.position.needsUpdate = true;
+
+    tip.getWorldPosition(m.punta); th.getWorldPosition(m.pollice);
+    m.centro.copy(m.punta).add(m.pollice).multiplyScalar(0.5);
+    const dist = m.punta.distanceTo(m.pollice);
+    const pizzicaOra = m.pizzica ? dist < 0.03 : dist < 0.018;   // isteresi: niente sfarfallio
+    if (pizzicaOra && !m.pizzica) iniziaPizzico(m);
+    if (!pizzicaOra && m.pizzica) rilascia(m);
+    m.pizzica = pizzicaOra;
+    m.punti.material.color.set(m.parla ? 0x4dffb8 : m.presa ? 0xffb341 : 0x8ff0ff);
+
+    // tocco con l'indice (solo se non sta pizzicando)
+    if (!m.pizzica) toccoIndice(m);
+    if (m.presa) trascina(m, testa);
+  }
+  // presa a due mani sullo stesso pannello: si ingrandisce
+  const [a, b] = mani;
+  if (a.presa && a.presa === b.presa) {
+    const p = a.presa, d = a.centro.distanceTo(b.centro);
+    if (!p.dueMani) p.dueMani = { d0: d, s0: p.gruppo.scale.x };
+    p.gruppo.scale.setScalar(THREE.MathUtils.clamp(p.dueMani.s0 * d / p.dueMani.d0, 0.45, 2.6));
+  }
+}
+
+function toccoIndice(m) {
+  let migliore = null;
+  for (const p of visibili()) {
+    const l = p.mesh.worldToLocal(m.punta.clone());
+    const dentro = Math.abs(l.x) <= p.w / 2 && Math.abs(l.y) <= p.h / 2;
+    if (!dentro || l.z > 0.05 || l.z < -0.03) { m.zPrima.delete(p); p.mostraCursore(null); continue; }
+    if (!migliore || l.z < migliore.l.z) migliore = { p, l };
+  }
+  for (const p of visibili()) if (!migliore || p !== migliore.p) if (p.hoverDa === m) { p.sopra(null); p.hoverDa = null; }
+  if (!migliore) return;
+  const { p, l } = migliore, u = l.x / p.w + 0.5, v = l.y / p.h + 0.5;
+  p.hoverDa = m;
+  p.sopra(u, v);
+  p.mostraCursore(l, Math.max(0, Math.min(1, l.z / 0.05)));
+  const prima = m.zPrima.get(p);
+  // pressione: la punta attraversa il vetro da davanti (soglia 6 mm), al massimo una ogni 350 ms
+  if (prima !== undefined && prima > 0.006 && l.z <= 0.006 && performance.now() - m.ultimoTocco > 350) {
+    m.ultimoTocco = performance.now();
+    p.premi(u, v, m.sorgente);
+  }
+  m.zPrima.set(p, l.z);
+}
+
+function iniziaPizzico(m) {
+  const sferaPos = sfera.gruppo.getWorldPosition(new THREE.Vector3());
+  if (m.centro.distanceTo(sferaPos) < 0.14) { m.parla = iniziaParlato(); return; }
+  let presa = null, zMin = Infinity;   // il pannello più vicino alle dita, se ce ne sono di sovrapposti
+  for (const p of visibili()) {
+    if (p.sempreDavanti) continue;   // conferme e avvisi non si spostano
+    const l = p.mesh.worldToLocal(m.centro.clone());
+    const s = p.gruppo.scale.x;
+    if (Math.abs(l.x) <= p.w / 2 + 0.04 / s && Math.abs(l.y) <= p.h / 2 + 0.04 / s && Math.abs(l.z) < 0.09 / s
+        && Math.abs(l.z) * s < zMin) { presa = p; zMin = Math.abs(l.z) * s; }
+  }
+  if (!presa) return;
+  m.presa = presa;
+  m.offset.copy(presa.gruppo.getWorldPosition(new THREE.Vector3())).sub(m.centro);
+  presa.dueMani = null;
+  bip(420, 0.08, 0.05); vibra(m.sorgente);
+}
+function trascina(m, testa) {
+  const p = m.presa, altra = mani.find((x) => x !== m);
+  const dest = altra.presa === p ? m.centro.clone().add(altra.centro).multiplyScalar(0.5).add(m.offset)
+    : m.centro.clone().add(m.offset);
+  if (altra.presa === p && mani.indexOf(m) === 1) return;   // con due mani muove la prima
+  p.gruppo.position.copy(ancora.worldToLocal(dest));
+  p.gruppo.lookAt(testa);
+}
+function rilascia(m) {
+  if (m.parla) { m.parla = false; fineParlato(); }
+  if (m.presa) { const p = m.presa; m.presa = null; p.dueMani = null; salvaDisposizione(); bip(300, 0.06, 0.04); }
+}
+
+// ------------------------------------------------------------------ controller: raggio, grilletto, impugnatura
+const raggio = new THREE.Raycaster();
+const controller = [0, 1].map((i) => {
+  const c = renderer.xr.getController(i);
+  const laser = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -1)]),
+    new THREE.LineBasicMaterial({ color: 0x39d5ff, opacity: 0.8, ...ADD }));
+  laser.scale.z = 2;
+  laser.visible = false;
+  c.add(laser);
+  scena.add(c);
+  const st = { c, laser, sorgente: null, colpo: null, parla: false, tiene: null };
+  c.addEventListener("connected", (e) => { st.sorgente = e.data; laser.visible = !e.data.hand; });
+  c.addEventListener("disconnected", () => { st.sorgente = null; });
+  c.addEventListener("selectstart", () => {
+    if (!st.sorgente || st.sorgente.hand) return;   // le mani usano tocco e pizzico
+    const h = st.colpo;
+    if (!h) return;
+    if (h.object.userData.sfera) { st.parla = iniziaParlato(); return; }
+    const p = h.object.userData.pannello;
+    if (p && h.uv) p.premi(h.uv.x, h.uv.y, st.sorgente);
+  });
+  c.addEventListener("selectend", () => { if (st.parla) { st.parla = false; fineParlato(); } });
+  c.addEventListener("squeezestart", () => {
+    const p = st.colpo && st.colpo.object.userData.pannello;
+    if (!p || p.sempreDavanti) return;
+    st.tiene = p; c.attach(p.gruppo); vibra(st.sorgente); bip(420, 0.08, 0.05);
+  });
+  c.addEventListener("squeezeend", () => {
+    if (!st.tiene) return;
+    ancora.attach(st.tiene.gruppo); st.tiene.gruppo.lookAt(posizioneTesta()); st.tiene = null; salvaDisposizione();
+  });
+  return st;
+});
+function bersagli() { return visibili().map((p) => p.mesh).concat([sfera.collisione]); }
+function aggiornaController() {
+  for (const st of controller) {
+    if (!st.sorgente || st.sorgente.hand) continue;
+    _m.identity().extractRotation(st.c.matrixWorld);
+    raggio.ray.origin.setFromMatrixPosition(st.c.matrixWorld);
+    raggio.ray.direction.set(0, 0, -1).applyMatrix4(_m);
+    const h = raggio.intersectObjects(bersagli(), false)[0] || null;
+    if (st.colpo && st.colpo.object.userData.pannello && (!h || h.object !== st.colpo.object)) st.colpo.object.userData.pannello.sopra(null);
+    st.colpo = h;
+    st.laser.scale.z = h ? h.distance : 2;
+    if (h && h.object.userData.pannello && h.uv) h.object.userData.pannello.sopra(h.uv.x, h.uv.y);
+  }
+}
+
+// ------------------------------------------------------------------ anteprima sul PC (mouse)
+const mouse = new THREE.Vector2();
+let trascinando = null, yaw = 0, pitch = -0.08, colpoMouse = null, parlaMouse = false;
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  if (renderer.xr.isPresenting) return;
+  colpoMouse = colpisciMouse(e);
+  if (colpoMouse && colpoMouse.object.userData.sfera) { parlaMouse = iniziaParlato(); return; }
+  if (colpoMouse && colpoMouse.object.userData.pannello) {
+    colpoMouse.object.userData.pannello.premi(colpoMouse.uv.x, colpoMouse.uv.y);
+    return;
+  }
+  trascinando = { x: e.clientX, y: e.clientY, yaw, pitch };
+});
+addEventListener("pointerup", () => { trascinando = null; if (parlaMouse) { parlaMouse = false; fineParlato(); } });
+renderer.domElement.addEventListener("pointermove", (e) => {
+  if (renderer.xr.isPresenting) return;
+  if (trascinando) {
+    yaw = trascinando.yaw - (e.clientX - trascinando.x) * 0.004;
+    pitch = THREE.MathUtils.clamp(trascinando.pitch - (e.clientY - trascinando.y) * 0.004, -1.2, 1.2);
+    return;
+  }
+  const h = colpisciMouse(e);
+  pannelli.forEach((p) => { if (!h || h.object.userData.pannello !== p) p.sopra(null); });
+  if (h && h.object.userData.pannello) h.object.userData.pannello.sopra(h.uv.x, h.uv.y);
+  renderer.domElement.style.cursor = h ? "pointer" : "grab";
+});
+function colpisciMouse(e) {
+  mouse.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  raggio.setFromCamera(mouse, camera);
+  return raggio.intersectObjects(bersagli(), false)[0] || null;
+}
+
+// ------------------------------------------------------------------ dati da Jarvis e dal pannello
+function eventoJarvis(d) {
+  if (d.tutto) {
+    const s = d.tutto;
+    S.imp = s.impostazioni || {}; S.stato = s.stato || "riposo"; S.promemoria = s.promemoria || [];
+    S.emergenza = !!(s.emergenza && s.emergenza.attiva); S.azione = s.azione || "";
+    mostraConferma(s.conferma || null);
+    sporca(); return;
+  }
+  if (d.stato) S.stato = d.stato;
+  if (d.livello !== undefined) S.livello = d.livello;
+  if (d.utente) { S.corrente = null; aggiungi("utente", d.utente); }
+  if (d.jarvis_pezzo) {
+    if (!S.corrente) { S.corrente = { tipo: "jarvis", testo: "" }; S.messaggi.push(S.corrente); }
+    S.corrente.testo += d.jarvis_pezzo; sporca("conversazione");
+  }
+  if (d.jarvis) {
+    if (S.corrente) S.corrente.testo = d.jarvis; else aggiungi("jarvis", d.jarvis);
+    S.corrente = null; sporca("conversazione");
+  }
+  if (d.fine) S.corrente = null;
+  if (d.azione) { S.corrente = null; aggiungi("azione", d.azione); }
+  if (d.errore) aggiungi("errore", d.errore);
+  if (d.conferma !== undefined) mostraConferma(d.conferma);
+  if (d.impostazioni) { S.imp = d.impostazioni; sporca(); }
+  if (d.emergenza) { S.emergenza = !!d.emergenza.attiva; sporca("conversazione"); }
+  if (d.promemoria) { S.promemoria = d.promemoria; sporca("promemoria"); }
+  if (d.avviso) avviso(d.avviso);
+  if (d.dettatura !== undefined) { S.dettatura = !!d.dettatura; sporca("promemoria"); }
+  if (d.nuova) { S.messaggi = []; sporca("conversazione"); }
+}
+function aggiungi(tipo, testo) {
+  S.messaggi.push({ tipo, testo });
+  if (S.messaggi.length > 60) S.messaggi.splice(0, S.messaggi.length - 60);
+  sporca("conversazione");
+}
+function eventoPannello(d) {
+  S.pc = d;
+  const metti = (k, v) => { S.storia[k].push(v == null ? null : v); if (S.storia[k].length > 90) S.storia[k].shift(); };
+  metti("fps", d.fps && d.fps.ora); metti("gpu", d.gpu && d.gpu.carico); metti("cpu", d.cpu && d.cpu.carico);
+  sporca("telemetria");
+}
+function caricaConfig() { apiP("/api/config").then((c) => { S.config = c; sporca("app"); }).catch(() => {}); }
+
+// ------------------------------------------------------------------ avvio e ciclo
+const orologio = new THREE.Clock();
+let ultimoSecondo = 0, primoFotogramma = true;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(0.05, orologio.getDelta()), t = orologio.elapsedTime;
+  if (!renderer.xr.isPresenting) {
+    camera.rotation.set(pitch, yaw, 0, "YXZ");
+  } else if (primoFotogramma) {
+    primoFotogramma = false;
+    disposizioneIniziale(false);
+  }
+  const testa = posizioneTesta();
+  aggiornaMani();
+  aggiornaController();
+  sfera.aggiorna(dt, t, testa);
+  pannelli.forEach((p) => p.aggiorna(dt, t));
+  if (pAvviso.gruppo.visible && performance.now() > avvisoFino) pAvviso.gruppo.visible = false;
+  anelloPedana.material.opacity = 0.3 + 0.15 * Math.sin(t * 1.5);
+  tacche.rotation.z += dt * 0.05;
+  pulviscolo.rotation.y += dt * 0.01;
+  if (t - ultimoSecondo > 20) { ultimoSecondo = t; sporca("promemoria"); }   // l'orologio
+  renderer.render(scena, camera);
+});
+
+const bottone = document.getElementById("entra"), nota = document.getElementById("nota");
+async function avvia() {
+  if (!TOKEN) {
+    nota.innerHTML = "Manca la chiave del pannello: apri questa pagina dal link nelle impostazioni del PC (<b>?t=…</b>).";
+  }
+  flusso(JARVIS + "/jarvis/flusso", eventoJarvis, (ok) => { S.jarvisOk = ok; sporca("conversazione"); });
+  flusso(PANNELLO + "/api/flusso", eventoPannello, (ok) => { S.pannelloOk = ok; sporca("telemetria"); });
+  caricaConfig();
+  setInterval(caricaConfig, 60000);
+  disposizioneIniziale(false);
+
+  const ar = navigator.xr && await navigator.xr.isSessionSupported("immersive-ar").catch(() => false);
+  const vr = !ar && navigator.xr && await navigator.xr.isSessionSupported("immersive-vr").catch(() => false);
+  if (!ar && !vr) {
+    bottone.textContent = "ANTEPRIMA SUL PC";
+    nota.innerHTML = (window.isSecureContext ? "Questo browser non ha WebXR: apri la pagina nel browser del Quest 3."
+      : "Per la realtà mista il visore deve aprire la pagina in <b>https://</b> (Tailscale) o da <b>localhost</b> (adb reverse): " +
+        "vedi LEGGIMI, «App per Quest 3».") + "<br>Qui: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.";
+    bottone.onclick = () => preparaMicrofono();
+    bottone.disabled = false;
+    return;
+  }
+  bottone.textContent = ar ? "ENTRA IN REALTÀ MISTA" : "ENTRA IN VR";
+  nota.innerHTML = "Tocca con l'indice · pizzica per spostare · due mani per ingrandire · pizzica e tieni la sfera per parlare";
+  bottone.disabled = false;
+  bottone.onclick = async () => {
+    await preparaMicrofono();   // il permesso si chiede prima: dentro la sessione il visore non mostra la richiesta
+    const sessione = await navigator.xr.requestSession(ar ? "immersive-ar" : "immersive-vr", {
+      requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "bounded-floor"] });
+    scena.background = null; griglia.visible = false;
+    primoFotogramma = true;
+    await renderer.xr.setSession(sessione);
+    document.getElementById("avvio").classList.add("nascosto");
+    sessione.addEventListener("end", () => {
+      scena.background = sfondoAnteprima; griglia.visible = true;
+      document.getElementById("avvio").classList.remove("nascosto");
+      ancora.position.set(0, 0, 0); ancora.rotation.set(0, 0, 0); altezzaOcchi = 1.6; disposizioneIniziale(false);
+    });
+  };
+}
+avvia();
+if (q.get("prova") === "1") window.__xr = { mani, pannelli, THREE, sfera, S, ancora };   // solo per le prove automatiche

@@ -332,6 +332,65 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   - Da fare più avanti: dettatura nell'app in primo piano (akshayaggarwal99), briefing del mattino, Jarvis come
     server MCP per le altre sessioni di Claude Code (`jarvis_speak`, `jarvis_ask_user` di jarvis-desktop), annullare
     le operazioni sui file (jarvis-fr).
+- **App per Quest 3: Jarvis XR** (2026-11-24, `web/xr.html` + `web/xr.js`, three.js r187 in `web/lib/`). Il pannello e
+  Jarvis come ologrammi nella stanza, in realtà mista (passthrough), stile Minority Report / Iron Man. È una pagina
+  WebXR servita dal pannello del PC: niente APK da compilare né da installare (si può aggiungere alla libreria del
+  visore dal browser).
+  - **Cosa c'è**: la sfera di Jarvis al centro (colore e anelli seguono lo stato, barre col livello della voce, onda
+    a ogni cambio di stato); attorno, ad arco, i pannelli Conversazione (con Stop, Nuova, Privata, Riordina),
+    Telemetria (CPU e GPU con carico e temperatura, FPS con la storia di 90 s, RAM, VRAM, programma in primo piano),
+    App e scorciatoie (le stesse del tablet, con le icone), Media, Promemoria (con ora, Briefing e Dettatura). Le
+    autorizzazioni compaiono grandi a 55 cm davanti agli occhi, opache, con il resto attenuato; gli avvisi volano in
+    alto. Anello sul pavimento e pulviscolo luminoso. Suoni brevi e vibrazione dei controller a ogni tocco.
+  - **Mani**: tocchi i pulsanti con la punta dell'indice (si preme attraversando il vetro, cerchio-cursore che si
+    stringe mentre ti avvicini, al massimo un tocco ogni 350 ms); pizzichi un pannello e lo sposti (si gira sempre
+    verso di te); con due mani sullo stesso pannello lo ingrandisci o rimpicciolisci (0,45-2,6x). Pizzica e tieni
+    la sfera per parlare: il microfono del visore registra finché tieni, la frase va a `POST /jarvis/voce` (PCM
+    16 kHz) e Jarvis la trascrive sul PC come quelle del tablet; se c'è una conferma aperta, è la risposta. Le
+    posizioni restano salvate nel visore; "Riordina" le rimette attorno a te. **Controller**: raggio + grilletto
+    (tenuto sulla sfera = parla), impugnatura per spostare.
+  - **Aprirla nel visore**: la realtà mista vuole `https://` oppure `localhost`. Due strade:
+    1. **Tailscale Serve** (consigliata, senza cavo): sul PC `tailscale serve --bg --https=443 http://127.0.0.1:47800`
+       e `tailscale serve --bg --https=8443 http://127.0.0.1:47802`; sul Quest Tailscale attivo e nel browser
+       `https://<nome-pc>.<tailnet>.ts.net/xr.html?t=<chiave>` (la pagina usa da sola la porta 8443 per Jarvis).
+    2. **Cavo USB** (modalità sviluppatore del Quest): `adb reverse tcp:47800 tcp:47800` e
+       `adb reverse tcp:47802 tcp:47802`, poi `http://localhost:47800/xr.html?t=<chiave>`.
+    I link con la chiave sono nella pagina delle impostazioni del PC (sezione Jarvis XR). Sul PC la stessa pagina
+    è un'**anteprima** col mouse: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.
+  - Provato in Chrome senza visore con pannello e Jarvis finti: rendering, pulsanti col mouse (app, media, privata,
+    nuova), autorizzazione e risposta, e **mani simulate** (giunti finti): il tocco preme Privata, il pizzico sposta
+    la Telemetria e salva la posizione, due mani ingrandiscono le App. **Non provato su un Quest 3 vero**: tracciamento
+    delle mani reale, passthrough, microfono del visore, Tailscale Serve.
+- **Autorizzazioni a tutto schermo sul tablet** (2026-11-24, richiesta dell'utente): la conferma occupa tutto lo
+  schermo con SÌ e NO alti 190 px, "Sì, sempre" / "No, mai" sotto, il comando in piccolo, una barra col tempo che
+  resta (`scade` nell'evento) e i pulsanti attivi solo dopo 450 ms (un tocco partito prima non conferma). Le azioni
+  delicate hanno l'etichetta "SOLO TOCCO"; le domande delle altre sessioni mostrano le opzioni come pulsanti grandi.
+  Si apre da sola anche a pannello chiuso.
+- **Animazioni del pannello Jarvis** (2026-11-24): messaggi che entrano scorrendo, schede in dissolvenza, chip che
+  lampeggiano quando cambiano, onda d'urto e particelle in orbita sulla sfera, stato che "respira" mentre lavora,
+  avvisi (promemoria, temperature) che scendono dall'alto, barra "DETTATURA" in basso, bordo verde in privata.
+  Solo transform e opacità: leggere anche per il WebView 88 dello SHIELD.
+- **Dettatura** (2026-11-24, `server/jarvis/tastiera.py`, idea da akshayaggarwal99/jarvis-ai-assistant): "dettatura" /
+  "detta" e quello che dici si scrive nella finestra in primo piano sul PC (SendInput, caratteri Unicode), trascritto
+  da Whisper sul PC e **mai mandato a un modello**. "a capo", "cancella l'ultima parola", "fine dettatura" (o "stop").
+  Durante la dettatura l'ascolto non scade.
+- **Briefing del mattino** (2026-11-24): "buongiorno" / "briefing" / "com'è la giornata". Il PC raccoglie promemoria
+  di oggi, meteo (Open-Meteo, gratis e senza chiave, con la città di Impostazioni > Privacy e sicurezza; mai in
+  privata), spazio libero sul disco di sistema e temperature, e la voce ne fa un buongiorno di 30 secondi; se
+  l'esecutore ha calendario e posta collegati, li aggiunge.
+- **Jarvis per le altre sessioni di Claude Code** (2026-11-24, `server/jarvis/jarvis_mcp.py`, idea da jarvis-desktop):
+  server MCP con `jarvis_parla(testo)`, `jarvis_chiedi(domanda, opzioni)` (domanda a voce, risposta detta o toccata
+  sul tablet o nel visore, fino a 10 minuti) e `jarvis_promemoria`. Si registra una volta:
+  `claude mcp add --scope user jarvis -- python "<cartella>\server\jarvis\jarvis_mcp.py"` (il comando esatto è
+  nelle impostazioni del PC). API: `POST /jarvis/annuncia`, `/jarvis/domanda`, `/jarvis/promemoria-esterno`. Conferme
+  e domande ora passano una alla volta (`blocco_domande`): due insieme si sovrascrivevano.
+- **Annulla l'ultima modifica** (2026-11-24, `server/jarvis/annulla.py`, idea da jarvis-fr): la guardia copia ogni file
+  prima che l'esecutore lo scriva o modifichi (Write, Edit) e annota i file nuovi. "Annulla l'ultima modifica" /
+  "rimetti com'era" chiede conferma e rimette com'erano i file dell'ultimo lavoro (stessa sessione, senza pause oltre
+  10 minuti); quelli nuovi vanno in `jarvis-dati/annulla/tolti`, mai cancellati. Le cancellazioni l'esecutore ora le
+  fa nel Cestino (esecutore.md). Si tengono le ultime 300 modifiche.
+- Test: 57 (`tests/test_jarvis_extra.py` +10). Non provati dal vivo: dettatura in un'app vera, il meteo reale,
+  jarvis_mcp registrato in Claude Code, annulla dopo un lavoro vero dell'esecutore.
 - **Valutato e lasciato fuori da OpenJarvis** (2026-11-24): il framework intero (agenti, motori, Rust, training: il
   cervello resta Claude Code), il suo "motore" per l'emergenza (stesso llama-server, ma senza la commutazione
   automatica di `emergenza.py`), i canali di messaggistica, il router e il loop guard. Da valutare più avanti: il

@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import audio, llm_locale, memoria
+from . import annulla, audio, llm_locale, memoria, tastiera
 from .cervello import Cervello
 from .emergenza import CervelloLocale, Emergenza, SintesiLocale
 from .esecutore import trova_claude
@@ -77,6 +77,7 @@ PREDEFINITE = {
     "avvisi_temperatura": True,    # avvisa a voce se processore o scheda video scaldano troppo
     "soglia_cpu": 90,              # gradi
     "soglia_gpu": 85,
+    "citta": "",                   # per il meteo del briefing del mattino (vuoto: niente meteo)
     "memoria": True,               # ricorda fatti stabili tra una conversazione e l'altra (memoria.py)
     "ragionamento_locale": False,  # il modello locale ragiona prima di rispondere (più lento, vedi LEGGIMI)
     "claude_exe": "",
@@ -89,11 +90,22 @@ SCELTE = {
     "modello_emergenza": ["27b", "27b-mtp"], "conferma_alta": ["tocco", "voce"],
 }
 # frasi brevi che Jarvis dice spesso: la loro voce si prepara all'avvio e si tiene (niente attesa della sintesi)
+_CIELO = {0: "sereno", 10: "poco nuvoloso", 20: "nebbia o foschia", 40: "nebbia", 50: "pioviggine",
+          60: "pioggia", 70: "neve", 80: "rovesci", 90: "temporali"}
 FRASI_PRONTE = ("Procedo.", "D'accordo, lascio stare.", "Va bene, mi fermo.", "Non ho capito: sì o no?",
                 "Ci guardo.", "Vediamo un po'.", "Fatto.", "Un attimo.")
 # comandi detti a voce che non vanno mai a Claude (accendere la privacy non deve passare da Internet)
 _PRIVATA_SI = re.compile(r"^(?:(?:attiva|accendi|passa|entra|vai|metti(?:ti)?|usa)\b.*\b)?"
                          r"(?:modalit[aà] (?:privata|locale)|solo (?:in )?locale|privacy (?:totale|massima))$")
+_DETTATURA_SI = re.compile(r"^(?:(?:inizia|avvia|attiva|comincia)\w* (?:a |la )?)?(?:dettatura|detta|"
+                           r"scrivi (?:quello )?che (?:ti )?dico|scrivi sotto dettatura)$")
+_DETTATURA_NO = re.compile(r"^(?:fine|basta|stop|chiudi|termina|esci dalla) (?:la )?dettatura$|^smetti di scrivere$|^(?:stop|basta)$")
+_A_CAPO = re.compile(r"^(?:a capo|nuova riga|invio)$")
+_CANCELLA_PAROLA = re.compile(r"^cancella (?:l'ultima )?parola$")
+_BRIEFING = re.compile(r"^(?:buongiorno|buon giorno|briefing|com'è la giornata|com'è la mia giornata|"
+                       r"dammi il briefing|cosa c'è oggi)$")
+_ANNULLA = re.compile(r"^(?:annulla (?:l'ultima modifica|le (?:ultime )?modifiche)|rimetti (?:tutto )?com'era|"
+                      r"ripristina i file|torna come prima)$")
 _PRIVATA_NO = re.compile(r"^(?:(?:esci|disattiva|spegni|togli|chiudi)\b.*\bmodalit[aà] (?:privata|locale)"
                          r"|torna (?:a|con) claude|modalit[aà] normale)$")
 
@@ -161,6 +173,9 @@ class Jarvis:
                                      evento=lambda **d: self.evento(**d))
         self.voce_pronta = {}      # (testo, voce, velocita, tono, online) -> pcm, per le frasi brevi
         self.caldo = {"cpu": 0, "gpu": 0, "avvisato": 0.0}
+        self.dettatura = False     # "detta": quello che dici si scrive nella finestra in primo piano, senza IA
+        self.blocco_domande = threading.Lock()   # una conferma o domanda per volta
+        self.meteo = {"t": 0, "testo": ""}
         self.emergenza = Emergenza(self, log)
         self.tts_locale = SintesiLocale(log)
         self.claude = None
@@ -204,9 +219,7 @@ class Jarvis:
     def istantanea(self):
         return {"stato": self.stato, "impostazioni": self.impostazioni_pubbliche(),
                 "tablet": {"altoparlante": self.tablet.collegato(), "microfono": self.tablet.microfono_attivo()},
-                "conferma": self.conferma and {"id": self.conferma["id"], "descrizione": self.conferma["descrizione"],
-                                               "sempre_ok": self.conferma.get("sempre_ok", False),
-                                               "alto": self.conferma.get("alto", False)},
+                "conferma": self.conferma and self.conferma.get("pubblico"),
                 "claude": bool(trova_claude(self.imp.get("claude_exe", ""))),
                 "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo(),
                 "emergenza": {"attiva": self.emergenza.attiva, "motivo": self.emergenza.motivo},
@@ -364,7 +377,7 @@ class Jarvis:
                 silenzio += 1
             if not parlato:
                 frase = frase[-4:]  # 320 ms prima dell'inizio, per non tagliare la prima sillaba
-                if self.stato in ("penso", "lavoro") or self.claude.lavora_in_sottofondo():
+                if self.stato in ("penso", "lavoro") or self.claude.lavora_in_sottofondo() or self.dettatura:
                     inizio_ascolto = ora  # mentre lavora la conversazione non scade: puoi aggiungere quando vuoi
                     continue
                 # dopo una domanda di Jarvis ("Mi conferma?") si aspetta di più la risposta
@@ -455,6 +468,10 @@ class Jarvis:
                 self.evento(utente=testo)
                 if self._comando_locale(testo):
                     continue
+                if _BRIEFING.match(re.sub(r"^(?:ehi |hey )?jarvis\W*", "",
+                                          " ".join(testo.lower().replace("’", "'").split()).strip(" .!?,"))):
+                    log("briefing del mattino")
+                    testo = self.briefing()
                 if testo.lower().strip(" .!") in ("stop", "fermati", "basta", "annulla", "lascia stare"):
                     self.claude.interrompi()
                     self.claude.ferma_lavoro()
@@ -496,6 +513,19 @@ class Jarvis:
         """Richieste gestite sul PC senza mandarle a nessun modello: modalità privata e promemoria. True se gestita."""
         t = " ".join(testo.lower().replace("’", "'").split()).strip(" .!?,")
         t = re.sub(r"^(?:ehi |hey )?jarvis\W*", "", t)
+        if self.dettatura:
+            return self._detta(testo, t)
+        if _DETTATURA_SI.match(t):
+            self.dettatura = True
+            self.conversazione = True
+            log("dettatura iniziata")
+            self.evento(dettatura=True)
+            self.di("Detta pure: scrivo nella finestra davanti. Per finire di' fine dettatura.")
+            self.imposta_stato("ascolto")
+            return True
+        if _ANNULLA.match(t):
+            threading.Thread(target=self.annulla_modifiche, daemon=True).start()
+            return True
         if _PRIVATA_NO.match(t):
             if self.imp.get("privata"):
                 self.cambia({"privata": False})
@@ -523,6 +553,102 @@ class Jarvis:
             self._torna_libero()
             return True
         return False
+
+    def _detta(self, originale, t):
+        """In dettatura: scrive la frase nella finestra in primo piano (mai a un modello)."""
+        if _DETTATURA_NO.match(t):
+            self.dettatura = False
+            log("dettatura finita")
+            self.evento(dettatura=False)
+            self.di("Fine dettatura.")
+            return True
+        if _A_CAPO.match(t):
+            tastiera.premi(tastiera.INVIO)
+        elif _CANCELLA_PAROLA.match(t):
+            tastiera.premi(tastiera.CTRL, tastiera.BACKSPACE)
+        else:
+            tastiera.scrivi(originale.strip() + " ")
+            self.evento(azione="Scritto: " + originale.strip()[:80])
+        self.imposta_stato("ascolto")
+        return True
+
+    def annulla_modifiche(self):
+        cartella = DATI / "annulla"
+        gruppo = annulla.ultimo_gruppo(cartella)
+        if not gruppo:
+            self.di("Non ho modifiche ai file da annullare.")
+            return
+        nomi = list(dict.fromkeys(os.path.basename(v["percorso"]) for v in gruppo))
+        elenco = ", ".join(nomi[:4]) + (f" e altri {len(nomi) - 4}" if len(nomi) > 4 else "")
+        if not self.chiedi_conferma(f"rimettere com'erano {len(nomi)} file: {elenco}"):
+            return
+        rimessi, tolti, falliti = annulla.ripristina(cartella, gruppo)
+        log("annullate le modifiche:", rimessi, tolti, falliti)
+        parti = []
+        if rimessi:
+            parti.append(f"ho rimesso com'erano {', '.join(rimessi[:4])}")
+        if tolti:
+            parti.append(f"ho tolto i file nuovi {', '.join(tolti[:4])} (sono in jarvis-dati, non cancellati)")
+        if falliti:
+            parti.append(f"non sono riuscito con {', '.join(falliti[:4])}")
+        self.di(("; ".join(parti) or "Fatto") + ".")
+
+    def briefing(self):
+        """Il testo da mandare al cervello per il briefing del mattino: i dati li raccoglie il PC."""
+        from datetime import datetime
+        from .promemoria import ora_parlata
+        oggi = datetime.now().date()
+        di_oggi = [f"{ora_parlata(datetime.fromtimestamp(v['quando']))}: {v['testo']}"
+                   for v in self.promemoria.voci if datetime.fromtimestamp(v["quando"]).date() == oggi]
+        righe = [f"Promemoria di oggi: {'; '.join(di_oggi) if di_oggi else 'nessuno'}."]
+        meteo = self.leggi_meteo()
+        if meteo:
+            righe.append(f"Meteo: {meteo}.")
+        try:
+            import shutil
+            libero = shutil.disk_usage(os.environ.get("SystemDrive", "C:") + "\\").free / 2**30
+            righe.append(f"Spazio libero sul disco di sistema: {libero:.0f} GB.")
+        except OSError:
+            pass
+        d = stato_pannello() or {}
+        temp = [f"{n} {(d.get(k) or {}).get('temp'):.0f} °C" for k, n in (("cpu", "processore"), ("gpu", "scheda video"))
+                if (d.get(k) or {}).get("temp")]
+        if temp:
+            righe.append("Temperature: " + ", ".join(temp) + ".")
+        extra = ("" if getattr(self.claude, "locale", False) else
+                 " Se l'esecutore può leggere calendario e posta (connettori collegati), affidagli di controllare gli "
+                 "impegni di oggi e le mail importanti e aggiungili quando arrivano; se non può, non dirlo.")
+        return ("[Briefing del mattino chiesto dall'utente] Dati raccolti dal PC:\n" + "\n".join(righe) +
+                "\nFai un buongiorno di massimo 30 secondi con le cose che contano, senza elencare tutto." + extra)
+
+    def leggi_meteo(self):
+        """Meteo di oggi per la città nelle impostazioni (Open-Meteo, gratis, senza chiave). Mai in privata."""
+        citta = (self.imp.get("citta") or "").strip()
+        if not citta or not self.online_permesso():
+            return ""
+        if time.time() - self.meteo["t"] < 1800 and self.meteo.get("citta") == citta:
+            return self.meteo["testo"]
+        import urllib.parse
+        import urllib.request
+        try:
+            with urllib.request.urlopen("https://geocoding-api.open-meteo.com/v1/search?count=1&language=it&name="
+                                        + urllib.parse.quote(citta), timeout=4) as r:
+                luogo = json.loads(r.read())["results"][0]
+            url = ("https://api.open-meteo.com/v1/forecast?timezone=auto&forecast_days=1"
+                   f"&latitude={luogo['latitude']}&longitude={luogo['longitude']}"
+                   "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code"
+                   "&current=temperature_2m")
+            with urllib.request.urlopen(url, timeout=4) as r:
+                m = json.loads(r.read())
+            g = m["daily"]
+            testo = (f"{citta}: ora {m['current']['temperature_2m']:.0f} gradi, minima {g['temperature_2m_min'][0]:.0f}, "
+                     f"massima {g['temperature_2m_max'][0]:.0f}, pioggia {g['precipitation_probability_max'][0]}%, "
+                     f"{_CIELO.get(g['weather_code'][0] // 10 * 10, 'tempo variabile')}")
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as e:
+            log("meteo non disponibile:", repr(e)[:120])
+            return ""
+        self.meteo = {"t": time.time(), "testo": testo, "citta": citta}
+        return testo
 
     def _torna_libero(self):
         if not self.claude.occupato and not self.claude.lavora_in_sottofondo():
@@ -825,6 +951,41 @@ class Jarvis:
 
     # ------------------------------------------------------------ conferme (dalla guardia)
     def chiedi_conferma(self, descrizione, attesa=45, impronta="", sempre_ok=False, alto=False):
+        # una per volta: due richieste insieme (esecutore e un'altra sessione) si sovrascriverebbero
+        if not self.blocco_domande.acquire(timeout=attesa + 30):
+            log("conferma scartata: un'altra è in corso da troppo", descrizione)
+            return False
+        try:
+            return self._chiedi_conferma(descrizione, attesa, impronta, sempre_ok, alto)
+        finally:
+            self.blocco_domande.release()
+
+    def chiedi_risposta(self, domanda, opzioni=(), attesa=120):
+        """Per le altre sessioni di Claude Code (jarvis_mcp.py): fa una domanda a voce e restituisce la risposta
+        detta (o l'opzione toccata sul tablet o sul Quest). Stringa vuota se non risponde."""
+        if not self.blocco_domande.acquire(timeout=attesa):
+            return ""
+        try:
+            opzioni = [str(o)[:60] for o in list(opzioni)[:4]]
+            c = {"id": secrets.token_hex(4), "descrizione": domanda[:300], "esito": threading.Event(), "ok": False,
+                 "domanda": True, "opzioni": opzioni, "testo": "", "sempre": False, "sempre_ok": False,
+                 "alto": False}
+            c["pubblico"] = {"id": c["id"], "descrizione": c["descrizione"], "domanda": True, "opzioni": opzioni,
+                             "scade": time.time() + attesa}
+            self.conferma = c
+            self.evento(conferma=c["pubblico"])
+            self.uscita.riprendi()
+            self.da_dire.put(domanda + (" Puoi dire: " + ", ".join(opzioni) + "." if opzioni else ""))
+            threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
+            c["esito"].wait(attesa)
+            self.conferma = None
+            self.evento(conferma=None)
+            log("domanda", domanda[:120], "->", c["testo"])
+            return c["testo"]
+        finally:
+            self.blocco_domande.release()
+
+    def _chiedi_conferma(self, descrizione, attesa=45, impronta="", sempre_ok=False, alto=False):
         ricordata = self.permessi.decisione(impronta, sempre_ok)
         if ricordata is not None:
             log("conferma", descrizione, "->", ricordata, "(decisione ricordata)")
@@ -835,9 +996,10 @@ class Jarvis:
         c = {"id": secrets.token_hex(4), "descrizione": descrizione, "esito": threading.Event(), "ok": False,
              "sempre": False, "sempre_ok": bool(sempre_ok and impronta),
              "alto": bool(alto and self.imp.get("conferma_alta", "tocco") == "tocco")}
+        c["pubblico"] = {"id": c["id"], "descrizione": descrizione, "sempre_ok": c["sempre_ok"], "alto": c["alto"],
+                         "scade": time.time() + attesa}
         self.conferma = c
-        self.evento(conferma={"id": c["id"], "descrizione": descrizione, "sempre_ok": c["sempre_ok"],
-                              "alto": c["alto"]})
+        self.evento(conferma=c["pubblico"])
         self.uscita.riprendi()
         # a voce solo cosa (senza il comando: illeggibile), il dettaglio è sul pannello. Il "sì, sempre" si
         # suggerisce una volta per avvio di Jarvis, solo dove vale
@@ -878,6 +1040,15 @@ class Jarvis:
         c = self.conferma
         if not c:
             return
+        if c.get("domanda"):
+            if not testo:      # silenzio: si aspetta ancora (scade con l'attesa della domanda)
+                threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
+                return
+            c["testo"], c["ok"] = testo, True
+            self.imposta_stato("lavoro")
+            self.da_dire.put("Ricevuto.")
+            c["esito"].set()
+            return
         if c.get("alto") and ok:
             self.da_dire.put("Per questa serve il tocco sul tablet.")
             threading.Thread(target=self._ascolta_conferma_dopo_domanda, args=(c,), daemon=True).start()
@@ -901,8 +1072,12 @@ class Jarvis:
         self.da_dire.put(frase)
         c["esito"].set()
 
-    def conferma_dal_pannello(self, id_, ok, sempre=False):
+    def conferma_dal_pannello(self, id_, ok, sempre=False, testo=None):
         c = self.conferma
+        if c and c["id"] == id_ and c.get("domanda"):
+            c["testo"], c["ok"] = str(testo or ("sì" if ok else "no"))[:300], True
+            c["esito"].set()
+            return
         if c and c["id"] == id_:
             c["ok"] = bool(ok)
             c["sempre"] = bool(sempre and (c["sempre_ok"] or not ok))
@@ -1153,6 +1328,8 @@ class Gestore(BaseHTTPRequestHandler):
         u, q = r
         if u.path == "/jarvis/microfono":
             return self.microfono()
+        if u.path == "/jarvis/voce":
+            return self.voce_intera()
         try:
             n = int(self.headers.get("Content-Length") or 0)
             if n > 64 * 1024:
@@ -1168,6 +1345,11 @@ class Gestore(BaseHTTPRequestHandler):
                                                                 sempre_ok=bool(d.get("sempre_ok")),
                                                                 alto=bool(d.get("alto")))})
             if u.path == "/jarvis/interno/promemoria":
+                from datetime import datetime
+                quando = datetime.strptime(str(d.get("quando", "")).strip()[:16], "%Y-%m-%d %H:%M")
+                v = j.promemoria.aggiungi(quando, str(d.get("testo", ""))[:200])
+                return self.manda(200, {"ok": True, "id": v["id"]})
+            if u.path == "/jarvis/promemoria-esterno":
                 from datetime import datetime
                 quando = datetime.strptime(str(d.get("quando", "")).strip()[:16], "%Y-%m-%d %H:%M")
                 v = j.promemoria.aggiungi(quando, str(d.get("testo", ""))[:200])
@@ -1208,6 +1390,19 @@ class Gestore(BaseHTTPRequestHandler):
                     raise ValueError("testo vuoto")
                 attesa = max(3, min(60, int(d.get("attesa", 30))))
                 return self.manda(200, j.chiedi_e_aspetta(testo, attesa))
+            if u.path == "/jarvis/annuncia":
+                testo = str(d.get("testo", "")).strip()[:300]
+                if not testo:
+                    raise ValueError("testo vuoto")
+                log("annuncio da un'altra sessione:", testo)
+                j.di_subito(testo)
+                return self.manda(200, {"ok": True})
+            if u.path == "/jarvis/domanda":
+                domanda = str(d.get("domanda", "")).strip()[:300]
+                if not domanda:
+                    raise ValueError("domanda vuota")
+                attesa = max(10, min(600, int(d.get("attesa", 120))))
+                return self.manda(200, {"risposta": j.chiedi_risposta(domanda, d.get("opzioni") or [], attesa)})
             if u.path == "/jarvis/tocca":
                 j.tocca()
                 return self.manda(200, {"ok": True})
@@ -1220,7 +1415,7 @@ class Gestore(BaseHTTPRequestHandler):
                 j.nuova_conversazione()
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/conferma":
-                j.conferma_dal_pannello(d.get("id"), d.get("ok"), bool(d.get("sempre")))
+                j.conferma_dal_pannello(d.get("id"), d.get("ok"), bool(d.get("sempre")), d.get("testo"))
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/apri-app":
                 uscita = j.claude.apri_nell_app(d.get("id") or None)
@@ -1285,6 +1480,27 @@ class Gestore(BaseHTTPRequestHandler):
         except (ConnectionError, OSError):
             pass
         log("tablet scollegato (altoparlante)")
+
+    def voce_intera(self):
+        """Una frase intera già registrata (PCM 16 kHz, 16 bit, mono): il "tieni premuto e parla" dell'app per Quest
+        3. Si trascrive sul PC come quella del tablet; se c'è una conferma o una domanda in corso, è la risposta."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if not 3200 <= n <= 60 * 32000:
+                return self.manda(400, {"errore": "audio vuoto o più lungo di un minuto"})
+            pcm = np.frombuffer(self.rfile.read(n), dtype=np.int16).copy()
+        except (ValueError, OSError) as e:
+            return self.manda(400, {"errore": str(e)})
+        j = self.j
+        if j.conferma:
+            threading.Thread(target=j._capisci_conferma, args=(pcm,), daemon=True).start()
+        else:
+            j.uscita.riprendi()
+            j.conversazione = True
+            if j.stato not in ("lavoro",):
+                j.imposta_stato("penso")
+            j.richieste.put(("voce", pcm))
+        return self.manda(200, {"ok": True})
 
     def microfono(self):
         """Corpo a pezzi (Transfer-Encoding: chunked) con PCM 16 kHz, finché il tablet lo manda."""
