@@ -1853,7 +1853,10 @@ async function scattaFoto(id) {
   let flusso = null;
   try {
     avviso("📷 Jarvis guarda con la telecamera del visore");
-    flusso = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 960 } } });
+    // la telecamera "davanti" del Quest ("camera 0, facing front") dà solo nero (provato il 2026-11-24): servono
+    // quelle della passthrough, che il browser chiama "facing back" (environment sceglie "camera 2")
+    flusso = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" },
+      width: { ideal: 1280 }, height: { ideal: 960 } } });
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.srcObject = flusso;
     await v.play();

@@ -479,7 +479,9 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     - **Telecamere** ("hey Jarvis, guarda questa scheda madre e dimmi che modello è"): strumento MCP
       `guarda_con_telecamera` (in `visore_mcp.py`) → `POST /jarvis/interno/guarda` → Jarvis chiede **ogni volta** il
       permesso ("usare la telecamera del visore: …", niente "sì, sempre") → foto dal visore (se lo indossi: evento
-      `telecamera`, `getUserMedia` della passthrough, permesso del browser chiesto prima di entrare) o dal tablet
+      `telecamera`, `getUserMedia` con `facingMode: environment`: il Quest elenca "camera 0, facing front", che dà
+      solo nero ed è quella scelta senza indicazioni, e le due della passthrough "facing back"; permesso del browser
+      chiesto prima di entrare) o dal tablet
       (comando una tantum `foto`, `Fotocamera.java` con Camera2, telecamera posteriore, app 1.10.0) →
       `POST /jarvis/telecamera?id=` → ridotta a 1568 px → l'immagine torna a Claude. Senza sì niente foto.
     - **Microfono del tablet spento col visore**: entrando in realtà mista Jarvis XR manda
@@ -496,8 +498,10 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
       finestra e dello schermo (velocità misurate sopra); anteprima sul PC: cinema con la finestra di Claude
       (immagine dritta, pannelli nascosti, sfera accanto alla barra), lancio, cestino per un pannello fisso e
       Riordina, palla di carta lanciata nel cestino; app del tablet 1.10.0 installata, permesso CAMERA concesso.
-      **Non provato**: mani vere sul Quest (puntatore, scaccia, pugno), cinema nel visore, foto vera dal visore e
-      dal tablet (Camera2 sullo SHIELD), velocità della diretta col PC scarico.
+      **Provato dal vero** (23:15): "Ehi Jarvis, qual è il telefono che hai in mano?" detto dal visore → permesso
+      chiesto e dato → foto arrivata dal visore, ma nera (telecamera sbagliata, corretto sopra). Cinema usato dal
+      visore (1192 fotogrammi). **Non provato**: mani vere sul Quest (puntatore, scaccia, pugno), foto dal visore
+      dopo la correzione, foto dal tablet (Camera2 sullo SHIELD).
 - **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
   "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
   Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche
