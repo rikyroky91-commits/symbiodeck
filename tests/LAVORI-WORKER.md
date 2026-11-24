@@ -14,9 +14,9 @@ Regole per tutti i brief:
 |---|---|---|---|---|
 | W1 | fatto (worker MoE, 14 min, rivisto) | Test di `Esecutore.conta_domande` e `continuata_nell_app` con un registro `.jsonl` finto | `tests/test_jarvis_sessioni.py` | `python tests/test_jarvis_sessioni.py` |
 | W2 | fatto (worker MoE, 5,5 min, rivisto) | Test di `audio.Blocchi` (pezzi di lunghezza qualsiasi → blocchi da 1280 campioni) | `tests/test_jarvis_audio.py` | `python tests/test_jarvis_audio.py` |
-| W3 | da fare | Test di `cervello.Cervello` con esecutore e voce finti (affida, esito alla voce, stato_lavoro) | `tests/test_jarvis_cervello.py` | `python tests/test_jarvis_cervello.py` |
-| W4 | da fare | Test di `guardia.main` come processo (JSON su stdin, `JARVIS_DELEGA`, uscita deny) | `tests/test_jarvis_guardia_processo.py` | `python tests/test_jarvis_guardia_processo.py` |
-| W5 | da fare | `tests/tutti.py`: esegue tutti i `tests/test_*.py` e riassume ok/falliti | `tests/tutti.py` | `python tests/tutti.py` |
+| W3 | fatto (worker, rivisto) | Test di `cervello.Cervello` con esecutore e voce finti (affida, esito alla voce, stato_lavoro) | `tests/test_jarvis_cervello.py` | `python tests/test_jarvis_cervello.py` |
+| W4 | fatto (worker MoE, 9 min, rivisto) | Test di `guardia.main` come processo (JSON su stdin, `JARVIS_DELEGA`, uscita deny) | `tests/test_jarvis_guardia_processo.py` | `python tests/test_jarvis_guardia_processo.py` |
+| W5 | fatto (worker MoE, 1 min, rivisto) | `tests/tutti.py`: esegue tutti i `tests/test_*.py` e riassume ok/falliti | `tests/tutti.py` | `python tests/tutti.py` |
 
 ## Brief
 

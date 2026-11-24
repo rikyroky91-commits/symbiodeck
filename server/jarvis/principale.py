@@ -59,7 +59,7 @@ PREDEFINITE = {
     "stt": "auto",
     "stt_cpu": "medium",           # modello del processore (gioco, modello locale): medium preciso, small veloce
     "accendi_schermo": False,
-    "aec_pc": False,               # cancellazione dell'eco sul PC (WebRTC): in prova, si decide con le misure
+    "aec_pc": True,                # cancellazione dell'eco sul PC (eco.py): toglie la sua voce dal microfono
     "interrompibile": True,        # mentre parla continua ad ascoltare: se gli parli sopra si ferma
     "eco": True,                   # cancellazione dell'eco sul tablet (modalità "chiamata" di Android)
     "emergenza": "auto",           # auto (senza Internet o fuori dai limiti) | sempre | mai
@@ -182,7 +182,8 @@ class Jarvis:
                 "claude": bool(trova_claude(self.imp.get("claude_exe", ""))),
                 "azione": self.ultima_azione, "sottofondo": self.claude.lavora_in_sottofondo(),
                 "emergenza": {"attiva": self.emergenza.attiva, "motivo": self.emergenza.motivo},
-                "gioco": self.in_gioco}
+                "gioco": self.in_gioco,
+                "eco": self.uscita.aec.stato() if self.uscita.aec is not None else None}
 
     def impostazioni_pubbliche(self):
         imp = dict(self.imp)
@@ -224,7 +225,7 @@ class Jarvis:
         if voluta and self.uscita.aec is None:
             try:
                 from .eco import CancellaEco
-                self.uscita.aec = CancellaEco(log)
+                self.uscita.aec = CancellaEco(log, file_ritardo=DATI / "eco-ritardo.json")
                 log("cancellazione dell'eco sul PC: attiva")
             except Exception as e:
                 log("cancellazione dell'eco sul PC non disponibile:", repr(e))
@@ -268,7 +269,7 @@ class Jarvis:
             return
         if self.uscita.aec is not None:
             try:
-                blocco = self.uscita.aec.pulisci(blocco, time.time())
+                blocco = self.uscita.aec.pulisci(blocco, time.monotonic())
             except Exception as e:
                 log("cancellazione dell'eco non riuscita, la spengo:", repr(e))
                 self.uscita.aec = None
@@ -294,6 +295,9 @@ class Jarvis:
         frase, parlato, silenzio, inizio_ascolto, ultimo_livello = [], False, 0, 0.0, 0.0
         dopo_attivazione = 0.0
         sopra_voce, interruzione = [], Interruzione()
+        # con la cancellazione dell'eco sul PC: un'Interruzione a parte che impara solo dal segnale già pulito e
+        # solo a cancellazione agganciata (se imparasse mentre il filtro converge, crederebbe l'eco molto più forte)
+        interruzione_pulita, epoca_eco, aec_prima = Interruzione(), None, None
         while True:
             try:
                 blocco = self.blocchi.get(timeout=1)
@@ -308,9 +312,15 @@ class Jarvis:
 
             # parola chiave (anche mentre parla o lavora: "Ehi Jarvis" lo interrompe)
             punteggio = self.parola.predict(blocco).get("hey_jarvis", 0)
-            # mentre parla la parola chiave è più severa, se la sua voce rientra dal microfono (senza cancellazione)
-            soglia = self.imp["sensibilita"] + (0.25 if self.uscita.parla and self.imp["microfono"] ==
-                                                self.imp["casse"] and not self.tablet.aec else 0)
+            # mentre parla la parola chiave è più severa, se la sua voce rientra dal microfono: molto senza
+            # cancellazione, poco con quella del PC agganciata (simulato: sulla sola eco pulita resta sotto 0,05)
+            aec = self.uscita.aec
+            if aec is not aec_prima:
+                aec_prima, epoca_eco, interruzione_pulita = aec, None, Interruzione()
+            pulita = aec is not None and aec.affidabile()
+            soglia = self.imp["sensibilita"]
+            if self.uscita.parla and not self.tablet.aec:
+                soglia += 0.1 if pulita else (0.25 if self.imp["microfono"] == self.imp["casse"] else 0)
             if punteggio >= soglia and ora - dopo_attivazione > 1.5 and self.stato != "spento":
                 dopo_attivazione = ora
                 self.parola.reset()
@@ -325,22 +335,38 @@ class Jarvis:
             if self.stato == "parlo" and self.imp.get("interrompibile", True):
                 prob = float(vad.predict(blocco, frame_size=640))
                 sopra_voce.append(blocco)
-                del sopra_voce[:-10]                    # 800 ms: l'inizio della frase non si perde
-                if interruzione.passo(prob, rms, self.uscita.livello_uscita(), self._fattore_eco()):
-                    log("interrotto mentre parlava", f"(voce {rms:.3f}, eco {interruzione.eco:.3f})")
+                # l'inizio della frase non si perde: 800 ms; 1,6 s se l'audio è già pulito dall'eco (con eco molto
+                # forte l'interruzione scatta più tardi: provato al 60%, la frase perdeva "Aspetta, fermati")
+                del sopra_voce[:-(20 if aec is not None else 10)]
+                if aec is not None:
+                    if aec.epoca != epoca_eco:          # il filtro è ripartito: si reimpara
+                        epoca_eco, interruzione_pulita = aec.epoca, Interruzione()
+                    # a cancellazione non agganciata niente interruzione a voce (resta "Hey Jarvis")
+                    scatta = pulita and interruzione_pulita.passo(prob, rms, self.uscita.livello_uscita(),
+                                                                  self._fattore_eco())
+                    k = interruzione_pulita.eco
+                else:
+                    scatta = interruzione.passo(prob, rms, self.uscita.livello_uscita(), self._fattore_eco())
+                    k = interruzione.eco
+                if scatta:
+                    log("interrotto mentre parlava", f"(voce {rms:.3f}, eco {k:.3f})")
                     self._interrompi_voce()
                     frase, parlato, silenzio, inizio_ascolto = list(sopra_voce), True, 0, ora
                     sopra_voce = []
                 continue
-            if interruzione.blocchi > 10:   # ha appena finito di parlare: quanto della sua voce è rientrato
-                log(f"eco della voce: {interruzione.eco:.3f} (microfono/uscita; con cancellazione efficace < 0,15)")
+            if interruzione.blocchi > 10 or interruzione_pulita.blocchi > 10:   # ha appena finito di parlare
+                if aec is not None:
+                    log("eco della voce dopo la cancellazione:", aec.stato(), f"(rimasta {interruzione_pulita.eco:.3f})")
+                else:
+                    log(f"eco della voce: {interruzione.eco:.3f} (microfono/uscita; con cancellazione efficace < 0,15)")
             interruzione.azzera()
+            interruzione_pulita.azzera()
             ascolta = ("ascolto", "seguito", "conferma") + (("penso", "lavoro") if self.conversazione else ())
             if self.stato not in ascolta:
                 self.utente_parla = False
                 continue
-            if self.uscita.parla:
-                continue  # suoni brevi (attivazione, conferma): non si ascoltano
+            if self.uscita.parla or self._coda_eco(aec):
+                continue  # suoni brevi (attivazione, conferma) e la loro eco: non si ascoltano
             if not inizio_ascolto:
                 inizio_ascolto = ora
             voce = vad.predict(blocco, frame_size=640) > 0.5
@@ -381,6 +407,15 @@ class Jarvis:
                     self._suona("capito")
                     self.richieste.put(("voce", pcm))
 
+    def _coda_eco(self, aec):
+        """Appena finito un suono o una frase, la sua eco arriva ancora al microfono per il ritardo casse ->
+        microfono più il riverbero. Senza cancellazione agganciata quella coda non si ascolta: provato il
+        2026-11-24, l'eco del suono di attivazione è diventata un "Sì!" (durante una conferma avrebbe approvato)."""
+        if aec is not None and aec.affidabile():
+            return False
+        ritardo = aec.ritardo if aec is not None else 0.6
+        return time.monotonic() < self.uscita.fine_audio + ritardo + 0.3
+
     def _fattore_eco(self):
         """Quanto più forte dell'eco deve essere una voce per interrompere. Con la cancellazione dell'eco del
         tablet (microfono e casse sullo stesso tablet) basta meno."""
@@ -388,7 +423,9 @@ class Jarvis:
         # cancellazione del tablet; con la cancellazione si ferma 0,4-0,8 s dopo che la persona parla
         return 1.6
 
-    def _interrompi_voce(self):
+    def _zittisci(self):
+        """Smette di parlare e butta tutto il resto della risposta: le frasi in coda, quelle già sintetizzate
+        (gen_voce) e quello che Claude sta ancora scrivendo."""
         self.gen_voce += 1
         self.uscita.taci()
         self._svuota(self.da_dire)
@@ -398,6 +435,9 @@ class Jarvis:
             self.scarta = True
             self.claude.interrompi()
         self.uscita.riprendi()
+
+    def _interrompi_voce(self):
+        self._zittisci()
         self.conversazione = True
         self.imposta_stato("ascolto")
         self.evento(interrotto=True)
@@ -409,8 +449,9 @@ class Jarvis:
         if self.conferma:
             return
         if self.stato == "parlo" or self.claude.occupato:
-            self.uscita.taci()   # interrotto: smette di parlare e ascolta
-            self._svuota(self.da_dire)
+            # "Hey Jarvis" mentre parla o prepara la risposta: si zittisce del tutto e ascolta (prima la frase già
+            # sintetizzata e il resto della risposta ripartivano dopo il suono, sopra la richiesta nuova)
+            self._zittisci()
         self.uscita.riprendi()
         self.conversazione = True
         self.solo_remoto = False

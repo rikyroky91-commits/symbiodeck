@@ -3,6 +3,7 @@ voci neurali italiane di Microsoft; serve Internet)."""
 import asyncio
 import os
 import sys
+import re
 import threading
 import time
 from pathlib import Path
@@ -139,13 +140,30 @@ class Trascrittore:
         audio = pcm16k.astype(np.float32) / 32768
         segmenti, _info = self.modello.transcribe(
             audio, language="it", beam_size=1 if self.dispositivo == "cpu" else 5, vad_filter=False,
-            condition_on_previous_text=False, initial_prompt="Jarvis, apri Spotify. Sì, confermo.")
-        testo = " ".join(s.text.strip() for s in segmenti if s.no_speech_prob < 0.8).strip()
-        # frasi che Whisper "allucina" sul silenzio
-        if testo.lower().strip(" .!") in ("", "grazie", "grazie a tutti", "sottotitoli a cura di qtss",
-                                          "sottotitoli creati dalla comunità amara.org", "amen"):
+            condition_on_previous_text=False, initial_prompt=SUGGERIMENTO)
+        testo = " ".join(s.text.strip() for s in segmenti if not _vuoto(s)).strip()
+        pulito = testo.lower().strip(" .,!?")
+        if ALLUCINAZIONI.match(pulito) or (len(pulito) > 3 and pulito in SUGGERIMENTO.lower()):
             return ""
         return testo
+
+
+# suggerimento per Whisper (lingua, nome "Jarvis"). Sul rumore Whisper a volte lo ripete: non deve mai essere un
+# comando né una risposta (provato il 2026-11-24: con "Sì, confermo." nel suggerimento, da un residuo d'eco è uscito
+# "Sì, confermo.", che durante una richiesta di conferma avrebbe approvato un'azione irreversibile)
+SUGGERIMENTO = "Conversazione in italiano con Jarvis, l'assistente vocale del computer."
+
+
+# frasi che Whisper "allucina" sul silenzio o sul fruscio (imparate dai sottotitoli dei video): provato il
+# 2026-11-24, un residuo d'eco è diventato "Grazie per la visione."
+ALLUCINAZIONI = re.compile(
+    r"^(|grazie( mille| a tutti)?( per (la |l')?(visione|attenzione|ascolto))?|buona visione|ciao a tutti"
+    r"|alla prossima|iscriviti( al canale)?.*|sottotitoli.*|.*amara\.org.*|amen|\.+)$")
+
+
+def _vuoto(segmento):
+    """Segmento senza parlato: Whisper stesso lo dice probabile silenzio, o è molto incerto e probabile silenzio."""
+    return segmento.no_speech_prob >= 0.8 or (segmento.no_speech_prob >= 0.5 and segmento.avg_logprob < -1.0)
 
 
 class Sintesi:
