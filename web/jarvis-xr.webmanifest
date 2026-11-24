@@ -1,0 +1,16 @@
+{
+  "id": "/xr",
+  "name": "Jarvis XR",
+  "short_name": "Jarvis XR",
+  "description": "Il pannello del PC e Jarvis come ologrammi nella stanza (SymbioDeck)",
+  "lang": "it",
+  "start_url": "/xr",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#02060b",
+  "theme_color": "#02060b",
+  "icons": [
+    { "src": "/icone/jarvis-xr-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icone/jarvis-xr-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

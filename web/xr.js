@@ -1532,13 +1532,59 @@ function caricaConfig() { apiP("/api/config").then((c) => { S.config = c; sporca
 // ------------------------------------------------------------------ avvio e ciclo
 const orologio = new THREE.Clock();
 let ultimoSecondo = 0, primoFotogramma = true;
+// Dove metterti attorno sfera e pannelli. Al primo fotogramma il Quest può non tracciare ancora la testa (posa
+// "emulata" o ferma nell'origine della stanza): la disposizione aspetta POSA_BUONA fotogrammi tracciati di fila e
+// intanto la scena resta nascosta. Il "ricentra" del Quest (tasto Meta tenuto) e una scena rimasta lontana (oltre
+// LONTANO metri per 2 s) la riportano attorno a te, tenendo la disposizione.
+const POSA_BUONA = 12, LONTANO = 2.5;
+let posaBuona = 0, lontanoDa = 0, daRicentrare = false;
+// stato leggibile dagli strumenti di sviluppo del Quest (adb): dov'è la testa, dov'è la scena, se il visore traccia
+window.__xrStato = {};
+function posaTracciata() {
+  const frame = renderer.xr.getFrame(), spazio = renderer.xr.getReferenceSpace();
+  const posa = frame && spazio && frame.getViewerPose(spazio);
+  const p = posa && posa.transform.position;
+  Object.assign(window.__xrStato, { posa: p ? [p.x, p.y, p.z].map((v) => +v.toFixed(2)) : null,
+    emulata: posa ? posa.emulatedPosition : null });
+  return !!posa && !posa.emulatedPosition;
+}
+function ricentra(motivo) {
+  centraAncora();
+  sfera.gruppo.position.set(0, altezzaOcchi + 0.02, -0.74);
+  const t = posizioneTesta();
+  console.info("[xr] ricentrato:", motivo, "testa", t.toArray().map((v) => v.toFixed(2)).join(" "));
+}
+function seguiTesta(dt) {
+  if (primoFotogramma) {
+    if (!posaTracciata()) { posaBuona = 0; ancora.visible = false; return; }
+    if (++posaBuona < POSA_BUONA) { ancora.visible = false; return; }
+    primoFotogramma = false;
+    disposizioneIniziale(false);
+    ancora.visible = true;
+    const t = posizioneTesta();
+    console.info("[xr] disposti attorno alla testa", t.toArray().map((v) => v.toFixed(2)).join(" "),
+      "spazio", renderer.xr.getReferenceSpace() && "local-floor");
+    return;
+  }
+  posaTracciata();
+  Object.assign(window.__xrStato, { testa: posizioneTesta().toArray().map((v) => +v.toFixed(2)),
+    ancora: ancora.position.toArray().map((v) => +v.toFixed(2)), disposti: !primoFotogramma });
+  if (daRicentrare) { daRicentrare = false; ricentra("ricentra del visore"); avviso("Pannelli riportati attorno a te"); return; }
+  const t = posizioneTesta();
+  const lontananza = Math.hypot(t.x - ancora.position.x, t.z - ancora.position.z);
+  lontanoDa = lontananza > LONTANO ? lontanoDa + dt : 0;
+  if (lontanoDa > 2) {
+    lontanoDa = 0;
+    ricentra(`lontani ${lontananza.toFixed(1)} m`);
+    avviso("Pannelli riportati da te");
+  }
+}
 renderer.setAnimationLoop(() => {
   const dt = Math.min(0.05, orologio.getDelta()), t = orologio.elapsedTime;
   if (!renderer.xr.isPresenting) {
     camera.rotation.set(pitch, yaw, 0, "YXZ");
-  } else if (primoFotogramma) {
-    primoFotogramma = false;
-    disposizioneIniziale(false);
+  } else {
+    seguiTesta(dt);
   }
   const testa = posizioneTesta();
   aggiornaMani();
@@ -1620,15 +1666,38 @@ async function avvia() {
     const sessione = await navigator.xr.requestSession(ar ? "immersive-ar" : "immersive-vr", {
       requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "bounded-floor"] });
     scena.background = null; griglia.visible = false;
-    primoFotogramma = true;
+    primoFotogramma = true; posaBuona = 0; lontanoDa = 0; ancora.visible = false;
     await renderer.xr.setSession(sessione);
+    // "ricentra" del Quest: l'origine dello spazio si sposta su di te, la scena va rimessa attorno a te
+    const spazio = renderer.xr.getReferenceSpace();
+    if (spazio && spazio.addEventListener) spazio.addEventListener("reset", () => { daRicentrare = true; });
     document.getElementById("avvio").classList.add("nascosto");
     sessione.addEventListener("end", () => {
       scena.background = sfondoAnteprima; griglia.visible = true;
       document.getElementById("avvio").classList.remove("nascosto");
       ancora.position.set(0, 0, 0); ancora.rotation.set(0, 0, 0); altezzaOcchi = 1.6; disposizioneIniziale(false);
+      ancora.visible = true;
     });
   };
 }
 avvia();
+// installabile come app dove il browser lo permette (Chrome sul PC; il Browser del Quest no: lì c'è l'APK di
+// android/quest/): il pulsante compare solo se il browser lo offre e apre la sua finestra d'installazione
+let richiestaInstalla = null;
+const bottoneInstalla = document.getElementById("installa");
+addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault();
+  richiestaInstalla = e;
+  console.info("[xr] installabile come app");
+  if (!matchMedia("(display-mode: standalone)").matches) bottoneInstalla.hidden = false;
+});
+bottoneInstalla.onclick = async () => {
+  if (!richiestaInstalla) return;
+  richiestaInstalla.prompt();
+  const { outcome } = await richiestaInstalla.userChoice;
+  console.info("[xr] installazione:", outcome);
+  richiestaInstalla = null;
+  bottoneInstalla.hidden = true;
+};
+addEventListener("appinstalled", () => { bottoneInstalla.hidden = true; console.info("[xr] installata"); });
 if (q.get("prova") === "1") window.__xr = { mani, pannelli, THREE, sfera, S, ancora };   // solo per le prove automatiche

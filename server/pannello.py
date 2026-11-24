@@ -1238,7 +1238,8 @@ def app_store():
 
 TIPI = {".html": "text/html; charset=utf-8", ".js": "application/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8", ".png": "image/png", ".svg": "image/svg+xml",
-        ".woff2": "font/woff2", ".json": "application/json", ".jpg": "image/jpeg"}
+        ".woff2": "font/woff2", ".json": "application/json", ".jpg": "image/jpeg",
+        ".webmanifest": "application/manifest+json"}
 
 
 TAILSCALE = ipaddress.ip_network("100.64.0.0/10")   # rete privata di Tailscale (iPhone e Watch da fuori casa)

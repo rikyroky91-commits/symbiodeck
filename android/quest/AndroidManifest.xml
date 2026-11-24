@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Jarvis XR sul Quest: un'icona nella Libreria che apre la pagina di Jarvis XR del PC nel Browser del Quest -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="it.rikyr.jarvisxr">
+    <application android:label="Jarvis XR" android:icon="@mipmap/icona" android:allowBackup="false">
+        <activity android:name=".Apri" android:exported="true" android:theme="@android:style/Theme.NoDisplay">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

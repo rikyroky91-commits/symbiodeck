@@ -436,6 +436,23 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     abbinamento col codice, rimando da http a https);
     **non provato** che il Browser del Quest, dopo "Procedi", tratti la pagina come sicura per la realtà mista
     (secondo la documentazione di NVIDIA CloudXR succede).
+  - **Sul Quest 3 vero** (2026-11-24 sera): dopo "Procedi" la pagina entra in realtà mista. Prima sfera e pannelli
+    comparivano lontanissimi, attorno all'origine della stanza (il centro dei confini), e il "ricentra" del Quest non
+    li spostava: la disposizione si faceva al primo fotogramma, quando il visore può non tracciare ancora la testa, e
+    l'evento `reset` dello spazio non era ascoltato. Ora (`seguiTesta` in `xr.js`): la scena resta nascosta finché il
+    visore non dà 12 pose tracciate di fila (`emulatedPosition` falso), poi si dispone attorno alla testa; il ricentra
+    (tasto Meta tenuto, e il Quest ne manda uno da solo all'ingresso) la rimette attorno a te tenendo la disposizione;
+    se resti a più di 2,5 m dal centro per 2 s la scena ti raggiunge. **Provato sul Quest** con gli strumenti di
+    sviluppo via adb (`adb forward tcp:9333 localabstract:chrome_devtools_remote`, poi `window.__xrStato`: posa, testa,
+    centro della scena): disposti attorno alla testa all'ingresso, testa sempre entro 40 cm dal centro per 2 minuti,
+    utente: "attorno a me". Non provato: il ricentra fatto a mano e la scena che raggiunge chi si allontana.
+  - **Icona nella Libreria del Quest**: il Browser del Quest non installa le pagine come app (il manifest
+    `web/jarvis-xr.webmanifest` c'è e Chrome lo accetta, ma `beforeinstallprompt` non arriva; il service worker è
+    rifiutato col certificato fatto in casa, quindi non c'è). Al suo posto `android/quest/`: un APK minuscolo
+    (`it.rikyr.jarvisxr`, stessa firma dell'app del tablet) che apre `https://<IP del PC>/` nel Browser del Quest.
+    `python android/quest/costruisci_quest.py --installa` (Quest in adb; l'IP finisce nell'APK: se cambia, si
+    ricostruisce). Nel visore: Libreria > Fonti sconosciute > Jarvis XR, da fissare nella barra. **Provato**:
+    installato e lanciato via adb, il Browser ha aperto Jarvis XR.
 - **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
   "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
   Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche

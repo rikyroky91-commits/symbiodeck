@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <meta name="theme-color" content="#02060b">
+<link rel="manifest" href="/jarvis-xr.webmanifest">
+<link rel="icon" href="/icone/jarvis-xr-192.png">
 <title>Jarvis XR</title>
 <style>
   html, body { margin: 0; height: 100%; background: #02060b; color: #dff6ff; overflow: hidden;
@@ -19,6 +21,9 @@
   #nota { margin-top: 10px; font: 12px Consolas, "Roboto Mono", monospace; color: rgba(223, 246, 255, .6);
     max-width: 460px; line-height: 1.5; margin-left: auto; }
   #nota b { color: #8ff0ff; font-weight: 600; }
+  #installa { margin-top: 14px; font: 600 13px "Segoe UI", Roboto, sans-serif; letter-spacing: 2px; color: #8ff0ff;
+    background: transparent; border: 1px solid rgba(57, 213, 255, .6); border-radius: 30px; padding: 10px 22px;
+    cursor: pointer; }
   #logo { position: fixed; left: 24px; top: 20px; font: 600 18px Consolas, monospace; letter-spacing: 8px; color: #39d5ff;
     text-shadow: 0 0 14px rgba(57, 213, 255, .7); z-index: 2; pointer-events: none; }
   #logo small { display: block; font-size: 10px; letter-spacing: 4px; color: rgba(143, 240, 255, .55); margin-top: 4px; }
@@ -40,6 +45,7 @@
 <div id="avvio">
   <button id="entra" disabled>CONTROLLO…</button>
   <div id="nota"></div>
+  <button id="installa" hidden>📲 INSTALLA NELLA HOME</button>
 </div>
 <script type="module" src="xr.js"></script>
 </body>
