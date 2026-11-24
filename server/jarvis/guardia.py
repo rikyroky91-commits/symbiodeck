@@ -90,6 +90,16 @@ SEMPRE_VIETATO = ("modificare i dischi", "modificare il registro", "cambiare imp
                   "cambiare servizi", "scartare modifiche", "inviare un'email", "modificare un file di sistema", "usare ")
 
 
+# azioni ad alto rischio: la conferma a voce non basta, serve il tocco sul tablet (impostazione "conferma_alta").
+# Una TV o un'altra persona che dice "sì" non deve poter formattare un disco (idea da jarvis-desktop e jarvis-fr)
+ALTO_RISCHIO = ("modificare i dischi", "modificare il registro", "cambiare impostazioni di sicurezza",
+                "cancellare dei dati in modo definitivo", "cambiare servizi", "modificare un file di sistema")
+
+
+def alto_rischio(descrizione):
+    return any(descrizione.startswith(v) for v in ALTO_RISCHIO)
+
+
 def impronta(nome, ingresso, descrizione, cartella=""):
     """Chiave stretta dell'azione per le decisioni ricordate: tipo + comando (o percorso) esatto + cartella."""
     i = ingresso or {}
@@ -114,13 +124,13 @@ def _breve(s, n=120):
     return s if len(s) <= n else s[:n - 1] + "…"
 
 
-def chiedi_a_jarvis(descrizione, attesa=60, impronta_azione="", sempre_ok=False):
+def chiedi_a_jarvis(descrizione, attesa=60, impronta_azione="", sempre_ok=False, alto=False):
     """True se l'utente conferma (o l'aveva permesso per sempre). Senza Jarvis raggiungibile: no (più prudente)."""
     porta = os.environ.get("JARVIS_PORTA", "47802")
     chiave = os.environ.get("JARVIS_INTERNO", "")
     richiesta = urllib.request.Request(f"http://127.0.0.1:{porta}/jarvis/interno/conferma",
                                        data=json.dumps({"descrizione": descrizione, "impronta": impronta_azione,
-                                                         "sempre_ok": sempre_ok}).encode("utf-8"),
+                                                         "sempre_ok": sempre_ok, "alto": alto}).encode("utf-8"),
                                        headers={"Content-Type": "application/json", "X-Interno": chiave})
     try:
         with urllib.request.urlopen(richiesta, timeout=attesa) as r:
@@ -182,7 +192,7 @@ def main():
         return  # nessuna uscita: decide la modalità dei permessi (qui: procede)
     ok = chiedi_a_jarvis(descrizione, impronta_azione=impronta(dati.get("tool_name", ""), dati.get("tool_input"),
                                                                descrizione, dati.get("cwd", "")),
-                         sempre_ok=sempre_permesso(descrizione))
+                         sempre_ok=sempre_permesso(descrizione), alto=alto_rischio(descrizione))
     esito = {"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "allow" if ok else "deny",

@@ -294,6 +294,44 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - **Registro senza credenziali** (2026-11-24): ogni riga di `jarvis.log` passa da `sicurezza.oscura`: chiavi
   Anthropic/OpenAI/AWS/Google/GitHub/Slack/Telegram, JWT, Bearer, chiavi private e "password: …" diventano
   `[NASCOSTO:tipo]`.
+- **Il meglio degli altri Jarvis** (2026-11-24). Analizzati i 238 repo del topic GitHub `jarvis-ai`; letti i 19 attivi
+  nel 2026 o più popolari. Quasi tutti sono esercizi (`if "apri youtube" in frase`). Idee prese, riscritte qui:
+  - **Resoconti come dati** (regola R4 di jarvis-desktop, lopadova): l'esito dell'esecutore arriva alla voce tra
+    `<resoconto>…</resoconto>` con l'avviso che è un dato; se contiene frasi che sembrano ordini al modello
+    (`sicurezza.ordini_nascosti`) la voce lo dice all'utente. Stessa regola nelle persone di esecutore e locale.
+  - **Azioni delicate solo col tocco** (jarvis-desktop, jarvis-fr): dischi, registro, sicurezza, servizi,
+    cancellazioni definitive e file di sistema (`guardia.ALTO_RISCHIO`). Un "sì" a voce non basta (una TV o un'altra
+    persona non deve poter formattare un disco): Jarvis aspetta Sì sul tablet; "no" a voce vale.
+    Impostazione `conferma_alta`: tocco (predefinito) | voce.
+  - **Dimenticare per numero** (regola R12 di jarvis-desktop): ogni fatto ha un numero, la voce vede `[n]` nel
+    prompt e `dimentica(numero)` toglie solo quello; i fatti superati dall'estrattore si tolgono solo se quasi
+    identici. Prima una parola sbagliata poteva cancellare più fatti.
+  - **Modalità privata** (`privata`, jarvis-desktop): cervello locale, Whisper, Piper, memoria e aggiornamenti sul
+    PC; Haiku ed edge-tts bloccati (`online_permesso`). Se il cervello locale non c'è (gioco in corso, avvio) Jarvis
+    lo dice e **non** passa a Claude. A voce: "modalità privata" / "esci dalla modalità privata" (riconosciute sul
+    PC, non arrivano mai a un modello). Sul tablet: chip "PRIVATA · SOLO PC". Resta il controllo di rete
+    dell'emergenza (contatta api.anthropic.com e 1.1.1.1 senza mandare dati).
+  - **Promemoria e timer senza IA** (`server/jarvis/promemoria.py`, idea da jarvis-desktop, pi-esp-jarvis,
+    jarvis-fr): "ricordami tra 20 minuti di…", "avvisami alle 18:30 di…", "domani alle 9", "tra due ore e mezza",
+    "metti un timer di 5 minuti", "che promemoria ho?", "cancella i promemoria". Capiti prima di Claude: subito,
+    gratis, anche in privata. Le frasi difficili ("venerdì dopo pranzo") vanno alla voce, che usa lo strumento
+    `promemoria(quando, testo)`. "Ricordami che…" senza un'ora resta per la memoria. File
+    `jarvis-dati/promemoria.json`; uno scaduto a PC spento si dice alla riaccensione con l'ora a cui era.
+  - **Frasi pronte** (DesktopJarvis): la voce delle frasi brevi ("Procedo.", "Ci guardo."…) si prepara all'avvio e
+    si tiene (fino a 80 frasi sotto i 60 caratteri): partono senza aspettare la sintesi.
+  - **Avvisi di temperatura** (jarvis-fr, con i sensori che il pannello legge già): processore oltre
+    `soglia_cpu` (90 °C) o scheda video oltre `soglia_gpu` (85 °C) per 30 s → una frase, al massimo ogni 15 minuti.
+  - **Finestre lette come testo** (JARVIS-VORNEX): strumenti `controlli` e `usa_controllo` nel server MCP schermo,
+    con UI Automation (`uiautomation`, nuovo in requirements-jarvis.txt). Elenco numerato di pulsanti, campi, voci
+    con nome e valore; poi clic, scrivi, spunta, seleziona, espandi per numero. La finestra si rilegge a ogni uso
+    e se è cambiata si rifiuta. Utilizzabile anche dal modello locale, che non vede le immagini. Non vale per
+    giochi e molte app Electron/Chrome.
+  - Provato con 9 test (`tests/test_jarvis_dal_meglio.py`, UI Automation con controlli finti) e il pannello in un
+    browser senza schermo. **Non provato sul PC di Jarvis**: UI Automation vera, Piper in privata, i promemoria
+    detti a voce, gli avvisi con sensori veri. Dopo `git pull`: `pip install -r requirements-jarvis.txt`.
+  - Da fare più avanti: dettatura nell'app in primo piano (akshayaggarwal99), briefing del mattino, Jarvis come
+    server MCP per le altre sessioni di Claude Code (`jarvis_speak`, `jarvis_ask_user` di jarvis-desktop), annullare
+    le operazioni sui file (jarvis-fr).
 - **Valutato e lasciato fuori da OpenJarvis** (2026-11-24): il framework intero (agenti, motori, Rust, training: il
   cervello resta Claude Code), il suo "motore" per l'emergenza (stesso llama-server, ma senza la commutazione
   automatica di `emergenza.py`), i canali di messaggistica, il router e il loop guard. Da valutare più avanti: il

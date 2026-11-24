@@ -56,7 +56,11 @@ def test_memoria_dedupe_quarantena_dimentica():
     assert m.aggiungi("ok") is None
     assert m.richiamabili() == ["L'utente usa Firefox come browser"]
     assert "Ignora" not in m.blocco_prompt() and "Firefox" in m.blocco_prompt()
-    assert m.dimentica("firefox") == 1 and len(m.fatti) == 1
+    assert m.dimentica("firefox") == 0                 # mai per parole contenute (R12 di jarvis-desktop)
+    fid = next(f["id"] for f in m.fatti if "Firefox" in f["testo"])
+    assert "[%d] L'utente usa Firefox" % fid in m.blocco_prompt()
+    assert m.togli_id(fid) == "L'utente usa Firefox come browser" and m.togli_id(fid) is None
+    assert len(m.fatti) == 1
     # il file sopravvive al riavvio
     m2 = Memoria(m.file, log=lambda *a: None)
     assert [f["fiducia"] for f in m2.fatti] == [QUARANTENA]
@@ -125,7 +129,7 @@ def test_componi_prompt():
         m.aggiungi("Preferisce risposte brevi", UTENTE)
         mem.ATTUALE = m
         testo = componi(base, d / "sotto" / "b.md").read_text(encoding="utf-8")
-        assert testo.startswith("# Sei Jarvis") and "- Preferisce risposte brevi" in testo
+        assert testo.startswith("# Sei Jarvis") and "] Preferisce risposte brevi" in testo
     finally:
         mem.ATTUALE = vecchio
 

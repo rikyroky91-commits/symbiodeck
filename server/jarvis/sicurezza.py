@@ -69,6 +69,17 @@ def sospetto(testo, rigido=True):
     return None
 
 
+def ordini_nascosti(testo):
+    """Come sospetto, ma solo i tentativi espliciti di comandare il modello (scavalcare le istruzioni, cambiare
+    ruolo, togliere le conferme): per i resoconti dell'esecutore, che parlano normalmente di comandi e indirizzi."""
+    for regola, motivo in _ISTRUZIONI:
+        if motivo in ("ordine permanente", "comando di rete", "contiene un indirizzo web"):
+            continue
+        if regola.search(testo or ""):
+            return motivo
+    return None
+
+
 def credenziali(testo):
     """I tipi di credenziale trovati nel testo."""
     return [t for t, regola in _CREDENZIALI if regola.search(testo or "")]

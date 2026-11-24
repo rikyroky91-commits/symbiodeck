@@ -2,7 +2,10 @@
 computer use dell'app Claude (che il Claude Code a riga di comando non ha).
 
 Strumenti: schermi, screenshot (anche di una zona, per leggere i dettagli), clic, trascina, scorri, scrivi,
-tasti, finestre, porta_davanti. Le coordinate sono sempre quelle dell'ultimo screenshot: il server le
+tasti, finestre, porta_davanti, e per le app normali di Windows controlli / usa_controllo: la finestra letta come
+testo (UI Automation: pulsanti, campi, voci di menu con nome e valore) e usata per numero. Idea presa da
+JARVIS-VORNEX (github.com/VORNEX-01/JARVIS-VORNEX): più affidabile dei clic a coordinate e utile al modello locale,
+che non vede le immagini. Le coordinate sono sempre quelle dell'ultimo screenshot: il server le
 converte in pixel veri (schermi in 4K, ridimensionamento di Windows, più monitor).
 
 Lo avvia Claude Code (vedi esecutore.py, --mcp-config):  python schermo_mcp.py
@@ -29,7 +32,10 @@ server = MCPServer("schermo", instructions=(
     "Vedere e controllare lo schermo del PC Windows. Fai sempre uno screenshot prima di cliccare: le coordinate "
     "di clic, trascina e scorri sono in pixel dell'ULTIMO screenshot. Dopo un'azione rifai lo screenshot per "
     "controllare. Per i testi piccoli usa screenshot con una zona. Preferisci PowerShell quando basta (aprire "
-    "programmi, file, impostazioni): il mouse è più lento e fragile."))
+    "programmi, file, impostazioni): il mouse è più lento e fragile. Per le app normali di Windows (Esplora file, "
+    "Impostazioni, Blocco note, Office, finestre di dialogo) prova prima controlli + usa_controllo: leggi la "
+    "finestra come testo e agisci per numero, poi richiama controlli per verificare. I giochi e molte app "
+    "Electron/Chrome non espongono i controlli: lì usa screenshot e clic."))
 
 
 # ---------------------------------------------------------------- schermo
@@ -223,6 +229,125 @@ def porta_davanti(titolo: str) -> str:
             user32.keybd_event(0x12, 0, 0x0002, 0)
             return f"davanti: {t}"
     raise ValueError(f"nessuna finestra con '{titolo}' nel titolo")
+
+
+# ---------------------------------------------------------------- controlli (UI Automation)
+_inventario = {"finestra": "", "cerca": "", "massimo": 150, "nomi": []}
+_TIPI_UTILI = {"ButtonControl", "EditControl", "CheckBoxControl", "RadioButtonControl", "ComboBoxControl",
+               "ListItemControl", "MenuItemControl", "TabItemControl", "HyperlinkControl", "TreeItemControl",
+               "DocumentControl", "SliderControl", "SplitButtonControl", "DataItemControl", "TextControl"}
+
+
+def _uia():
+    try:
+        import uiautomation
+    except ImportError as e:
+        raise RuntimeError("manca il pacchetto uiautomation (pip install uiautomation)") from e
+    return uiautomation
+
+
+def _valore(c):
+    try:
+        return (c.GetValuePattern().Value or "")[:120]
+    except Exception:
+        return ""
+
+
+def _finestra_uia(titolo):
+    auto = _uia()
+    if titolo:
+        for hwnd, t in _elenco():
+            if titolo.lower() in t.lower():
+                return auto.ControlFromHandle(hwnd), t
+        raise ValueError(f"nessuna finestra con '{titolo}' nel titolo")
+    hwnd = user32.GetForegroundWindow()
+    return auto.ControlFromHandle(hwnd), (auto.ControlFromHandle(hwnd).Name or "finestra davanti")
+
+
+def _raccogli(finestra, cerca, massimo):
+    """(titolo, [(controllo, tipo, nome, valore, attivo)]) in ordine di lettura. Si rilegge a ogni uso: gli
+    oggetti COM non passano bene da un thread all'altro e la finestra può essere cambiata."""
+    radice, titolo = _finestra_uia(finestra)
+    trovati, cerca = [], cerca.lower()
+
+    def visita(c, profondita):
+        if len(trovati) >= max(10, min(massimo, 400)) or profondita > 25:
+            return
+        try:
+            figli = c.GetChildren()
+        except Exception:
+            return
+        for x in figli:
+            try:
+                tipo, nome = x.ControlTypeName, (x.Name or "").strip()
+                if tipo in _TIPI_UTILI and not x.IsOffscreen:
+                    valore = _valore(x)
+                    if (nome or valore) and (not cerca or cerca in nome.lower() or cerca in valore.lower()):
+                        trovati.append((x, tipo, nome[:80], valore, x.IsEnabled))
+            except Exception:
+                continue
+            visita(x, profondita + 1)
+    visita(radice, 0)
+    return titolo, trovati
+
+
+@server.tool()
+def controlli(finestra: str = "", cerca: str = "", massimo: int = 150) -> str:
+    """Legge come testo i controlli di una finestra (quella davanti, o la prima il cui titolo contiene `finestra`):
+    pulsanti, campi, caselle, voci di elenco e di menu, con un numero, il tipo, il nome e il valore. Con `cerca`
+    tiene solo quelli il cui nome o valore contiene quel testo. Poi usa_controllo(numero, ...)."""
+    auto = _uia()
+    with auto.UIAutomationInitializerInThread():
+        titolo, trovati = _raccogli(finestra, cerca, massimo)
+    _inventario.update(finestra=finestra or titolo, cerca=cerca, massimo=massimo,
+                       nomi=[(t[1], t[2]) for t in trovati])
+    if not trovati:
+        return (f"{titolo}: nessun controllo leggibile (gioco, app Electron/Chrome o finestra vuota). "
+                "Usa screenshot e clic.")
+    righe = [f"Finestra: {titolo}"]
+    for i, (_c, tipo, nome, valore, attivo) in enumerate(trovati, 1):
+        righe.append(f"{i}. {tipo.replace('Control', '')} «{nome}»" + (f" = «{valore}»" if valore else "")
+                     + ("" if attivo else " (disattivato)"))
+    return "\n".join(righe)
+
+
+@server.tool()
+def usa_controllo(numero: int, azione: str = "clic", testo: str = "") -> str:
+    """Agisce sul controllo con quel numero (dall'ultimo `controlli`). azione: clic (premere un pulsante, aprire
+    una voce), scrivi (mette `testo` in un campo, sostituendo quello che c'era), spunta (casella sì/no), seleziona
+    (voce di elenco o scheda), espandi (menu, albero, tendina). Poi richiama controlli per verificare."""
+    nomi = _inventario["nomi"]
+    if not 1 <= numero <= len(nomi):
+        raise ValueError(f"numero {numero} non valido: rileggi la finestra con controlli")
+    auto = _uia()
+    with auto.UIAutomationInitializerInThread():
+        _titolo, trovati = _raccogli(_inventario["finestra"], _inventario["cerca"], _inventario["massimo"])
+        if len(trovati) < numero or (trovati[numero - 1][1], trovati[numero - 1][2]) != nomi[numero - 1]:
+            raise ValueError("la finestra è cambiata dall'ultima lettura: richiama controlli e riprova")
+        c = trovati[numero - 1][0]
+        if azione == "scrivi":
+            try:
+                c.GetValuePattern().SetValue(testo)
+            except Exception:
+                c.SetFocus()
+                auto.SendKeys("{Ctrl}a{Del}", waitTime=0.05)
+                auto.SendKeys(testo.replace("{", "{{}").replace("}", "{}}"), interval=0.01, waitTime=0.05)
+            return f"scritto in «{c.Name}»: {_valore(c) or testo}"
+        if azione == "spunta":
+            c.GetTogglePattern().Toggle()
+            return f"«{c.Name}» ora è {'spuntato' if c.GetTogglePattern().ToggleState == 1 else 'non spuntato'}"
+        if azione == "seleziona":
+            c.GetSelectionItemPattern().Select()
+            return f"selezionato «{c.Name}»"
+        if azione == "espandi":
+            c.GetExpandCollapsePattern().Expand()
+            return f"aperto «{c.Name}»"
+        try:
+            c.GetInvokePattern().Invoke()
+        except Exception:
+            c.Click(simulateMove=False, waitTime=0.1)
+        time.sleep(0.3)
+        return f"cliccato «{c.Name}»"
 
 
 if __name__ == "__main__":

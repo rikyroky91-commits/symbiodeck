@@ -13,6 +13,7 @@
 
   var stato = "riposo", imp = {}, livello = 0, livelloVisto = 0, aperto = false, collegato = false;
   var corrente = null, confermaId = null, dispositivi = null, sottofondo = false, emergenza = false;
+  var promemoria = [];
 
   // ------------------------------------------------------------ struttura
   var radice = document.createElement("div");
@@ -104,6 +105,7 @@
       imp = s.impostazioni || {};
       sottofondo = !!s.sottofondo;
       emergenza = !!(s.emergenza && s.emergenza.attiva);
+      promemoria = s.promemoria || [];
       impostaStato(s.stato);
       mostraConferma(s.conferma);
       $("j-azione").textContent = s.azione || "";
@@ -140,6 +142,8 @@
     if (d.gioco !== undefined) {
       messaggio("azione", d.gioco ? "Modalità gioco: scheda video libera, ascolto con il processore" : "Fine partita: torno a usare la scheda video");
     }
+    if (d.promemoria) { promemoria = d.promemoria; disegnaPromemoria(); }
+    if (d.avviso) { chiudiCorrente(); messaggio("azione", "⚠ " + d.avviso); }
     if (d.nell_app) { messaggio("azione", "Conversazione visibile nell'app Claude sul PC (progetto pc-panel)"); corrente = null; }
   }
 
@@ -166,7 +170,8 @@
     var micOk = imp.microfono === "pc" ? true : (tablet ? tablet.microfono : false);
     if (nativo && nativo.microfono && imp.microfono !== "pc" && !nativo.microfono()) { mic = "MIC: PERMESSO"; micOk = false; }
     chip("j-chip-mic", mic + (micOk ? " ✓" : " ✕"), micOk);
-    if (emergenza) chip("j-chip-modo", "EMERGENZA · CERVELLO LOCALE", false);
+    if (imp.privata) chip("j-chip-modo", emergenza ? "PRIVATA · SOLO PC" : "PRIVATA · CERVELLO SPENTO", !!emergenza);
+    else if (emergenza) chip("j-chip-modo", "EMERGENZA · CERVELLO LOCALE", false);
     else chip("j-chip-modo", "VOCE " + String(imp.modello_voce || "").toUpperCase() + " · COMPITI " +
       String(imp.modello_compiti || "").toUpperCase());
   }
@@ -195,6 +200,8 @@
     if (c) $("j-conferma-testo").textContent = "Devo " + c.descrizione + ". Procedo?";
     // "sì, sempre" solo dove la guardia lo ammette (stesso comando esatto, mai per dischi, registro, messaggi...)
     $("j-sempre").style.display = c && c.sempre_ok ? "" : "none";
+    if (c && c.alto) $("j-conferma-testo").textContent = "Devo " + c.descrizione +
+      ". Azione delicata: a voce non basta, serve questo tocco.";
   }
   function rispondi(ok, sempre) {
     if (!confermaId) return;
@@ -328,6 +335,22 @@
     }, function () {});
   }
 
+  function disegnaPromemoria() {
+    var box = $("j-promemoria");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!promemoria.length) box.appendChild(riga("Nessun promemoria", "\"ricordami tra 20 minuti di…\", \"metti un timer di 5 minuti\"",
+      document.createElement("span")));
+    promemoria.forEach(function (p) {
+      var t = document.createElement("span"); t.textContent = p.testo;
+      var r = riga("", p.ora, pulsante("✕", function () {
+        api("/jarvis/promemoria", { togli: p.id }).then(function (d) { promemoria = d.promemoria; disegnaPromemoria(); });
+      }));
+      r.firstChild.insertBefore(t, r.firstChild.firstChild);
+      box.appendChild(r);
+    });
+  }
+
   function caricaMemoria(d) {
     if (!d) return api("/jarvis/memoria").then(caricaMemoria, function () {});
     var box = $("j-memoria");
@@ -340,7 +363,7 @@
       var nota = f.fiducia === "utente" ? "detto da te" : f.fiducia === "auto" ? "annotato da Jarvis"
         : "in quarantena, non usato (" + (f.motivo || "sospetto") + ")";
       var t = document.createElement("span"); t.textContent = f.testo;   // testo: mai come HTML
-      var r = riga("", nota, pulsante("✕", togli({ togli: f.indice })));
+      var r = riga("", nota, pulsante("✕", togli({ togli: f.id })));
       r.firstChild.insertBefore(t, r.firstChild.firstChild);
       box.appendChild(r);
     });
@@ -424,6 +447,18 @@
       interruttore("modalita_gioco")));
     c.appendChild(riga("Modello locale", "27B: più memoria per i compiti · MTP: il doppio più veloce, meno memoria",
       scelte("modello_emergenza", [["27b", "27B"], ["27b-mtp", "27B MTP"]])));
+    gruppo(c, "Privacy e sicurezza");
+    c.appendChild(riga("Modalità privata", "tutto resta su questo PC: cervello locale, voce Piper, niente Claude " +
+      "né Internet · anche a voce: \"modalità privata\" / \"esci dalla modalità privata\"", interruttore("privata")));
+    c.appendChild(riga("Azioni delicate", "dischi, registro, sicurezza, servizi: tocco = il sì vale solo dal tablet",
+      scelte("conferma_alta", [["tocco", "Solo tocco"], ["voce", "Anche voce"]])));
+    c.appendChild(riga("Avvisi di temperatura", "dice se processore (" + imp.soglia_cpu + " °C) o scheda video (" +
+      imp.soglia_gpu + " °C) scaldano troppo per mezzo minuto", interruttore("avvisi_temperatura")));
+    gruppo(c, "Promemoria");
+    var pm = document.createElement("div");
+    pm.id = "j-promemoria";
+    c.appendChild(pm);
+    disegnaPromemoria();
     gruppo(c, "Memoria");
     c.appendChild(riga("Memoria a lungo termine", "ricorda preferenze e fatti stabili tra una conversazione e l'altra",
       interruttore("memoria")));

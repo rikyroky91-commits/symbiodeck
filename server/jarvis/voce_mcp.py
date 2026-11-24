@@ -6,7 +6,8 @@ fa l'esecutore, un Claude Code completo in un processo a parte. Questi strumenti
   stato_lavoro()     - a che punto è l'esecutore
   ferma_lavoro()     - ferma il lavoro in corso
   ricorda(fatto)     - salva un fatto nella memoria a lungo termine (memoria.py)
-  dimentica(cosa)    - toglie dalla memoria i fatti che parlano di qualcosa
+  dimentica(numero)  - toglie dalla memoria il fatto con quel numero
+  promemoria(...)    - un promemoria a un'ora precisa (quelli semplici li capisce Jarvis da solo, senza Claude)
 Lo avvia la voce (vedi cervello.py, --mcp-config):  python voce_mcp.py
 """
 import json
@@ -75,14 +76,28 @@ def ricorda(fatto: str) -> str:
 
 
 @server.tool()
-def dimentica(cosa: str) -> str:
-    """Toglie dalla memoria a lungo termine i fatti che contengono queste parole (quando l'utente chiede di
-    dimenticare qualcosa o dice che un fatto ricordato è sbagliato)."""
+def dimentica(numero: int) -> str:
+    """Toglie dalla memoria a lungo termine il fatto con quel numero (il numero tra parentesi quadre nell'elenco
+    "Cose che sai già"), quando l'utente chiede di dimenticarlo o dice che è sbagliato. Uno alla volta: se sono
+    più fatti, chiamalo per ciascuno. Se il fatto è nuovo di questa conversazione e non ha numero, dillo."""
     try:
-        tolti = _jarvis("dimentica", {"cosa": cosa}).get("tolti", 0)
+        tolto = _jarvis("dimentica", {"numero": numero}).get("tolto")
     except OSError as e:
         return f"Memoria non disponibile: {e}"
-    return f"Tolti {tolti} fatti." if tolti else "Non c'era niente del genere in memoria."
+    return f"Dimenticato: {tolto}" if tolto else f"Nessun fatto con il numero {numero}."
+
+
+@server.tool()
+def promemoria(quando: str, testo: str) -> str:
+    """Un promemoria che Jarvis dirà a voce: quando = data e ora esatte "AAAA-MM-GG HH:MM" (calcolala tu dalla
+    data e ora in testa al messaggio), testo = cosa ricordare, breve. I promemoria semplici ("tra 20 minuti",
+    "alle 18") Jarvis li capisce da solo prima di te: questo serve per quelli più complicati ("venerdì dopo
+    pranzo", "il giorno prima della partita")."""
+    try:
+        _jarvis("promemoria", {"quando": quando, "testo": testo})
+    except OSError as e:
+        return f"Promemoria non salvato: {e}"
+    return f"Promemoria salvato per {quando}."
 
 
 if __name__ == "__main__":
