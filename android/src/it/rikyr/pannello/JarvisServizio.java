@@ -189,9 +189,45 @@ public class JarvisServizio extends Service {
                 if (microfonoVoluto) avviaMicrofono();
             }
             if (o.has("attivato") && accendiSchermo) svegliaSchermo();
+            if (o.has("foto")) mandaFoto(o.getString("foto"));
         } catch (Exception e) {
             Log.w(TAG, "comando non valido: " + json);
         }
+    }
+
+    /** Jarvis vuole guardare (l'utente ha già detto sì): una foto con la telecamera posteriore, mandata al PC. */
+    private void mandaFoto(final String id) {
+        new Thread(() -> {
+            byte[] jpeg = null;
+            String errore = null;
+            try {
+                jpeg = Fotocamera.scatta(this);
+            } catch (Exception e) {
+                errore = e.getMessage() != null ? e.getMessage() : e.toString();
+                Log.w(TAG, "foto non riuscita", e);
+            }
+            String b = base;
+            if (b == null) return;
+            try {
+                String url = b + "/jarvis/telecamera?id=" + Uri.encode(id) + "&t=" + Uri.encode(token)
+                        + (errore != null ? "&errore=" + Uri.encode(errore) : "");
+                HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+                c.setConnectTimeout(3000);
+                c.setReadTimeout(10000);
+                c.setDoOutput(true);
+                c.setRequestMethod("POST");
+                c.setRequestProperty("Content-Type", "image/jpeg");
+                byte[] corpo = jpeg != null ? jpeg : new byte[0];
+                c.setFixedLengthStreamingMode(corpo.length);
+                try (OutputStream o = c.getOutputStream()) {
+                    o.write(corpo);
+                }
+                Log.i(TAG, "foto per Jarvis: " + c.getResponseCode() + ", " + corpo.length + " byte");
+                c.disconnect();
+            } catch (IOException e) {
+                Log.w(TAG, "foto non mandata: " + e);
+            }
+        }, "foto").start();
     }
 
     @SuppressWarnings("deprecation")

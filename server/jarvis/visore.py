@@ -418,6 +418,125 @@ def cattura_schermo(numero=1, lato=1920):
         return _jpeg(Image.frombytes("RGB", s.size, s.bgra, "raw", "BGRX"), lato)
 
 
+def _misura_ridotta(w, h, lato):
+    k = min(1.0, lato / max(w, h))
+    return max(1, round(w * k)), max(1, round(h * k))
+
+
+def _cattura_gdi(l, t, w, h, lato):
+    """Zona dello schermo già ridotta da Windows mentre la legge (StretchBlt): misurato su uno schermo 4K ~80 ms,
+    contro ~180 ms di cattura intera + conversione + riduzione."""
+    from PIL import Image
+    W, H = _misura_ridotta(w, h, lato)
+    dc_schermo = user32.GetDC(0)
+    dc = gdi32.CreateCompatibleDC(dc_schermo)
+    bmp = gdi32.CreateCompatibleBitmap(dc_schermo, W, H)
+    vecchio = gdi32.SelectObject(dc, bmp)
+    try:
+        gdi32.SetStretchBltMode(dc, 3)   # COLORONCOLOR: veloce (HALFTONE è più morbido ma ~115 ms)
+        if not gdi32.StretchBlt(dc, 0, 0, W, H, dc_schermo, l, t, w, h, 0x00CC0020):   # SRCCOPY
+            raise OSError("StretchBlt non riuscito (schermo del PC spento o in standby?)")
+        bih = _BIH(ctypes.sizeof(_BIH), W, -H, 1, 32, 0, 0, 0, 0, 0, 0)
+        buf = ctypes.create_string_buffer(W * H * 4)
+        gdi32.GetDIBits(dc, bmp, 0, H, buf, ctypes.byref(bih), 0)
+    finally:
+        gdi32.SelectObject(dc, vecchio)
+        gdi32.DeleteObject(bmp)
+        gdi32.DeleteDC(dc)
+        user32.ReleaseDC(0, dc_schermo)
+    return Image.frombuffer("RGB", (W, H), buf, "raw", "BGRX", 0, 1)
+
+
+class _CatturaDxgi:
+    """Cattura dalla scheda video (DXGI Desktop Duplication con dxcam): 30-60 fotogrammi al secondo anche in 4K.
+    Solo se dxcam è installato (pip install dxcam opencv-python-headless); se no, o se fallisce, si usa GDI."""
+
+    def __init__(self):
+        import dxcam
+        self.cam = dxcam.create(output_color="RGB")
+        if self.cam is None:
+            raise OSError("dxcam: nessuno schermo")
+        self.ultima = None
+
+    def zona(self, l, t, w, h, lato):
+        import numpy as np
+        from PIL import Image
+        f = self.cam.grab(region=(l, t, l + w, t + h))
+        if f is None:                       # niente di nuovo sullo schermo: si rimanda l'ultima
+            if self.ultima is None:
+                raise OSError("dxcam: nessun fotogramma")
+            return self.ultima
+        W, H = _misura_ridotta(w, h, lato)
+        try:
+            import cv2
+            f = cv2.resize(f, (W, H), interpolation=cv2.INTER_AREA)
+            im = Image.fromarray(np.ascontiguousarray(f))
+        except ImportError:
+            im = Image.fromarray(f).resize((W, H), Image.BILINEAR)
+        self.ultima = im
+        return im
+
+
+_dxgi = {"cattura": None, "provata": False}
+
+
+def _cattura_zona(l, t, w, h, lato):
+    if not _dxgi["provata"]:
+        _dxgi["provata"] = True
+        try:
+            _dxgi["cattura"] = _CatturaDxgi()
+        except Exception:
+            _dxgi["cattura"] = None
+    if _dxgi["cattura"] is not None:
+        try:
+            return _dxgi["cattura"].zona(l, t, w, h, lato)
+        except Exception:
+            _dxgi["cattura"] = None             # non va: da qui in poi GDI
+    return _cattura_gdi(l, t, w, h, lato)
+
+
+def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
+    """Fotogrammi JPEG continui di uno schermo o di una finestra (modalità cinema/gioco di Jarvis XR): la zona dello
+    schermo dove sta la finestra, presa com'è sullo schermo (anche giochi in finestra senza bordi, che PrintWindow
+    vede neri). Con dxcam installato si cattura dalla scheda video (fluida); se no GDI ridotto (~12 al secondo su
+    uno schermo 4K). Schermo spento: per una finestra si ripiega su PrintWindow. Generatore: si ferma quando chi
+    legge smette."""
+    import time as _t
+    import mss
+    intervallo = 1 / max(5, min(60, int(fps)))
+    hwnd = int(hwnd or 0)
+    with mss.mss() as m:
+        schermo = m.monitors[numero if 1 <= numero < len(m.monitors) else 1]
+    while True:
+        t0 = _t.monotonic()
+        if hwnd:
+            if not user32.IsWindow(hwnd):
+                raise LookupError("finestra chiusa")
+            if user32.IsIconic(hwnd):
+                _t.sleep(0.3)
+                continue
+            l, t, r, b = _rettangolo(hwnd)
+            if r - l < 8 or b - t < 8:
+                _t.sleep(0.3)
+                continue
+            zona = (l, t, r - l, b - t)
+        else:
+            zona = (schermo["left"], schermo["top"], schermo["width"], schermo["height"])
+        try:
+            im = _cattura_zona(*zona, lato)
+            out = io.BytesIO()
+            im.save(out, "JPEG", quality=qualita)
+            yield out.getvalue()
+        except OSError:
+            # schermo del PC spento o in standby: la cattura dello schermo fallisce, PrintWindow no
+            if not hwnd:
+                raise LookupError("lo schermo del PC non si può catturare (spento o in standby?)")
+            yield cattura_finestra(hwnd, lato)
+        resto = intervallo - (_t.monotonic() - t0)
+        if resto > 0:
+            _t.sleep(resto)
+
+
 def porta_davanti(hwnd):
     hwnd = int(hwnd)
     if user32.IsIconic(hwnd):

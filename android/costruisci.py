@@ -116,7 +116,7 @@ def main():
     base = COSTRUZIONE / "base.apk"
     esegui([t["aapt2"], "link", "-I", t["jar"], "--manifest", QUI / "AndroidManifest.xml",
             "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
-            "--version-code", 18, "--version-name", "1.9.1", "-A", QUI / "assets",
+            "--version-code", 19, "--version-name", "1.10.0", "-A", QUI / "assets",
             "-o", base, COSTRUZIONE / "res.zip"])
 
     classi = COSTRUZIONE / "classi"
@@ -170,6 +170,9 @@ def main():
                               "it.rikyr.pannello/.Pannello && break; sleep 3; done"])
         # Jarvis: microfono concesso senza toccare il tablet, servizio fuori da Doze anche se il file sopra manca
         subprocess.run([adb, "shell", "pm", "grant", "it.rikyr.pannello", "android.permission.RECORD_AUDIO"],
+                       capture_output=True)
+        # telecamera per Jarvis ("guarda questa scheda madre"): si usa solo dopo il sì dell'utente a ogni richiesta
+        subprocess.run([adb, "shell", "pm", "grant", "it.rikyr.pannello", "android.permission.CAMERA"],
                        capture_output=True)
         subprocess.run([adb, "shell", "dumpsys", "deviceidle", "whitelist", "+it.rikyr.pannello"], capture_output=True)
         print(esegui([adb, "shell", "dumpsys package it.rikyr.pannello | grep -E 'versionName|codePath'"]).strip())

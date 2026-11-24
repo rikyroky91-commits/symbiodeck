@@ -326,7 +326,8 @@ class CancellaEco:
     def eco_tolta_db(self):
         """Quanta eco sta togliendo: mediana per blocco sui blocchi in cui Jarvis parlava (ultimi ~5 s); None se
         non si sa. La mediana, perché i blocchi in cui qualcuno gli parla sopra (pulito alto) non la spostino."""
-        rapporti = [20 * np.log10((g + 1) / (p + 1)) for g, p, parla in self.misure if parla and g > 200]
+        # copia: il thread del microfono aggiunge misure mentre il ciclo di ascolto le legge (deque mutated)
+        rapporti = [20 * np.log10((g + 1) / (p + 1)) for g, p, parla in tuple(self.misure) if parla and g > 200]
         return float(np.median(rapporti)) if len(rapporti) >= 8 else None
 
     def affidabile(self):

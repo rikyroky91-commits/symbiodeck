@@ -167,6 +167,10 @@ class Tablet:
         self.comandi.update(valori)
         self._a_tutti(trama(TRAMA_COMANDO, json.dumps(valori).encode("utf-8")))
 
+    def comando_una_volta(self, **valori):
+        """Comando che non si ripete al ricollegamento del tablet (es. "scatta una foto")."""
+        self._a_tutti(trama(TRAMA_COMANDO, json.dumps(valori).encode("utf-8")))
+
     def collegato(self):
         return bool(self.clienti) or time.time() - self.ultimo_altoparlante < 3
 

@@ -905,6 +905,7 @@ class Visualizzatore extends Pannello {
       el.src = urlJ("/jarvis/file/dati", { percorso: v.percorso, t: TOKEN });
       el.play().catch(() => {});
       el.addEventListener("loadedmetadata", () => { this.posizionaVideo(); this.sporco = true; });
+      el.addEventListener("play", () => { if (renderer.xr.isPresenting && !(cinema.attivo && cinema.sorgente === this)) cinema.entra(this); });
       this.video = el;
       const tex = new THREE.VideoTexture(el);
       tex.colorSpace = THREE.SRGBColorSpace;
@@ -979,6 +980,7 @@ class Visualizzatore extends Pannello {
       c.font = "500 22px " + MONO; c.fillStyle = "#fff1d6";
       c.fillText(tempo(ora) + " / " + tempo(durata), bx + 14, y0 + 26);
       this.bottone(c, W - 254, y0, 220, 76, "⧉ SUL PC", () => apriSulPc(v), { dim: 24 });
+      if (el) this.bottone(c, W - 330, 16, 220, 56, "🎬 CINEMA", () => cinema.entra(this), { dim: 22, colore: "255,179,65" });
       if (!this.pianoVideo || !this.pianoVideo.visible) {
         c.font = "400 26px " + FONT; c.fillStyle = "rgba(223,246,255,0.6)"; c.textAlign = "center";
         c.fillText(/\.(mkv)$/i.test(v.nome) ? "MKV non si riproduce nel visore: aprilo sul PC" : "Carico il video…", W / 2, H / 2);
@@ -1035,6 +1037,8 @@ class FinestraPc extends Pannello {
     this.bottone(c, 34 + 3 * (bw + gap) + 120, y, 90, b - 16, "▼", () => this.manda({ tipo: "rotella", scatti: -5, x: 0.5, y: 0.5 }), { dim: 26 });
     this.bottone(c, 34 + 3 * (bw + gap) + 220, y, 120, b - 16, "INVIO", () => this.manda({ tipo: "tasti", tasti: "enter" }), { dim: 22 });
     this.bottone(c, W - 190, y, 156, b - 16, "⟳ DAVANTI", () => this.manda({ tipo: "davanti" }), { dim: 22 });
+    // modalità cinema: diretta fluida a schermo grande, stanza oscurata (giochi e video)
+    this.bottone(c, W - 330, 16, 220, 56, "🎮 CINEMA", () => cinema.entra(this), { dim: 22, colore: "255,179,65" });
   }
   manda(azione) {
     return api(JARVIS, "/jarvis/finestre/azione", Object.assign({ hwnd: this.hwnd }, azione))
@@ -1141,6 +1145,7 @@ function disposizioneIniziale(dimentica) {
   try { salvata = JSON.parse(leggi("xr-disposizione") || "{}"); } catch (e) { salvata = {}; }
   const occhi = new THREE.Vector3(0, altezzaOcchi, 0);
   FISSI.forEach((p, i) => {
+    if (p.nelCestino) { p.nelCestino = false; p.gruppo.visible = true; }
     const s = salvata[p.id];
     if (s) {
       p.gruppo.position.fromArray(s.p); p.gruppo.quaternion.fromArray(s.q); p.gruppo.scale.setScalar(s.s || 1);
@@ -1273,7 +1278,8 @@ const mani = [0, 1].map((i) => {
   scena.add(punti, ossa);
   return { mano, punti, ossa, pizzica: false, presa: null, parla: false, zPrima: new Map(), ultimoTocco: 0,
     punta: new THREE.Vector3(), pollice: new THREE.Vector3(), centro: new THREE.Vector3(), offset: new THREE.Vector3(),
-    sorgente: null };
+    sorgente: null, indice: i, puntatore: null, scia3d: [], polsi: [], velocita: new THREE.Vector3(),
+    aperta: false, pugno: 0, polso: new THREE.Vector3() };
 });
 mani.forEach((m) => m.mano.addEventListener("connected", (e) => { m.sorgente = e.data; }));
 
@@ -1302,6 +1308,7 @@ function aggiornaMani() {
 
     tip.getWorldPosition(m.punta); th.getWorldPosition(m.pollice);
     m.centro.copy(m.punta).add(m.pollice).multiplyScalar(0.5);
+    formaMano(m, j);
     const dist = m.punta.distanceTo(m.pollice);
     const pizzicaOra = m.pizzica ? dist < 0.03 : dist < 0.018;   // isteresi: niente sfarfallio
     if (pizzicaOra && !m.pizzica) iniziaPizzico(m);
@@ -1310,15 +1317,18 @@ function aggiornaMani() {
     m.punti.material.color.set(m.parla ? 0x4dffb8 : m.presa ? 0xffb341 : 0x8ff0ff);
 
     // tocco con l'indice (solo se non sta pizzicando) e gesto di scorrimento
-    if (!m.pizzica) { toccoIndice(m); gestoScorri(m); }
-    if (m.presa) trascina(m, testa);
+    if (!m.pizzica) { toccoIndice(m); gestoScorri(m); gestoScaccia(m); }
+    if (m.presa) { trascina(m, testa); gestoAppallottola(m); }
+    if (m.puntatore) trascinaConRaggio(m, testa);
   }
-  // presa a due mani sullo stesso pannello: si ingrandisce
+  // presa a due mani sullo stesso pannello (anche col puntatore da lontano): si ingrandisce
   const [a, b] = mani;
-  if (a.presa && a.presa === b.presa) {
-    const p = a.presa, d = a.centro.distanceTo(b.centro);
+  const pa = a.presa || (a.puntatore && a.puntatore.trascina && a.puntatore.p);
+  const pb = b.presa || (b.puntatore && b.puntatore.trascina && b.puntatore.p);
+  if (pa && pa === pb && !pa.pallottola) {
+    const p = pa, d = a.centro.distanceTo(b.centro);
     if (!p.dueMani) p.dueMani = { d0: d, s0: p.gruppo.scale.x };
-    p.gruppo.scale.setScalar(THREE.MathUtils.clamp(p.dueMani.s0 * d / p.dueMani.d0, 0.45, 2.6));
+    p.gruppo.scale.setScalar(THREE.MathUtils.clamp(p.dueMani.s0 * d / p.dueMani.d0, 0.45, 3.2));
   }
 }
 
@@ -1385,8 +1395,9 @@ function iniziaPizzico(m) {
     if (Math.abs(l.x) <= p.w / 2 + 0.04 / s && Math.abs(l.y) <= p.h / 2 + 0.04 / s && Math.abs(l.z) < 0.09 / s
         && Math.abs(l.z) * s < zMin) { presa = p; zMin = Math.abs(l.z) * s; }
   }
-  if (!presa) return;
+  if (!presa) { iniziaPuntatore(m); return; }
   m.presa = presa;
+  presa.lancio = null;
   m.offset.copy(presa.gruppo.getWorldPosition(new THREE.Vector3())).sub(m.centro);
   presa.dueMani = null;
   bip(420, 0.08, 0.05); vibra(m.sorgente);
@@ -1401,7 +1412,13 @@ function trascina(m, testa) {
 }
 function rilascia(m) {
   if (m.parla) { m.parla = false; fineParlato(); }
-  if (m.presa) { const p = m.presa; m.presa = null; p.dueMani = null; p.spostatoDaTe = true; salvaDisposizione(); bip(300, 0.06, 0.04); }
+  if (m.puntatore) fineraggio(m);
+  if (m.presa) {
+    const p = m.presa; m.presa = null; p.dueMani = null; p.spostatoDaTe = true;
+    if (p.pallottola) { lasciaPallottola(p, m.velocita); return; }
+    if (m.velocita.length() > 1.1) { lancia(p, m.velocita); return; }   // lanciata più in là
+    salvaDisposizione(); bip(300, 0.06, 0.04);
+  }
 }
 
 // ------------------------------------------------------------------ controller: raggio, grilletto, impugnatura
@@ -1422,6 +1439,7 @@ const controller = [0, 1].map((i) => {
     const h = st.colpo;
     if (!h) return;
     if (h.object.userData.sfera) { st.parla = iniziaParlato(); return; }
+    if (h.object.userData.cinema && h.uv) { cinema.tocca(h.uv.x, h.uv.y); return; }
     const p = h.object.userData.pannello;
     if (p && h.uv) p.premi(h.uv.x, h.uv.y, st.sorgente);
   });
@@ -1437,10 +1455,15 @@ const controller = [0, 1].map((i) => {
   });
   return st;
 });
-function bersagli() { return visibili().map((p) => p.mesh).concat([sfera.collisione]); }
+function bersagli() {
+  const b = visibili().map((p) => p.mesh).concat([sfera.collisione]);
+  if (cinema.attivo) b.push(cinema.schermo);
+  return b;
+}
 function aggiornaController() {
   for (const st of controller) {
-    if (!st.sorgente || st.sorgente.hand) continue;
+    if (!st.sorgente) continue;
+    if (st.sorgente.hand) { raggioMano(st, mani[controller.indexOf(st)]); continue; }
     _m.identity().extractRotation(st.c.matrixWorld);
     raggio.ray.origin.setFromMatrixPosition(st.c.matrixWorld);
     raggio.ray.direction.set(0, 0, -1).applyMatrix4(_m);
@@ -1452,6 +1475,404 @@ function aggiornaController() {
   }
 }
 
+// ------------------------------------------------------------------ puntatore delle mani (raggio come nel Quest)
+// Da lontano la mano ha il suo raggio (quello del sistema, dal palmo). Pizzico breve = tocco dove punta; pizzico
+// tenuto = trascini il pannello lungo il raggio; due mani sullo stesso pannello = zoom. Da vicino (a 25 cm da un
+// pannello) il raggio sparisce e restano tocco con l'indice e presa diretta.
+function vicinoAiPannelli(m) {
+  for (const p of visibili()) {
+    const l = p.mesh.worldToLocal(m.punta.clone()), s = p.gruppo.scale.x;
+    if (Math.abs(l.x) <= p.w / 2 + 0.12 / s && Math.abs(l.y) <= p.h / 2 + 0.12 / s && l.z > -0.06 / s && l.z < 0.25 / s) return true;
+  }
+  return false;
+}
+function raggioMano(st, m) {
+  const libera = m && m.punti.visible && !m.presa && !m.parla && (m.puntatore || !vicinoAiPannelli(m));
+  st.laser.visible = !!libera;
+  if (!libera) {
+    if (st.colpo && st.colpo.object.userData.pannello) st.colpo.object.userData.pannello.sopra(null);
+    st.colpo = null;
+    return;
+  }
+  _m.identity().extractRotation(st.c.matrixWorld);
+  raggio.ray.origin.setFromMatrixPosition(st.c.matrixWorld);
+  raggio.ray.direction.set(0, 0, -1).applyMatrix4(_m);
+  m.raggioO = raggio.ray.origin.clone(); m.raggioD = raggio.ray.direction.clone();
+  if (m.puntatore && m.puntatore.trascina) { st.laser.scale.z = m.puntatore.dist; return; }
+  const h = raggio.intersectObjects(bersagli(), false)[0] || null;
+  if (st.colpo && st.colpo.object.userData.pannello && (!h || h.object !== st.colpo.object)) st.colpo.object.userData.pannello.sopra(null);
+  st.colpo = h;
+  st.laser.scale.z = h ? h.distance : 1.2;
+  st.laser.material.opacity = m.pizzica ? 1 : 0.55;
+  if (h && h.object.userData.pannello && h.uv) h.object.userData.pannello.sopra(h.uv.x, h.uv.y);
+}
+function iniziaPuntatore(m) {
+  const st = controller[m.indice], h = st && st.colpo;
+  if (!h) return;
+  if (h.object.userData.sfera) { m.parla = iniziaParlato(); return; }
+  const p = h.object.userData.pannello;
+  m.puntatore = { p, cinema: !!h.object.userData.cinema, uv: h.uv ? h.uv.clone() : null, t0: performance.now(),
+    dist: h.distance, trascina: false, inizio: m.centro.clone(),
+    offset: p ? p.gruppo.getWorldPosition(new THREE.Vector3()).sub(h.point) : null };
+  vibra(m.sorgente);
+}
+function trascinaConRaggio(m, testa) {
+  const q = m.puntatore;
+  if (!q.p || q.p.sempreDavanti || q.cinema || !m.raggioO) return;
+  if (!q.trascina && (performance.now() - q.t0 > 450 || m.centro.distanceTo(q.inizio) > 0.06)) {
+    q.trascina = true; q.p.lancio = null; bip(420, 0.08, 0.05);
+  }
+  if (!q.trascina) return;
+  const altra = mani[1 - m.indice];
+  if (altra.puntatore && altra.puntatore.p === q.p && m.indice === 1) return;   // con due mani muove la prima
+  const dest = m.raggioO.clone().addScaledVector(m.raggioD, q.dist).add(q.offset);
+  q.p.gruppo.position.copy(ancora.worldToLocal(dest));
+  q.p.gruppo.lookAt(testa);
+}
+function fineraggio(m) {
+  const q = m.puntatore;
+  m.puntatore = null;
+  if (q.trascina) { q.p.dueMani = null; q.p.spostatoDaTe = true; salvaDisposizione(); bip(300, 0.06, 0.04); return; }
+  if (q.cinema && q.uv) { cinema.tocca(q.uv.x, q.uv.y); return; }
+  if (q.p && q.uv) q.p.premi(q.uv.x, q.uv.y, m.sorgente);   // pizzico breve = tocco da lontano
+}
+
+// ------------------------------------------------------------------ forma e velocità della mano
+const _w = new THREE.Vector3(), _d = new THREE.Vector3();
+function formaMano(m, j) {
+  const ora = performance.now();
+  // velocità del pizzico (per i lanci): media sugli ultimi 100 ms
+  m.scia3d.push({ t: ora, p: m.centro.clone() });
+  while (m.scia3d.length > 2 && ora - m.scia3d[0].t > 100) m.scia3d.shift();
+  const a = m.scia3d[0], b = m.scia3d[m.scia3d.length - 1];
+  if (b.t > a.t) m.velocita.copy(b.p).sub(a.p).multiplyScalar(1000 / (b.t - a.t));
+  // mano aperta (dita distese) o pugno (medio, anulare e mignolo chiusi verso il palmo)
+  const polso = j.wrist;
+  if (!polso) return;
+  polso.getWorldPosition(m.polso);
+  let somma = 0, chiuse = 0;
+  for (const nome of ["index-finger-tip", "middle-finger-tip", "ring-finger-tip", "pinky-finger-tip"]) {
+    const g = j[nome];
+    if (!g) return;
+    g.getWorldPosition(_w);
+    const d = _w.distanceTo(m.polso);
+    somma += d;
+    if (nome !== "index-finger-tip" && d < 0.095) chiuse++;
+  }
+  m.aperta = somma / 4 > 0.14;
+  m.pugno = chiuse === 3 ? m.pugno + 1 : 0;
+  m.polsi.push({ t: ora, p: m.polso.clone() });
+  while (m.polsi.length > 2 && ora - m.polsi[0].t > 300) m.polsi.shift();
+}
+
+// scacciare via con la mano aperta (veloce, di lato, lontano dai pannelli): pannelli rimessi come all'inizio;
+// nel cinema: si esce dal cinema
+let ultimoScaccia = 0;
+function gestoScaccia(m) {
+  const ora = performance.now();
+  if (!m.aperta || m.puntatore || ora - ultimoScaccia < 1500 || m.polsi.length < 4) return;
+  if (!cinema.attivo && vicinoAiPannelli(m)) return;
+  const a = m.polsi[0], b = m.polsi[m.polsi.length - 1], dt = (b.t - a.t) / 1000;
+  if (dt < 0.12) return;
+  _d.copy(b.p).sub(a.p);
+  const orizz = Math.hypot(_d.x, _d.z);
+  if (orizz < 0.32 || orizz / dt < 1.3 || Math.abs(_d.y) > orizz * 0.6) return;
+  ultimoScaccia = ora; m.polsi = [];
+  vibra(m.sorgente);
+  if (cinema.attivo) { cinema.esci(); return; }
+  disposizioneIniziale(true);
+  dinamici.forEach((p) => { p.spostatoDaTe = false; });
+  aVentaglio();
+}
+
+// ------------------------------------------------------------------ lanci, palle di carta e cestino
+// Pannello lasciato con la mano in corsa: vola più in là e rallenta. Pannello stretto nel pugno: diventa una palla
+// di carta; lasciata nel cestino (o lanciata dentro) il pannello si chiude, altrove torna com'era.
+const lanciati = new Set();
+function lancia(p, v) {
+  p.lancio = { v: v.clone().multiplyScalar(1.6) };
+  lanciati.add(p);
+  bip(500, 0.06, 0.05);
+}
+function aggiornaLanci(dt) {
+  const testa = posizioneTesta();
+  for (const p of lanciati) {
+    const l = p.lancio;
+    if (!l || !p.gruppo.parent) { lanciati.delete(p); continue; }
+    const pos = p.gruppo.getWorldPosition(new THREE.Vector3());
+    if (p.pallottola) {
+      l.v.y -= 9.8 * dt;                       // la palla cade
+      pos.addScaledVector(l.v, dt);
+      if (cestino.dentro(pos)) { lanciati.delete(p); butta(p); continue; }
+      if (pos.y < 0.05) { lanciati.delete(p); srotola(p, "Mancato! Riprova"); continue; }
+    } else {
+      pos.addScaledVector(l.v, dt);
+      l.v.multiplyScalar(Math.exp(-2.6 * dt));
+      const lontano = Math.hypot(pos.x - testa.x, pos.z - testa.z);
+      if (l.v.length() < 0.12 || lontano > 4) { p.lancio = null; lanciati.delete(p); salvaDisposizione(); }
+    }
+    p.gruppo.position.copy(ancora.worldToLocal(pos));
+    if (!p.pallottola) p.gruppo.lookAt(testa);
+    else p.gruppo.rotateX(dt * 9).rotateZ(dt * 5);
+  }
+}
+const cestino = (() => {
+  const g = new THREE.Group();
+  const corpo = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.13, 0.32, 28, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xff5468, opacity: 0.35, wireframe: true, ...ADD }));
+  const bordo = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.006, 8, 40),
+    new THREE.MeshBasicMaterial({ color: 0xff5468, opacity: 0.9, ...ADD }));
+  bordo.rotation.x = Math.PI / 2; bordo.position.y = 0.16;
+  g.add(corpo, bordo);
+  g.visible = false;
+  scena.add(g);
+  return {
+    g,
+    mostra() {
+      if (g.visible) return;
+      const testa = posizioneTesta(), avanti = new THREE.Vector3(0, 0, -1).applyQuaternion(orientamentoTesta());
+      avanti.y = 0; avanti.normalize();
+      const destra = new THREE.Vector3(-avanti.z, 0, avanti.x);
+      g.position.copy(testa).addScaledVector(avanti, 0.55).addScaledVector(destra, 0.35);
+      g.position.y = Math.max(0.2, testa.y - 0.85);
+      g.visible = true;
+    },
+    nascondi() { g.visible = false; },
+    dentro(pos) {
+      return g.visible && Math.hypot(pos.x - g.position.x, pos.z - g.position.z) < 0.22
+        && pos.y < g.position.y + 0.24 && pos.y > g.position.y - 0.25;
+    },
+  };
+})();
+function gestoAppallottola(m) {
+  const p = m.presa;
+  if (p.pallottola || m.pugno < 8) return;   // pugno chiuso per ~8 fotogrammi
+  p.pallottola = { s0: p.gruppo.scale.x, posizione: p.gruppo.position.clone(), q: p.gruppo.quaternion.clone() };
+  p.gruppo.scale.setScalar(0.16 * p.pallottola.s0);
+  m.offset.set(0, 0, 0);
+  cestino.mostra();
+  bip(180, 0.12, 0.06); vibra(m.sorgente);
+  avviso("Palla di carta: buttala nel cestino");
+}
+function lasciaPallottola(p, v) {
+  if (cestino.dentro(p.gruppo.getWorldPosition(new THREE.Vector3()))) { butta(p); return; }
+  if (v.length() > 0.8) { lancia(p, v); p.lancio.v.multiplyScalar(0.8); return; }
+  srotola(p);
+}
+function srotola(p, testo) {
+  const b = p.pallottola;
+  p.pallottola = null; p.lancio = null;
+  p.gruppo.scale.setScalar(b.s0);
+  p.gruppo.position.copy(b.posizione); p.gruppo.quaternion.copy(b.q);
+  cestino.nascondi();
+  if (testo) avviso(testo);
+}
+function butta(p) {
+  cestino.nascondi();
+  bip(240, 0.1, 0.07); setTimeout(() => bip(160, 0.14, 0.06), 90);
+  if (FISSI.includes(p)) {   // i pannelli fissi tornano con "Riordina" o scacciando via
+    const b = p.pallottola;
+    p.pallottola = null; p.gruppo.scale.setScalar(b.s0); p.gruppo.visible = false; p.nelCestino = true;
+    avviso("Nel cestino: torna con Riordina");
+  } else {
+    p.pallottola = null;
+    p.chiudi();
+  }
+}
+
+// ------------------------------------------------------------------ cinema: video e giochi a schermo grande
+// La realtà mista si oscura (cupola scura attorno), gli altri pannelli spariscono, la finestra del PC (in diretta
+// fluida) o il video vanno su uno schermo grande davanti a te. Esci con la barra sotto lo schermo o scacciando via.
+class BarraCinema extends Pannello {
+  constructor() { super("cinema", "CINEMA", 0.7, 0.13, { visibile: false, denso: true }); this.luce = 0; }
+  contenuto(c, W, H) {
+    const s = cinema.sorgente;
+    this.titolo = "CINEMA" + (s && s.nome ? " · " + s.nome.toUpperCase().slice(0, 22) : "");
+    const y = H - 92;
+    this.bottone(c, 34, y, 220, 70, "✕ ESCI", () => cinema.esci(), { dim: 24, colore: "255,84,104" });
+    this.bottone(c, 270, y, 220, 70, ["☾ BUIO", "◐ PENOMBRA", "☀ STANZA"][this.luce], () => {
+      this.luce = (this.luce + 1) % 3; this.sporco = true;
+    }, { dim: 22 });
+    if (s instanceof FinestraPc) {
+      this.bottone(c, 506, y, 220, 70, "⟳ DAVANTI", () => s.manda({ tipo: "davanti" }), { dim: 22 });
+      c.font = "400 22px " + FONT; c.fillStyle = "rgba(223,246,255,0.6)";
+      c.fillText(cinema.fps ? cinema.fps + " fps" : "collego…", 750, y + 42);
+    } else if (s && s.video) {
+      const el = s.video;
+      this.bottone(c, 506, y, 150, 70, el.paused ? "▶" : "❚❚", () => { el.paused ? el.play() : el.pause(); this.sporco = true; }, { dim: 28 });
+      this.bottone(c, 670, y, 120, 70, "−10", () => { el.currentTime = Math.max(0, el.currentTime - 10); }, { dim: 22 });
+      this.bottone(c, 800, y, 120, 70, "+10", () => { el.currentTime += 10; }, { dim: 22 });
+    }
+  }
+}
+const cinema = (() => {
+  const cupola = new THREE.Mesh(new THREE.SphereGeometry(24, 32, 16),
+    new THREE.MeshBasicMaterial({ color: 0x000000, side: THREE.BackSide, transparent: true, opacity: 0, depthWrite: false }));
+  cupola.renderOrder = -10; cupola.visible = false; scena.add(cupola);
+  const tex = new THREE.Texture();
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.flipY = false;   // le ImageBitmap arrivano già girate (imageOrientation: "flipY")
+  const schermo = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  schermo.userData.cinema = true; schermo.visible = false; scena.add(schermo);
+  const cornice = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)),
+    new THREE.LineBasicMaterial({ color: 0x39d5ff, opacity: 0.5, ...ADD }));
+  schermo.add(cornice);
+  const barra = new BarraCinema();
+  scena.add(barra.gruppo);
+  const C = { attivo: false, sorgente: null, schermo, barra, fps: 0, nascosti: [], ctrl: null, bitmap: null,
+    proporzione: 16 / 9, fotogrammi: 0, tFps: performance.now(), sferaPrima: null };
+  const LUCI = [0.94, 0.7, 0];
+  function misura(prop) {
+    C.proporzione = prop;
+    const w = 2.4;
+    schermo.scale.set(w, w / prop, 1);
+    barra.gruppo.position.copy(schermo.position).add(new THREE.Vector3(0, -(w / prop) / 2 - 0.16, 0.25).applyQuaternion(schermo.quaternion));
+    barra.gruppo.quaternion.copy(schermo.quaternion);
+  }
+  C.entra = function (sorgente) {
+    if (C.attivo) C.esci(true);
+    C.attivo = true; C.sorgente = sorgente; C.fps = 0; C.fotogrammi = 0; C.tFps = performance.now();
+    const testa = posizioneTesta(), avanti = new THREE.Vector3(0, 0, -1).applyQuaternion(orientamentoTesta());
+    avanti.y = 0; avanti.normalize();
+    schermo.position.copy(testa).addScaledVector(avanti, 2.1);
+    schermo.position.y = testa.y + 0.05;
+    schermo.lookAt(testa.x, schermo.position.y, testa.z);
+    // conferme e avvisi restano: una richiesta di permesso deve vedersi anche nel cinema
+    C.nascosti = pannelli.filter((p) => p !== barra && !p.sempreDavanti && p.gruppo.visible);
+    C.nascosti.forEach((p) => { p.gruppo.visible = false; });
+    barra.gruppo.visible = true; barra.comparsa = 0; barra.sporco = true;
+    cupola.visible = true;
+    C.sferaPrima = sfera.gruppo.position.clone();
+    if (sorgente.video) {
+      const vt = new THREE.VideoTexture(sorgente.video);
+      vt.colorSpace = THREE.SRGBColorSpace;
+      schermo.material.map = vt; schermo.material.needsUpdate = true;
+      misura((sorgente.video.videoWidth || 16) / (sorgente.video.videoHeight || 9));
+      sorgente.video.play().catch(() => {});
+    } else {
+      schermo.material.map = tex; schermo.material.needsUpdate = true;
+      misura(16 / 9);
+      avviaDiretta(sorgente);
+    }
+    schermo.visible = true;
+    // la sfera (pizzica e tieni per parlare) non copre lo schermo: va accanto alla barra, a portata di mano
+    const accanto = barra.gruppo.position.clone().add(new THREE.Vector3(-0.5, 0, 0).applyQuaternion(barra.gruppo.quaternion));
+    sfera.gruppo.position.copy(ancora.worldToLocal(accanto));
+    bip(440, 0.12, 0.05); setTimeout(() => bip(330, 0.2, 0.05), 120);
+    console.info("[xr] cinema:", sorgente.nome || sorgente.id);
+  };
+  C.esci = function (subito) {
+    if (!C.attivo) return;
+    C.attivo = false;
+    if (C.ctrl) { C.ctrl.abort(); C.ctrl = null; }
+    if (schermo.material.map !== tex) { schermo.material.map.dispose(); schermo.material.map = tex; }
+    schermo.visible = false; barra.gruppo.visible = false;
+    C.nascosti.forEach((p) => { if (pannelli.includes(p)) p.gruppo.visible = true; });
+    C.nascosti = []; C.sorgente = null;
+    if (C.sferaPrima) { sfera.gruppo.position.copy(C.sferaPrima); C.sferaPrima = null; }
+    if (subito) cupola.material.opacity = 0;
+    bip(330, 0.1, 0.05);
+  };
+  C.tocca = function (u, v) {   // un tocco sullo schermo grande = clic nello stesso punto della finestra del PC
+    const s = C.sorgente;
+    if (s instanceof FinestraPc) { bip(1300, 0.04, 0.05); s.manda({ tipo: "clic", x: u, y: 1 - v }); }
+    else if (s && s.video) { s.video.paused ? s.video.play() : s.video.pause(); barra.sporco = true; }
+  };
+  C.aggiorna = function (dt) {
+    const voluta = C.attivo ? LUCI[barra.luce] : 0;
+    cupola.material.opacity += (voluta - cupola.material.opacity) * Math.min(1, dt * 3);
+    cupola.visible = cupola.material.opacity > 0.01;
+    cupola.position.copy(posizioneTesta());
+    if (C.attivo && C.sorgente && !pannelli.includes(C.sorgente)) C.esci();   // chiusa la sorgente
+    if (C.attivo && C.sorgente && C.sorgente.video && !C.sorgente.video.paused) barra.sporco = barra.sporco || Math.random() < 0.03;
+  };
+  C.fotogramma = function (bmp) {
+    if (!C.attivo) { bmp.close(); return; }
+    const vecchio = C.bitmap;
+    C.bitmap = bmp;
+    tex.image = bmp; tex.needsUpdate = true;
+    if (vecchio) setTimeout(() => vecchio.close(), 100);   // già caricato nella scheda video
+    const p = bmp.width / bmp.height;
+    if (Math.abs(p - C.proporzione) > 0.02) misura(p);
+    C.fotogrammi++;
+    const ora = performance.now();
+    if (ora - C.tFps > 1000) { C.fps = Math.round(C.fotogrammi * 1000 / (ora - C.tFps || 1)); C.fotogrammi = 0; C.tFps = ora; barra.sporco = true; }
+  };
+  return C;
+})();
+// la diretta fluida della finestra o dello schermo: [4 byte di lunghezza][JPEG]... (vedi diretta() in visore.py)
+async function avviaDiretta(f) {
+  const ctrl = new AbortController();
+  cinema.ctrl = ctrl;
+  const parametri = f.schermo ? { numero: f.schermo } : { hwnd: f.hwnd };
+  Object.assign(parametri, { lato: 1600, fps: 30 });
+  try {
+    const r = await fetch(urlJ("/jarvis/schermo/diretta", parametri), { headers: { "X-Token": TOKEN }, signal: ctrl.signal });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).errore || "errore " + r.status);
+    const lettore = r.body.getReader();
+    let buf = new Uint8Array(0), occupato = false;
+    for (;;) {
+      const { value, done } = await lettore.read();
+      if (done) break;
+      const unito = new Uint8Array(buf.length + value.length);
+      unito.set(buf); unito.set(value, buf.length); buf = unito;
+      let ultimo = null;
+      while (buf.length >= 4) {
+        const n = new DataView(buf.buffer, buf.byteOffset, 4).getUint32(0);
+        if (buf.length < 4 + n) break;
+        ultimo = buf.slice(4, 4 + n); buf = buf.slice(4 + n);
+      }
+      // si decodifica solo l'ultimo arrivato: se il visore resta indietro salta i fotogrammi, non accumula ritardo
+      if (ultimo && !occupato) {
+        occupato = true;
+        // le ImageBitmap non si capovolgono da sole in WebGL: si chiede già girata
+        createImageBitmap(new Blob([ultimo], { type: "image/jpeg" }), { imageOrientation: "flipY" })
+          .then((b) => (cinema.ctrl === ctrl ? cinema.fotogramma(b) : b.close()))
+          .catch(() => {}).finally(() => { occupato = false; });
+      }
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") { avviso("Diretta interrotta: " + e.message); console.warn("[xr] diretta:", e); }
+  }
+}
+
+// ------------------------------------------------------------------ telecamera del visore (per Jarvis, col permesso)
+// Il permesso del browser si chiede prima di entrare (dentro la sessione il Quest non mostra la richiesta); Jarvis
+// chiede comunque il tuo sì ogni volta prima di scattare.
+async function preparaTelecamera() {
+  try {
+    const st = await navigator.permissions.query({ name: "camera" }).catch(() => null);
+    if (st && st.state !== "prompt") return;
+    const f = await navigator.mediaDevices.getUserMedia({ video: true });
+    f.getTracks().forEach((t) => t.stop());
+  } catch (e) { console.warn("[xr] telecamera:", e.message); }
+}
+async function scattaFoto(id) {
+  const manda = (corpo, errore) => fetch(urlJ("/jarvis/telecamera", errore ? { id, errore } : { id }),
+    { method: "POST", headers: { "X-Token": TOKEN, "Content-Type": "image/jpeg" }, body: corpo || new Blob([]) });
+  let flusso = null;
+  try {
+    avviso("📷 Jarvis guarda con la telecamera del visore");
+    flusso = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 960 } } });
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.srcObject = flusso;
+    await v.play();
+    await new Promise((ok) => setTimeout(ok, 700));   // esposizione e messa a fuoco
+    const c = document.createElement("canvas");
+    c.width = v.videoWidth; c.height = v.videoHeight;
+    c.getContext("2d").drawImage(v, 0, 0);
+    const blob = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.9));
+    bip(1600, 0.04, 0.07); setTimeout(() => bip(1200, 0.05, 0.06), 60);   // lo scatto
+    await manda(blob);
+    console.info("[xr] foto per Jarvis:", c.width + "x" + c.height, Math.round(blob.size / 1024) + " KB");
+  } catch (e) {
+    await manda(null, e.message || String(e)).catch(() => {});
+    avviso("Telecamera non disponibile: " + (e.message || e));
+  } finally {
+    if (flusso) flusso.getTracks().forEach((t) => t.stop());
+  }
+}
+
 // ------------------------------------------------------------------ anteprima sul PC (mouse)
 const mouse = new THREE.Vector2();
 let trascinando = null, yaw = 0, pitch = -0.08, colpoMouse = null, parlaMouse = false;
@@ -1459,6 +1880,7 @@ renderer.domElement.addEventListener("pointerdown", (e) => {
   if (renderer.xr.isPresenting) return;
   colpoMouse = colpisciMouse(e);
   if (colpoMouse && colpoMouse.object.userData.sfera) { parlaMouse = iniziaParlato(); return; }
+  if (colpoMouse && colpoMouse.object.userData.cinema) { cinema.tocca(colpoMouse.uv.x, colpoMouse.uv.y); return; }
   if (colpoMouse && colpoMouse.object.userData.pannello) {
     colpoMouse.object.userData.pannello.premi(colpoMouse.uv.x, colpoMouse.uv.y);
     return;
@@ -1515,6 +1937,7 @@ function eventoJarvis(d) {
   if (d.dettatura !== undefined) { S.dettatura = !!d.dettatura; sporca("promemoria"); }
   if (d.nuova) { S.messaggi = []; sporca("conversazione"); }
   if (d.visore) eventoVisore(d.visore);
+  if (d.telecamera && d.telecamera.id) scattaFoto(d.telecamera.id);
 }
 function aggiungi(tipo, testo) {
   S.messaggi.push({ tipo, testo });
@@ -1550,7 +1973,7 @@ function posaTracciata() {
 }
 function ricentra(motivo) {
   centraAncora();
-  sfera.gruppo.position.set(0, altezzaOcchi + 0.02, -0.74);
+  if (!cinema.attivo) sfera.gruppo.position.set(0, altezzaOcchi + 0.02, -0.74);
   const t = posizioneTesta();
   console.info("[xr] ricentrato:", motivo, "testa", t.toArray().map((v) => v.toFixed(2)).join(" "));
 }
@@ -1589,6 +2012,8 @@ renderer.setAnimationLoop(() => {
   const testa = posizioneTesta();
   aggiornaMani();
   aggiornaController();
+  aggiornaLanci(dt);
+  cinema.aggiorna(dt);
   sfera.aggiorna(dt, t, testa);
   pannelli.forEach((p) => p.aggiorna(dt, t));
   if (pAvviso.gruppo.visible && performance.now() > avvisoFino) pAvviso.gruppo.visible = false;
@@ -1663,6 +2088,7 @@ async function avvia() {
   bottone.disabled = false;
   bottone.onclick = async () => {
     await preparaMicrofono();   // il permesso si chiede prima: dentro la sessione il visore non mostra la richiesta
+    await preparaTelecamera();
     const sessione = await navigator.xr.requestSession(ar ? "immersive-ar" : "immersive-vr", {
       requiredFeatures: ["local-floor"], optionalFeatures: ["hand-tracking", "bounded-floor"] });
     scena.background = null; griglia.visible = false;
@@ -1672,7 +2098,11 @@ async function avvia() {
     const spazio = renderer.xr.getReferenceSpace();
     if (spazio && spazio.addEventListener) spazio.addEventListener("reset", () => { daRicentrare = true; });
     document.getElementById("avvio").classList.add("nascosto");
+    // con il visore addosso si parla dal Quest: Jarvis spegne il microfono del tablet (si sovrapporrebbero)
+    apiJ("/jarvis/visore/sessione", { immersivo: true }).catch(() => {});
     sessione.addEventListener("end", () => {
+      apiJ("/jarvis/visore/sessione", { immersivo: false }).catch(() => {});
+      cinema.esci(true);
       scena.background = sfondoAnteprima; griglia.visible = true;
       document.getElementById("avvio").classList.remove("nascosto");
       ancora.position.set(0, 0, 0); ancora.rotation.set(0, 0, 0); altezzaOcchi = 1.6; disposizioneIniziale(false);
@@ -1700,4 +2130,5 @@ bottoneInstalla.onclick = async () => {
   bottoneInstalla.hidden = true;
 };
 addEventListener("appinstalled", () => { bottoneInstalla.hidden = true; console.info("[xr] installata"); });
-if (q.get("prova") === "1") window.__xr = { mani, pannelli, THREE, sfera, S, ancora };   // solo per le prove automatiche
+if (q.get("prova") === "1") window.__xr = { mani, pannelli, THREE, sfera, S, ancora, cinema, FinestraPc, apriDinamico,
+  cestino, butta, lancia, lanciati, FISSI, disposizioneIniziale };   // solo per le prove automatiche

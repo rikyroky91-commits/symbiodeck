@@ -8,6 +8,7 @@ Stati: spento, riposo (aspetta "Ehi Jarvis"), ascolto, penso (trascrizione), lav
 parlo, conferma (aspetta sì/no), seguito (dopo una risposta ascolta ancora qualche secondo senza parola chiave).
 """
 import ipaddress
+import itertools
 import json
 import os
 import queue
@@ -114,6 +115,21 @@ _PRIVATA_NO = re.compile(r"^(?:(?:esci|disattiva|spegni|togli|chiudi)\b.*\bmodal
                          r"|torna (?:a|con) claude|modalit[aà] normale)$")
 
 
+def _riduci_foto(jpeg, lato=1568):
+    """Lato lungo al massimo 1568 px (quanto Claude guarda senza ridurre da sé), JPEG di nuovo."""
+    import io
+    from PIL import Image
+    im = Image.open(io.BytesIO(jpeg))
+    im.load()
+    if max(im.size) <= lato and im.format == "JPEG":
+        return jpeg
+    im = im.convert("RGB")
+    im.thumbnail((lato, lato))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=85)
+    return out.getvalue()
+
+
 def log(*parti):
     # chiavi, token e password non finiscono mai in chiaro nel registro (che contiene ogni frase detta)
     riga = time.strftime("%Y-%m-%d %H:%M:%S ") + oscura(" ".join(str(p) for p in parti))
@@ -181,6 +197,8 @@ class Jarvis:
         self.blocco_domande = threading.Lock()   # una conferma o domanda per volta
         self.meteo = {"t": 0, "testo": ""}
         self.visori = 0            # visori (Quest, web/xr.js) collegati al flusso di eventi
+        self.visore_immersivo = False   # l'utente è dentro Jarvis XR (sessione immersiva): microfono del tablet spento
+        self.foto_attese = {}      # id -> {"pronta": Event, "jpeg": bytes}: foto chieste a visore o tablet
         self.emergenza = Emergenza(self, log)
         self.tts_locale = SintesiLocale(log)
         self.claude = None
@@ -311,7 +329,61 @@ class Jarvis:
                 self.evento(errore=f"{cosa.capitalize()} del PC: il dispositivo non risponde, scegline un altro")
 
     def _aggiorna_microfono(self):
-        self.tablet.vuoi_microfono(self.imp["attivo"] and self.imp["microfono"] == "tablet")
+        # con il visore addosso si parla dal Quest: il microfono del tablet si spegne, se no sente la stessa voce
+        self.tablet.vuoi_microfono(self.imp["attivo"] and self.imp["microfono"] == "tablet"
+                                   and not self.visore_immersivo)
+
+    def imposta_visore(self, immersivo):
+        """Jarvis XR dice se l'utente è dentro la sessione immersiva (o il visore si è scollegato)."""
+        immersivo = bool(immersivo)
+        if immersivo == self.visore_immersivo:
+            return
+        self.visore_immersivo = immersivo
+        log("visore in uso: microfono del tablet spento" if immersivo
+            else "visore tolto: microfono del tablet di nuovo attivo")
+        self._aggiorna_microfono()
+        self.evento(visore_immersivo=immersivo)
+
+    # ------------------------------------------------------------ telecamere (visore e tablet)
+    def guarda(self, motivo, dispositivo="auto", attesa_foto=20):
+        """Una foto dalla telecamera del visore (se l'utente lo indossa) o del tablet, solo col suo permesso ogni
+        volta. Restituisce {"ok", "messaggio", "jpeg"} (jpeg in base64, lato lungo al massimo 1568 px)."""
+        import base64
+        if dispositivo not in ("visore", "tablet"):
+            dispositivo = "visore" if self.visore_immersivo else "tablet"
+        if dispositivo == "visore" and not self.visori:
+            return {"ok": False, "messaggio": "Il visore non è collegato (Jarvis XR non è aperto)."}
+        if dispositivo == "tablet" and not self.tablet.collegato():
+            return {"ok": False, "messaggio": "Il tablet non è collegato a Jarvis."}
+        nome = "del visore" if dispositivo == "visore" else "del tablet"
+        motivo = " ".join(str(motivo).split())[:120] or "guardare"
+        # "usare ..." non accetta "sì, sempre" (guardia.SEMPRE_VIETATO): il permesso si chiede ogni volta
+        if not self.chiedi_conferma(f"usare la telecamera {nome}: {motivo}", sempre_ok=False):
+            return {"ok": False, "messaggio": "L'utente non ha dato il permesso di usare la telecamera."}
+        id_ = secrets.token_hex(6)
+        attesa = {"pronta": threading.Event(), "jpeg": None, "errore": ""}
+        self.foto_attese[id_] = attesa
+        try:
+            if dispositivo == "visore":
+                self.evento(telecamera={"id": id_})
+            else:
+                self.tablet.comando_una_volta(foto=id_)
+            self.evento(azione=f"Telecamera {nome}: {motivo}")
+            if not attesa["pronta"].wait(attesa_foto) or not attesa["jpeg"]:
+                return {"ok": False, "messaggio": attesa["errore"] or f"La telecamera {nome} non ha mandato la foto."}
+            jpeg = _riduci_foto(attesa["jpeg"])
+        finally:
+            self.foto_attese.pop(id_, None)
+        log("foto dalla telecamera", nome, f"{len(jpeg) // 1024} KB:", motivo)
+        return {"ok": True, "messaggio": f"Foto dalla telecamera {nome}.", "jpeg": base64.b64encode(jpeg).decode()}
+
+    def foto_arrivata(self, id_, jpeg, errore=""):
+        a = self.foto_attese.get(id_)
+        if not a:
+            return False
+        a["jpeg"], a["errore"] = jpeg, errore
+        a["pronta"].set()
+        return True
 
     def _prepara_stt(self):
         try:
@@ -325,6 +397,8 @@ class Jarvis:
     def _blocco(self, da, blocco):
         if da != self.imp["microfono"] or not self.imp["attivo"]:
             return
+        if da == "tablet" and self.visore_immersivo:
+            return   # col visore si parla dal Quest
         if self.uscita.aec is not None:
             try:
                 blocco = self.uscita.aec.pulisci(blocco, time.monotonic())
@@ -1574,6 +1648,8 @@ class Gestore(BaseHTTPRequestHandler):
         if u.path == "/jarvis/memoria":
             return self.manda(200, {"attiva": bool(self.j.imp.get("memoria", True)), "fatti": self.j.memoria.elenco(),
                                     "permessi": self.j.permessi.elenco()})
+        if u.path == "/jarvis/schermo/diretta":
+            return self.diretta(q)
         if u.path.startswith("/jarvis/file/") or u.path.startswith("/jarvis/finestre") or u.path.startswith("/jarvis/schermo/"):
             return self.visore_get(u, q)
         if u.path == "/jarvis/conversazioni":
@@ -1615,6 +1691,8 @@ class Gestore(BaseHTTPRequestHandler):
             return self.microfono()
         if u.path == "/jarvis/voce":
             return self.voce_intera()
+        if u.path == "/jarvis/telecamera":
+            return self.foto_dal_dispositivo(q)
         try:
             n = int(self.headers.get("Content-Length") or 0)
             if n > 64 * 1024:
@@ -1679,6 +1757,11 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, j.chiedi_e_aspetta(testo, attesa, bool(d.get("parla_a_casa", False))))
             if u.path == "/jarvis/interno/visore":
                 return self.manda(200, j.mostra_nel_visore(d))
+            if u.path == "/jarvis/interno/guarda":
+                return self.manda(200, j.guarda(str(d.get("motivo", "")), str(d.get("dispositivo", "auto"))))
+            if u.path == "/jarvis/visore/sessione":
+                j.imposta_visore(bool(d.get("immersivo")))
+                return self.manda(200, {"ok": True})
             if u.path == "/jarvis/file/apri":
                 try:
                     visore.apri_sul_pc(str(d.get("percorso", "")))
@@ -1753,6 +1836,8 @@ class Gestore(BaseHTTPRequestHandler):
             if visore_qui:
                 self.j.visori -= 1
                 log("visore scollegato")
+                if not self.j.visori:
+                    self.j.imposta_visore(False)
 
     def _flusso(self):
         self.send_response(200)
@@ -1795,6 +1880,53 @@ class Gestore(BaseHTTPRequestHandler):
         except (ConnectionError, OSError):
             pass
         log("tablet scollegato (altoparlante)")
+
+    def diretta(self, q):
+        """Schermo o finestra in diretta per il cinema di Jarvis XR: [4 byte di lunghezza][JPEG], uno dopo l'altro,
+        finché il visore resta collegato."""
+        a = lambda k, d: (q.get(k) or [d])[0]   # noqa: E731
+        try:
+            fotogrammi = visore.diretta(int(a("numero", "0")), int(a("hwnd", "0")), max(320, min(1920, int(a("lato", "1280")))),
+                                        int(a("fps", "30")))
+            primo = next(fotogrammi)
+        except (LookupError, ValueError, OSError) as e:
+            return self.manda(404, {"errore": str(e)})
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-jarvis-fotogrammi")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Connection", "close")
+        self._cors()
+        self.end_headers()
+        self.close_connection = True
+        log("diretta per il visore iniziata:", dict((k, v[0]) for k, v in q.items() if k != "t"))
+        n = 0
+        try:
+            for jpeg in itertools.chain([primo], fotogrammi):
+                self.wfile.write(len(jpeg).to_bytes(4, "big") + jpeg)
+                self.wfile.flush()
+                n += 1
+        except (ConnectionError, OSError, LookupError):
+            pass
+        finally:
+            fotogrammi.close()
+            log("diretta per il visore finita:", n, "fotogrammi")
+
+    def foto_dal_dispositivo(self, q):
+        """La foto chiesta da guarda(): JPEG nel corpo (visore o tablet), ?id=…; ?errore=… se non è riuscita."""
+        id_ = (q.get("id") or [""])[0]
+        errore = (q.get("errore") or [""])[0][:200]
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 12 * 1024 * 1024:
+                return self.manda(400, {"errore": "foto troppo grande"})
+            dati = self.rfile.read(n) if n else b""
+        except (ValueError, OSError) as e:
+            return self.manda(400, {"errore": str(e)})
+        if dati and not dati.startswith(b"\xff\xd8"):
+            return self.manda(400, {"errore": "non è un JPEG"})
+        if not self.j.foto_arrivata(id_, dati, errore):
+            return self.manda(404, {"errore": "nessuna foto chiesta con questo id"})
+        return self.manda(200, {"ok": True})
 
     def voce_intera(self):
         """Una frase intera già registrata (PCM 16 kHz, 16 bit, mono): il "tieni premuto e parla" dell'app per Quest
@@ -1864,6 +1996,9 @@ def main():
     if ctypes.get_last_error() in (183, 5):  # già c'è (5: c'è, ma avviato come amministratore)
         log("jarvis già in esecuzione: esco")
         return
+    # l'attività pianificata parte a priorità "sotto il normale": con un'installazione pesante a pieno carico
+    # (2026-11-24) Jarvis rispondeva in secondi e caricava la voce in minuti. Normale, ereditata da Claude Code
+    k32.SetPriorityClass(ctypes.c_void_p(k32.GetCurrentProcess()), 0x20)   # NORMAL_PRIORITY_CLASS
     j = Jarvis()
     srv = ServerUnico(("0.0.0.0", PORTA), Gestore)
     srv.jarvis = j

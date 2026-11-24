@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <!-- Jarvis: microfono e voce del tablet anche a schermo spento (servizio in primo piano, Wi-Fi sveglio) -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Jarvis guarda con la telecamera posteriore, solo dopo il sì dell'utente (Fotocamera.java) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <!-- modalità "chiamata" per la cancellazione dell'eco (Jarvis si può interrompere parlandogli sopra) -->

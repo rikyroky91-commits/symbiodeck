@@ -453,6 +453,47 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     `python android/quest/costruisci_quest.py --installa` (Quest in adb; l'IP finisce nell'APK: se cambia, si
     ricostruisce). Nel visore: Libreria > Fonti sconosciute > Jarvis XR, da fissare nella barra. **Provato**:
     installato e lanciato via adb, il Browser ha aperto Jarvis XR.
+  - **Puntatore, gesti, cinema, telecamere** (2026-11-24 notte, richiesta dell'utente):
+    - **Puntatore delle mani**: da lontano ogni mano ha il raggio del Quest (dal palmo). Pizzico breve = tocco dove
+      punta; pizzico tenuto = trascini il pannello lungo il raggio; due mani sullo stesso pannello = zoom (anche da
+      lontano, fino a 3,2x). A meno di 25 cm da un pannello il raggio sparisce: restano tocco con l'indice e presa.
+    - **Scaccia via** (mano aperta, di lato, veloce: ≥32 cm in 0,3 s, lontano dai pannelli): pannelli rimessi come
+      all'inizio (anche quelli nel cestino); nel cinema si esce dal cinema.
+    - **Lancio**: lasci un pannello con la mano in corsa (>1,1 m/s) e vola più in là rallentando (al massimo 4 m).
+    - **Palla di carta**: tieni un pannello col pizzico e chiudi il pugno: diventa una palla e compare un cestino
+      rosso in basso a destra. Lasciata nel cestino o lanciata dentro (cade con la gravità) il pannello si chiude
+      (i fissi spariscono fino a Riordina); se manchi il cestino torna com'era ("Mancato! Riprova").
+    - **Cinema** (pulsante 🎮/🎬 CINEMA sulle finestre del PC e sui video; un video che parte ci va da solo): schermo
+      di 2,4 m a 2,1 m davanti, stanza oscurata (cupola nera: buio 94%, penombra 70%, stanza), gli altri pannelli
+      spariscono (conferme e avvisi no), la sfera va accanto alla barra per parlare. La finestra del PC arriva in
+      **diretta fluida** (`GET /jarvis/schermo/diretta`: [4 byte di lunghezza][JPEG]…, il pannello la inoltra a pezzi
+      come gli eventi): un tocco o il raggio sullo schermo = clic nella finestra vera. Per giocare: controller,
+      tastiera o mouse collegati al PC; l'audio esce dal PC. Cattura: GDI ridotto mentre legge (StretchBlt, ~12
+      fotogrammi/s su schermo 4K, prima ~5 con la cattura intera); se c'è `dxcam` (`pip install dxcam
+      opencv-python-headless`, non installato: l'installazione da qui non era permessa) cattura dalla scheda video,
+      30-60/s. Schermo del PC spento: per una finestra si ripiega su PrintWindow (~5/s).
+    - **Telecamere** ("hey Jarvis, guarda questa scheda madre e dimmi che modello è"): strumento MCP
+      `guarda_con_telecamera` (in `visore_mcp.py`) → `POST /jarvis/interno/guarda` → Jarvis chiede **ogni volta** il
+      permesso ("usare la telecamera del visore: …", niente "sì, sempre") → foto dal visore (se lo indossi: evento
+      `telecamera`, `getUserMedia` della passthrough, permesso del browser chiesto prima di entrare) o dal tablet
+      (comando una tantum `foto`, `Fotocamera.java` con Camera2, telecamera posteriore, app 1.10.0) →
+      `POST /jarvis/telecamera?id=` → ridotta a 1568 px → l'immagine torna a Claude. Senza sì niente foto.
+    - **Microfono del tablet spento col visore**: entrando in realtà mista Jarvis XR manda
+      `POST /jarvis/visore/sessione {"immersivo": true}` e Jarvis spegne il microfono del tablet (e ne ignora
+      l'audio); uscendo, o se il visore si scollega, si riaccende. Col visore si parla pizzicando la sfera.
+    - **Priorità normale**: l'Utilità di pianificazione avviava pannello e Jarvis "sotto il normale"; con
+      un'estrazione FitGirl a pieno carico `/jarvis/stato` impiegava 1,8 s e la voce minuti a caricarsi. Ora entrambi
+      si mettono a priorità normale all'avvio (`SetPriorityClass`).
+    - **Eco**: corretto `deque mutated during iteration` in `eco.py` (il ciclo di ascolto cadeva mentre il thread del
+      microfono aggiungeva misure).
+    - **Provato**: test Python (`tests/test_jarvis_telecamera.py`, 9: permesso no/sì, tablet, visore, errori, id
+      sbagliato, microfono del tablet, comando una tantum); indirizzi veri via pannello HTTPS (foto con id sbagliato
+      404, non JPEG 400, sessione visore → microfono del tablet spento e riacceso, senza chiave 401); diretta di una
+      finestra e dello schermo (velocità misurate sopra); anteprima sul PC: cinema con la finestra di Claude
+      (immagine dritta, pannelli nascosti, sfera accanto alla barra), lancio, cestino per un pannello fisso e
+      Riordina, palla di carta lanciata nel cestino; app del tablet 1.10.0 installata, permesso CAMERA concesso.
+      **Non provato**: mani vere sul Quest (puntatore, scaccia, pugno), cinema nel visore, foto vera dal visore e
+      dal tablet (Camera2 sullo SHIELD), velocità della diretta col PC scarico.
 - **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
   "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
   Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche
@@ -634,4 +675,4 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.9.1 (2026-11-23, Jarvis interrompibile); app iPhone/Watch: `jarvis-ios-N`.
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.10.0 (2026-11-24, telecamera del tablet per Jarvis); app iPhone/Watch: `jarvis-ios-N`.

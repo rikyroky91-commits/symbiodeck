@@ -1321,7 +1321,8 @@ class Gestore(BaseHTTPRequestHandler):
             r = c.getresponse()
         except OSError:
             return self.manda(502, {"errore": "Jarvis non risponde"})
-        eventi = (r.getheader("Content-Type") or "").startswith("text/event-stream")
+        # eventi e diretta dello schermo passano man mano che arrivano (non a blocchi da 64 KB)
+        eventi = (r.getheader("Content-Type") or "").startswith(("text/event-stream", "application/x-jarvis-fotogrammi"))
         try:
             self.send_response(r.status)
             for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control"):
@@ -1875,6 +1876,9 @@ def main():
         user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))  # PER_MONITOR_AWARE_V2
     except (AttributeError, OSError):
         pass
+    # l'Utilità di pianificazione avvia le attività a priorità "sotto il normale": con un gioco o un'installazione
+    # pesante il pannello restava indietro (provato il 2026-11-24, un'estrazione FitGirl a pieno carico)
+    k32.SetPriorityClass(ctypes.c_void_p(k32.GetCurrentProcess()), 0x20)   # NORMAL_PRIORITY_CLASS
     cfg = carica_config()
     global PORTA
     PORTA = int(cfg.get("porta", PORTA))
