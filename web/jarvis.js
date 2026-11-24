@@ -465,7 +465,8 @@
       scelte("modello_compiti", MODELLI)));
     c.appendChild(riga("Ragionamento dei compiti", "più alto: più accurato ma più lento", scelte("effort_compiti", LIVELLI)));
     c.appendChild(riga("Interrompibile", "mentre parla ti ascolta: se gli parli sopra si ferma", interruttore("interrompibile")));
-    c.appendChild(riga("Cancellazione dell'eco", "sul tablet, come il vivavoce: serve per interromperlo", interruttore("eco")));
+    c.appendChild(riga("Cancellazione dell'eco sul PC", "toglie la sua voce dal microfono: puoi interromperlo o dire «Hey Jarvis» mentre parla", interruttore("aec_pc")));
+    c.appendChild(riga("Cancellazione dell'eco del tablet", "quella di Android, se il tablet ce l'ha (lo SHIELD no)", interruttore("eco")));
     c.appendChild(riga("Conversazioni nell'app Claude", "ogni conversazione compare subito nell'app del PC, progetto pc-panel",
       interruttore("consegna_app")));
     c.appendChild(riga("Aggiornamenti mentre lavora", "se l'esecutore lavora in silenzio, ogni tanto ti dice a che punto è",

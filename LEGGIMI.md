@@ -224,13 +224,55 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   (`VOICE_COMMUNICATION`, `MODE_IN_COMMUNICATION`, impostazione "Cancellazione dell'eco"): lo SHIELD Tablet **non**
   ha l'effetto `AcousticEchoCanceler` ("AEC non disponibile"), da misurare se la modalità chiamata riduce comunque
   l'eco (`jarvis.log`: "eco della voce" dopo ogni frase, efficace sotto 0,15). La parola chiave resta sempre attiva
-  per interromperlo. **Non provato dal vivo.**
+  per interromperlo.
+- **Cancellazione dell'eco sul PC** (2026-11-24, `server/jarvis/eco.py`, impostazione "Cancellazione dell'eco sul
+  PC", `aec_pc`, accesa di serie). Jarvis sa esattamente cosa manda alle casse, quindi lo toglie dal microfono come un
+  vivavoce. Tutto quello che Jarvis ascolta (parola chiave, interruzione, trascrizione) passa dal segnale pulito.
+  - **Filtro**: lineare a blocchi in frequenza (14 x 256 campioni = 224 ms), due copie: una impara sempre, l'altra
+    pulisce e copia la prima solo quando cancella meglio, così chi parla sopra non lo rovina. Meno dell'1% di un core.
+    Provato prima WebRTC (AEC3, pacchetto `livekit`): con l'eco forte schiaccia anche la voce di chi parla sopra
+    (misurato 4117 → 91) e "Hey Jarvis" detto sopra la sua voce non veniva più riconosciuto (0 casi su 12; con il
+    filtro lineare 11 su 12).
+  - **Tempi**: il microfono si data contando i campioni (l'ora di arrivo dei pacchetti oscilla di decine di ms) e il
+    riferimento con l'orario teorico in cui suona. `Uscita` ora ha un solo thread che manda l'audio su un orologio
+    continuo e, tra una frase e l'altra e per 1,5 s dopo l'ultima, silenzio: il buffer del tablet (~0,5 s) non si
+    svuota e il ritardo casse → microfono resta identico. Prima a ogni frase il tablet ripartiva da buffer vuoto con
+    qualche ms o decina di ms di differenza, il filtro (allineato al campione) perdeva l'eco e scattavano falsi allarmi.
+  - **Ritardo**: primo aggancio con una correlazione PHAT microfono/riferimento, precisa al ms (prima gli inviluppi
+    sbagliavano di decine di ms e cambiavano idea a ogni risposta, facendo ripartire il filtro); si ricorda in
+    `jarvis-dati/eco-ritardo.json`. Dopo, se l'eco si sposta (nuova risposta, rete), ogni blocco controlla se nel
+    pulito resta qualcosa di simile all'eco prevista e forte (meno di 12 dB tolti): allora quel blocco non vale per le
+    decisioni e, al secondo di fila, si misura la nuova posizione del percorso diretto rispetto a una "fotografia" del
+    filtro di quando andava bene, la si verifica sui dati e si riallinea al campione rimettendo la fotografia
+    (corretti in simulazione salti da -40 a +120 ms in ~250 ms). La stima grossolana interviene solo se la
+    cancellazione fallisce per secondi.
+  - **Decisioni**: interruzione a voce solo a cancellazione agganciata (10 dB o più tolti, mediana degli ultimi ~5 s,
+    valida fino a 1,5 s dopo perché chi parla sopra abbassa la misura) e senza perdite in corso, con un'`Interruzione`
+    che impara solo dal segnale pulito. Se le casse saturano il microfono, per quel tratto resta solo "Hey Jarvis" (il
+    registro lo dice una volta: "volume troppo alto?"). Dopo ogni suono o frase, senza cancellazione agganciata, la
+    coda d'eco (ritardo + 0,3 s) non si ascolta: l'eco del suono di attivazione era diventata un "Sì!". All'interruzione
+    si tengono 1,6 s di audio già pulito, così la frase non perde l'inizio.
+  - **Trascrizione**: il suggerimento per Whisper era "Jarvis, apri Spotify. Sì, confermo." e Whisper sul rumore lo
+    ripeteva: un "Sì, confermo." inventato durante una richiesta di conferma avrebbe approvato un'azione irreversibile.
+    Ora il suggerimento non è un comando né una risposta e una trascrizione che lo ripete si scarta; scartate anche le
+    frasi tipiche dei sottotitoli ("Grazie per la visione", "Iscriviti al canale"...) e i segmenti che Whisper stesso
+    dà per silenzio.
+  - **Provato** (2026-11-24) con il Jarvis intero (Claude vero) e un tablet finto che fa eco come quello vero
+    (buffer, ritardo 0,3 s, stanza, casse che distorcono, ripartenze con 0-80 ms di differenza): eco al 10% e al 30%,
+    7 prove su 7 (risponde; nessun falso allarme sulla sua eco; si ferma quando gli parli sopra in ~0,5 s e trascrive
+    la frase intera, "Aspetta, fermati un attimo, parlami solo dei primi computer."; "Hey Jarvis" sopra la sua voce lo
+    ferma, non riprende la risposta vecchia e risponde alla richiesta nuova). Eco al 60% (satura il microfono): nessun
+    falso allarme, "Hey Jarvis" funziona, l'interruzione a voce spesso no. Eco tolta 25-29 dB.
+    `tests/test_jarvis_eco.py`: 12 casi (spostamenti, risposte nuove, casse che distorcono, interruzioni...).
+    **Da misurare dal vivo con il tablet vero** (`jarvis.log`: "eco della voce dopo la cancellazione" dopo ogni
+    risposta, con ritardo e dB tolti).
 - **Modalità gioco** (2026-11-24, richiesta dell'utente: è un PC da gioco, scheda video e processore non vanno tenuti
   occupati). Misurato a riposo: Jarvis usa ~0,4% del processore e 85 MB di RAM (parola chiave e rilevamento della voce
   sulla CPU, leggerissimi); il peso è Whisper large-v3-turbo sulla scheda video (2-3 GB). Ogni 5 s `rileva_gioco()`
   guarda i dati del pannello (`/api/stato`): FPS di RivaTuner presenti = gioco; altrimenti finestra a schermo intero
   con la GPU oltre il 40%, o GPU oltre il 70% (ma non se a caricarla è llama-server). Entra dopo 2 rilevamenti di fila,
-  esce dopo un minuto senza gioco. In gioco: Whisper passa alla CPU (`small`, ~2 s a frase) e la scheda resta tutta al
+  esce dopo un minuto senza gioco. In gioco: Whisper passa alla CPU (`medium` int8, 4 thread: più preciso di `small`,
+  che resta sceglibile come "veloce" in `stt_cpu`) e la scheda resta tutta al
   gioco; il modello locale dell'emergenza non si accende ("lo accendo quando finisci") e, se era acceso da Jarvis, si
   spegne. Impostazione `modalita_gioco` (pannello: "Modalità gioco"). **Non provato con un gioco vero.**
 - **Modalità emergenza** (2026-11-24, `server/jarvis/emergenza.py`): senza Internet (2 controlli di fila falliti
@@ -349,18 +391,37 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
     16 kHz) e Jarvis la trascrive sul PC come quelle del tablet; se c'è una conferma aperta, è la risposta. Le
     posizioni restano salvate nel visore; "Riordina" le rimette attorno a te. **Controller**: raggio + grilletto
     (tenuto sulla sfera = parla), impugnatura per spostare.
-  - **Aprirla nel visore**: la realtà mista vuole `https://` oppure `localhost`. Due strade:
-    1. **Tailscale Serve** (consigliata, senza cavo): sul PC `tailscale serve --bg --https=443 http://127.0.0.1:47800`
-       e `tailscale serve --bg --https=8443 http://127.0.0.1:47802`; sul Quest Tailscale attivo e nel browser
-       `https://<nome-pc>.<tailnet>.ts.net/xr.html?t=<chiave>` (la pagina usa da sola la porta 8443 per Jarvis).
-    2. **Cavo USB** (modalità sviluppatore del Quest): `adb reverse tcp:47800 tcp:47800` e
-       `adb reverse tcp:47802 tcp:47802`, poi `http://localhost:47800/xr.html?t=<chiave>`.
-    I link con la chiave sono nella pagina delle impostazioni del PC (sezione Jarvis XR). Sul PC la stessa pagina
-    è un'**anteprima** col mouse: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.
+  - **Aprirla nel visore, in Wi-Fi** (dal 2026-11-24 sera, `server/xr_https.py`): il Quest apre la realtà mista e il
+    microfono solo da pagine `https://` (o `localhost`). Il pannello allora serve le stesse pagine e API anche in
+    **HTTPS sulla porta 47443**, con un certificato che genera da solo per gli indirizzi del PC (rifatto se cambiano;
+    file in `server/xr-certificato/`, fuori da git; serve `cryptography`, in requirements-jarvis.txt). Niente cavo,
+    niente Tailscale, niente app da installare. Le chiamate `/jarvis/*` passano dal pannello a Jarvis (anche gli
+    eventi in diretta e i video a pezzi), così la pagina usa un indirizzo solo.
+    **Indirizzo corto**: il server HTTPS prova prima la porta **443** e, se riesce, apre anche la porta 80 che
+    rimanda a https: nel Browser del Quest basta scrivere l'**IP del PC** (es. `192.168.1.50`), senza porta né chiave.
+    Se la 443 è occupata usa la 47443 (`https://192.168.1.50:47443`). L'indirizzo nudo apre Jarvis XR.
+    **Senza chiave da copiare** (`AbbinaVisore` in pannello.py): il visore chiede di collegarsi e mostra un codice di
+    4 cifre; Jarvis lo chiede sul tablet a tutto schermo ("Un visore vuole collegarsi, il codice è 4 7 1 9: lo
+    consento?", Consenti/Rifiuta, anche a voce), oppure si consente dalle impostazioni del PC. La chiave arriva al
+    visore una volta sola e resta salvata lì. Una richiesta per volta, al massimo 6 ogni 10 minuti, valide 3 minuti.
+    1. Nel Browser del Quest scrivi l'IP del PC (è scritto grande nelle impostazioni del PC > Jarvis XR).
+    2. Solo la prima volta: il visore avvisa che il certificato non è verificato, **Avanzate** > **Procedi**.
+    3. Il visore mostra il codice: sul tablet rispondi **Consenti**.
+    4. **ENTRA IN REALTÀ MISTA**, concedi microfono e mani. Le volte dopo entra da solo.
+    Il QR nelle impostazioni del PC fa lo stesso saltando il codice (contiene già la chiave).
+    Conviene dare al PC un IP fisso nel router (prenotazione DHCP): l'indirizzo non cambia e il certificato nemmeno.
+    Se Windows chiede il permesso del firewall per Python sulla porta nuova, va dato per le reti private.
+    Alternative se servisse: cavo USB con `adb reverse tcp:47800 tcp:47800` e `http://localhost:47800/xr`, oppure il
+    flag `unsafely-treat-insecure-origin-as-secure` in `chrome://flags` del Browser del Quest con `http://<IP>:47800`.
+    Sul PC la stessa pagina (`http://localhost:47800/xr`) è un'**anteprima** col mouse.
   - Provato in Chrome senza visore con pannello e Jarvis finti: rendering, pulsanti col mouse (app, media, privata,
     nuova), autorizzazione e risposta, e **mani simulate** (giunti finti): il tocco preme Privata, il pizzico sposta
     la Telemetria e salva la posizione, due mani ingrandiscono le App. **Non provato su un Quest 3 vero**: tracciamento
-    delle mani reale, passthrough, microfono del visore, Tailscale Serve.
+    delle mani reale, passthrough, microfono del visore. HTTPS e inoltro provati in Python
+    (`tests/test_xr_https.py`: certificato, stretta di mano nel thread, eventi in diretta, voce, video a pezzi,
+    abbinamento col codice, rimando da http a https);
+    **non provato** che il Browser del Quest, dopo "Procedi", tratti la pagina come sicura per la realtà mista
+    (secondo la documentazione di NVIDIA CloudXR succede).
 - **Il PC dentro il visore** (2026-11-24, `server/jarvis/visore.py`, `visore_mcp.py`, pannelli nuovi in `web/xr.js`).
   "Ehi Jarvis, aprimi la cartella delle foto sul desktop" → la voce chiama `visore_cartella("foto", "desktop")`,
   Jarvis trova la cartella sul PC (`risolvi_cartella`: Desktop, Immagini, Documenti, Download, Video, Musica anche
@@ -515,6 +576,16 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   pannello Jarvis in anteprima 960x600. **Non ancora provato**: parola chiave detta da una persona vera al tablet,
   tablet a schermo spento e a batteria per ore (Doze), casse e microfono del PC. Dopo un riavvio del tablet si è
   ricollegato a Jarvis da solo in Wi-Fi (microfono compreso).
+- **Unione di stamattina e del pomeriggio** (2026-11-24 sera, ramo `jarvis-unione`): il lavoro "in prova" della
+  mattina (eco sul PC, conferme da lontano, Whisper medium sulla CPU, frasi spezzate unite) era solo sul ramo
+  `jarvis-in-prova`; ora è unito a `main` + Jarvis XR senza cavo. Nelle conferme da lontano il conto alla rovescia
+  mostrato è di 90 s come l'attesa vera (prima diceva 45), e le azioni delicate chiedono il tocco "sul telefono o
+  sull'orologio" se sei fuori casa. Test: tutti passano sul PC di casa (Windows); i test della dettatura su Windows
+  premevano tasti veri nella finestra davanti e ora registrano soltanto; i test non scrivono più in `jarvis.log` e
+  `pannello.log` veri; quelli del visore e dell'HTTPS si lanciano con `python -m pytest`. **Provato sul PC**: pannello
+  riavviato in ascolto su 47800, 443 (HTTPS, risponde 200) e 80 (rimando a https); Jarvis da amministratore
+  ripartito con `/jarvis/riavvia`, eco sul PC attiva, Claude Code trovato, tablet ricollegato (altoparlante e
+  microfono). **Non provato**: Quest vero, conferma da telefono/orologio dal vivo, interruzione a voce con l'eco.
 
 ## Abbinamento automatico (APK generico, dal 2026-11-15)
 - `python android/costruisci.py --generico` crea in `android/build-generico/` un APK senza IP né chiave: è quello

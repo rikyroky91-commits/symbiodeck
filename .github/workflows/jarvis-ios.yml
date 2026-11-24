@@ -2,7 +2,7 @@ name: Jarvis per iPhone e Apple Watch (IPA non firmato)
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, jarvis-in-prova ]
     paths: [ "apple/**", ".github/workflows/jarvis-ios.yml" ]
   workflow_dispatch:
 
@@ -58,6 +58,7 @@ jobs:
 
       # link pubblico apribile da Safari sull'iPhone; non diventa la release "latest" (quella è l'APK del tablet)
       - name: Pubblica la release
+        if: github.ref == 'refs/heads/main'   # dai rami di prova solo la verifica, niente release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

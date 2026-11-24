@@ -2,6 +2,7 @@
 richieste della voce. Le parti di Windows (finestre, schermo) si provano sul PC vero.
 Senza rete: python -m pytest tests/test_jarvis_visore.py"""
 import io
+import shutil
 import sys
 import tempfile
 import types
@@ -13,12 +14,22 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 from jarvis import principale, visore  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 
 @pytest.fixture
 def casa(monkeypatch):
-    """Una cartella utente finta con Desktop, Pictures e qualche foto."""
-    h = Path(tempfile.mkdtemp())
+    """Una cartella utente finta con Desktop, Pictures e qualche foto. Su Windows non nella cartella temporanea:
+    sta in AppData, che il visore non mostra mai."""
+    base = None
+    if sys.platform == "win32":
+        base = Path(__file__).resolve().parent / "_tmp_visore"
+        base.mkdir(exist_ok=True)
+    h = Path(tempfile.mkdtemp(dir=base))
     monkeypatch.setenv("HOME", str(h))
+    monkeypatch.setenv("USERPROFILE", str(h))       # Path.home() su Windows
+    monkeypatch.setattr(visore, "WINDOWS", False)    # niente cartelle note vere (SHGetKnownFolderPath) né dischi
     monkeypatch.setattr(visore, "_cache_note", {})
     from PIL import Image
     foto = h / "Desktop" / "Foto"
@@ -33,7 +44,8 @@ def casa(monkeypatch):
     (foto / "video.mp4").write_bytes(bytes(range(256)) * 400)
     (foto / ".nascosto.jpg").write_bytes(b"x")
     (foto / "virus.exe").write_bytes(b"MZ")
-    return h
+    yield h
+    shutil.rmtree(h, ignore_errors=True)
 
 
 def test_elenco_e_permessi(casa):

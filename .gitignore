@@ -17,9 +17,13 @@ CLAUDE.md
 server/jarvis.json
 server/jarvis.tmp
 server/jarvis-dati/
+server/xr-certificato/
 
 # app iPhone/Watch: generati sul Mac di GitHub Actions
 apple/build/
 apple/JarvisRemote.xcodeproj/
 apple/Payload/
 *.ipa
+
+# cartelle temporanee dei test
+tests/_tmp*/

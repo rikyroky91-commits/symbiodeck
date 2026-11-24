@@ -23,10 +23,20 @@
     text-shadow: 0 0 14px rgba(57, 213, 255, .7); z-index: 2; pointer-events: none; }
   #logo small { display: block; font-size: 10px; letter-spacing: 4px; color: rgba(143, 240, 255, .55); margin-top: 4px; }
   @keyframes respiro { 50% { box-shadow: 0 0 60px rgba(57, 213, 255, .9); } }
+  #abbina { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%) scale(.9); opacity: 0; z-index: 3;
+    text-align: center; padding: 34px 50px; border-radius: 22px; background: rgba(2, 14, 22, .92);
+    border: 2px solid #39d5ff; box-shadow: 0 0 60px rgba(57, 213, 255, .45); transition: all .4s; pointer-events: none; }
+  #abbina.visto { opacity: 1; transform: translate(-50%, -50%); }
+  #abbina small { display: block; font: 600 14px Consolas, monospace; letter-spacing: 6px; color: #8ff0ff; }
+  #abbina b { display: block; font: 700 92px/1.1 Consolas, monospace; letter-spacing: 18px; color: #fff;
+    text-shadow: 0 0 24px #39d5ff; margin: 14px 0; }
+  #abbina span { font-size: 16px; color: rgba(223, 246, 255, .75); }
 </style>
 </head>
 <body>
 <div id="logo">JARVIS XR<small>OLOGRAMMI DEL PC · QUEST 3</small></div>
+<div id="abbina"><small>CODICE DEL VISORE</small><b id="codice">· · · ·</b>
+  <span>Jarvis te lo chiede sul tablet: rispondi «Consenti»</span></div>
 <div id="avvio">
   <button id="entra" disabled>CONTROLLO…</button>
   <div id="nota"></div>

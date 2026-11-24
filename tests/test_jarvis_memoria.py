@@ -18,6 +18,10 @@ from jarvis.permessi import Permessi  # noqa: E402
 from jarvis.sicurezza import oscura, sospetto  # noqa: E402
 from jarvis.trame import risposta_conferma  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+from jarvis import principale  # noqa: E402
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 
 def _tmp():
     return Path(tempfile.mkdtemp())
@@ -185,6 +189,7 @@ def test_conferma_di_jarvis_con_permessi():
     j._ascolta_conferma_dopo_domanda = lambda c: None
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
     j.blocco_domande = threading.Lock()
+    j.solo_remoto = False
     j._chiedi_conferma = lambda *a, **k: Jarvis._chiedi_conferma(j, *a, **k)
 
     def rispondi(ok, sempre):

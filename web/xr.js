@@ -1,5 +1,5 @@
 /* Jarvis XR: il pannello del PC e Jarvis come ologrammi nella stanza, per Meta Quest 3 (WebXR, realtà mista).
-   Si apre nel browser del visore: https://<pc>/xr.html?t=<chiave del pannello> (vedi LEGGIMI, "App per Quest 3").
+   Si apre nel browser del visore: https://<ip del PC>:47443/xr?t=<chiave> (QR nelle impostazioni del PC).
 
    Con le mani (come in Minority Report):
      - tocca i pulsanti con la punta dell'indice, come uno schermo sospeso;
@@ -9,17 +9,17 @@
    Sul PC (senza visore) la stessa scena si vede in anteprima: clic per premere, trascina per guardarti intorno,
    tieni premuto sulla sfera per parlare.
 
-   Dati: /api/flusso e /api/config del pannello (stessa origine), /jarvis/flusso e le API di Jarvis (porta 47802, o
-   8443 dietro HTTPS). Le posizioni dei pannelli restano salvate nel visore. */
+   Dati: tutto dalla stessa origine: /api/* del pannello e /jarvis/*, che il pannello inoltra a Jarvis. Le posizioni
+   dei pannelli e la chiave restano salvate nel visore (dopo la prima volta basta https://<ip del PC>:47443/xr). */
 import * as THREE from "./lib/three.min.js";
 
 // ------------------------------------------------------------------ indirizzi e chiave
 const q = new URLSearchParams(location.search);
-const TOKEN = q.get("t") || leggi("token") || "";
+let TOKEN = q.get("t") || leggi("token") || "";
 if (q.get("t")) scrivi("token", TOKEN);
 const PANNELLO = location.origin;
-const JARVIS = q.get("jarvis") || (location.protocol === "https:"
-  ? "https://" + location.hostname + ":8443" : location.protocol + "//" + location.hostname + ":47802");
+// Jarvis passa dal pannello stesso (/jarvis/* inoltrato alla porta 47802): un indirizzo solo, anche in HTTPS
+const JARVIS = q.get("jarvis") || location.origin;
 
 function leggi(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function scrivi(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* niente memoria nel browser */ } }
@@ -1554,10 +1554,47 @@ renderer.setAnimationLoop(() => {
 });
 
 const bottone = document.getElementById("entra"), nota = document.getElementById("nota");
-async function avvia() {
-  if (!TOKEN) {
-    nota.innerHTML = "Manca la chiave del pannello: apri questa pagina dal link nelle impostazioni del PC (<b>?t=…</b>).";
+// collegamento senza chiave: il visore mostra un codice, Jarvis lo chiede sul tablet (o lo consenti dal PC)
+async function abbina() {
+  bottone.disabled = true;
+  bottone.textContent = "COLLEGO IL VISORE…";
+  let r;
+  try {
+    r = await fetch(PANNELLO + "/api/xr/abbina", { method: "POST" }).then((x) => x.json().then((j) => {
+      if (!x.ok) throw new Error(j.errore || "errore " + x.status); return j; }));
+  } catch (e) {
+    nota.innerHTML = "Non riesco a chiedere il collegamento: " + e.message;
+    bottone.textContent = "RIPROVA"; bottone.disabled = false; bottone.onclick = () => location.reload();
+    return false;
   }
+  document.getElementById("codice").textContent = r.codice.split("").join(" ");
+  document.getElementById("abbina").classList.add("visto");
+  nota.innerHTML = "Jarvis ti chiede sul tablet se consentire il visore: rispondi <b>Consenti</b> (a voce o toccando).<br>" +
+    "Oppure dalle impostazioni del PC, sezione Jarvis XR.";
+  for (;;) {
+    await new Promise((ok) => setTimeout(ok, 1500));
+    const e = await fetch(PANNELLO + "/api/xr/abbina?id=" + encodeURIComponent(r.id)).then((x) => x.json()).catch(() => ({}));
+    if (e.token) {
+      scrivi("token", e.token);
+      location.replace(location.pathname);   // ricarica, con la chiave salvata nel visore
+      return false;
+    }
+    if (e.stato === "no" || e.stato === "scaduta" || e.stato === "sconosciuta") {
+      document.getElementById("abbina").classList.remove("visto");
+      nota.innerHTML = e.stato === "no" ? "Collegamento rifiutato." : "Tempo scaduto: nessuno ha confermato.";
+      bottone.textContent = "RIPROVA"; bottone.disabled = false; bottone.onclick = () => location.reload();
+      return false;
+    }
+  }
+}
+
+async function avvia() {
+  // senza chiave, o con una chiave non più valida: si collega il visore col codice
+  if (TOKEN) {
+    const prova = await fetch(PANNELLO + "/api/config", { headers: { "X-Token": TOKEN } }).catch(() => null);
+    if (prova && prova.status === 401) { scrivi("token", ""); TOKEN = ""; }
+  }
+  if (!TOKEN && !(await abbina())) return;
   flusso(JARVIS + "/jarvis/flusso?xr=1", eventoJarvis, (ok) => { S.jarvisOk = ok; sporca("conversazione"); });
   flusso(PANNELLO + "/api/flusso", eventoPannello, (ok) => { S.pannelloOk = ok; sporca("telemetria"); });
   caricaConfig();
@@ -1569,8 +1606,8 @@ async function avvia() {
   if (!ar && !vr) {
     bottone.textContent = "ANTEPRIMA SUL PC";
     nota.innerHTML = (window.isSecureContext ? "Questo browser non ha WebXR: apri la pagina nel browser del Quest 3."
-      : "Per la realtà mista il visore deve aprire la pagina in <b>https://</b> (Tailscale) o da <b>localhost</b> (adb reverse): " +
-        "vedi LEGGIMI, «App per Quest 3».") + "<br>Qui: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.";
+      : "Per la realtà mista apri l'indirizzo <b>https://…:47443/xr</b> (QR nelle impostazioni del PC).") +
+      "<br>Qui: clic per premere, trascina per guardarti intorno, tieni premuta la sfera per parlare.";
     bottone.onclick = () => preparaMicrofono();
     bottone.disabled = false;
     return;

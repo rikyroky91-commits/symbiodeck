@@ -22,6 +22,9 @@ from jarvis.principale import Jarvis  # noqa: E402
 from jarvis.promemoria import Promemoria, capisci  # noqa: E402
 from jarvis.sicurezza import ordini_nascosti  # noqa: E402
 
+# i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
+principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
+
 ORA = datetime(2026, 11, 24, 15, 0)
 
 
@@ -113,6 +116,7 @@ def test_azioni_delicate_solo_col_tocco():
     j._ascolta_conferma_dopo_domanda = lambda c: None
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
     j.blocco_domande = threading.Lock()
+    j.solo_remoto = False
     j._chiedi_conferma = lambda *a, **k: Jarvis._chiedi_conferma(j, *a, **k)
     esito = {}
 
@@ -203,6 +207,8 @@ class _Controllo:
 
 
 def _schermo_finto(radice):
+    # mcp si carica prima del ctypes finto: su Windows trascina click, che usa windll davvero all'import
+    import mcp.server.mcpserver  # noqa: F401
     ctypes_finto = mock.MagicMock()
     wt = types.ModuleType("ctypes.wintypes")
     wt.__getattr__ = lambda n: ctypes.c_ulong

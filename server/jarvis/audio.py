@@ -205,8 +205,16 @@ class Tablet:
 
 class Uscita:
     """Riproduce sulle casse scelte con il ritmo del tempo reale (al massimo ANTICIPO in coda): così fermare
-    Jarvis a metà frase è immediato e si sa quando ha finito di parlare."""
+    Jarvis a metà frase è immediato e si sa quando ha finito di parlare.
+
+    Un solo thread (_pompa) manda l'audio su un orologio continuo: le frasi in coda una dopo l'altra e, dopo
+    l'ultima, ancora CODA_SILENZIO secondi di silenzio. Così tra una frase e l'altra il buffer delle casse (il
+    tablet ne ha ~0,5 s) non si svuota e il ritardo casse -> microfono resta identico, che è quello che serve alla
+    cancellazione dell'eco (eco.py): a ogni ripartenza da buffer vuoto il ritardo cambia di qualche ms o decina di
+    ms, e il filtro allineato al campione perde l'eco per un secondo o due (provato: falsi allarmi a inizio frase)."""
     ANTICIPO = 0.35
+    ANTICIPO_SILENZIO = 0.12   # il silenzio si manda con meno anticipo: una frase nuova non aspetta troppo
+    CODA_SILENZIO = 1.5
     PEZZO = FREQ_OUT // 10  # 100 ms
 
     def __init__(self, casse_pc, tablet):
@@ -217,6 +225,16 @@ class Uscita:
         self.interrotta = threading.Event()
         self.parla = False
         self.livelli = []   # (ora, volume) dei pezzi mandati alle casse: serve a riconoscere l'eco
+        self.aec = None     # cancellazione dell'eco sul PC (eco.py), se attiva: riceve quello che esce
+        self._cv = threading.Condition()
+        self._coda = []           # frasi da suonare: dict(c=campioni, pos, finito=Event, fine, ok)
+        self._parlanti = 0
+        self._orologio = None     # orario teorico (monotonic) in cui suonerà il prossimo pezzo
+        self._silenzio_fino = 0.0
+        self._dest = None
+        self._sveglia = threading.Event()
+        self.fine_audio = 0.0     # quando (monotonic) finisce di suonare l'ultimo audio vero (non il silenzio)
+        threading.Thread(target=self._pompa, daemon=True, name="uscita").start()
 
     def livello_uscita(self, finestra=1.0):
         """Il volume più alto di quello che è uscito dalle casse nell'ultimo secondo (copre il ritardo dell'eco)."""
@@ -234,31 +252,92 @@ class Uscita:
         campioni = np.frombuffer(pcm, dtype=np.int16)
         if self.volume != 1.0:
             campioni = np.clip(campioni.astype(np.float32) * self.volume, -32768, 32767).astype(np.int16)
-        dest = self._destinazione()
-        self.parla = True
-        inizio, inviati = time.monotonic(), 0
+        if self.interrotta.is_set():
+            return False
+        voce = {"c": campioni, "pos": 0, "finito": threading.Event(), "fine": None, "ok": True}
+        with self._cv:
+            self._parlanti += 1
+            self.parla = True
+            self._coda.append(voce)
+            self._cv.notify_all()
+        self._sveglia.set()
         try:
-            for i in range(0, len(campioni), self.PEZZO):
+            while not voce["finito"].wait(0.05):
                 if self.interrotta.is_set():
                     return False
-                pezzo = campioni[i:i + self.PEZZO]
-                dest.scrivi(pezzo.tobytes())
-                self.livelli.append((time.monotonic(), float(np.sqrt(np.mean((pezzo.astype(np.float32) / 32768) ** 2)))))
-                del self.livelli[:-30]
-                inviati += len(pezzo)
-                ritardo = inizio + inviati / FREQ_OUT - self.ANTICIPO - time.monotonic()
-                if ritardo > 0:
-                    if self.interrotta.wait(ritardo):
-                        return False
-            fine = inizio + inviati / FREQ_OUT - time.monotonic()
-            return not (fine > 0 and self.interrotta.wait(fine))
+            if not voce["ok"]:
+                return False
+            resto = voce["fine"] - time.monotonic()
+            return not (resto > 0 and self.interrotta.wait(resto))
         finally:
-            self.parla = False
+            with self._cv:
+                self._parlanti -= 1
+                self.parla = self._parlanti > 0
+
+    def _pompa(self):
+        while True:
+            try:
+                self._pompa_un_pezzo()
+            except Exception as e:   # un errore non deve fermare per sempre la voce
+                print("uscita audio:", repr(e), flush=True)
+                time.sleep(0.2)
+
+    def _pompa_un_pezzo(self):
+        with self._cv:
+            while not self._coda and (self._orologio is None or time.monotonic() >= self._silenzio_fino):
+                self._orologio = None
+                self._cv.wait(0.5)
+            ora = time.monotonic()
+            dest = self._destinazione()
+            if self._orologio is None or dest is not self._dest or self._orologio < ora - 0.05:
+                self._orologio = ora      # (ri)partenza: le casse hanno il buffer vuoto
+                self._dest = dest
+            voce = self._coda[0] if self._coda else None
+            if voce is not None and self.interrotta.is_set():
+                # arrivata mentre era interrotto (tra taci e riprendi): non si suona
+                self._coda.pop(0)
+                voce["ok"] = False
+                voce["finito"].set()
+                return
+            if voce is not None:
+                pezzo = voce["c"][voce["pos"]:voce["pos"] + self.PEZZO]
+                voce["pos"] += len(pezzo)
+            else:
+                pezzo = np.zeros(self.PEZZO, dtype=np.int16)
+            t = self._orologio
+            dest.scrivi(pezzo.tobytes())
+            if self.aec is not None:
+                self.aec.riferimento(pezzo, t, 0.0)
+            self.livelli.append((time.monotonic(), float(np.sqrt(np.mean((pezzo.astype(np.float32) / 32768) ** 2)))))
+            del self.livelli[:-30]
+            self._orologio += len(pezzo) / FREQ_OUT
+            if voce is not None and voce["pos"] >= len(voce["c"]):
+                self._coda.pop(0)
+                voce["fine"] = self._orologio
+                self.fine_audio = self._orologio
+                self._silenzio_fino = self._orologio + self.CODA_SILENZIO
+                voce["finito"].set()
+            anticipo = self.ANTICIPO if self._coda else self.ANTICIPO_SILENZIO
+            attesa = self._orologio - anticipo - time.monotonic()
+        if attesa > 0:
+            self._sveglia.wait(attesa)
+            self._sveglia.clear()
 
     def taci(self):
         self.interrotta.set()
-        self.casse_pc.taci()
-        self.tablet.taci()
+        with self._cv:
+            for voce in self._coda:
+                voce["ok"] = False
+                voce["finito"].set()
+            self._coda.clear()
+            self._orologio = None         # le casse buttano il loro buffer: si riparte da zero
+            self._silenzio_fino = 0.0
+            self.fine_audio = min(self.fine_audio, time.monotonic()) if self.fine_audio else 0.0
+            self.casse_pc.taci()
+            self.tablet.taci()
+            if self.aec is not None:
+                self.aec.taci()
+        self._sveglia.set()
 
     def riprendi(self):
         self.interrotta.clear()

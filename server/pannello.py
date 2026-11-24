@@ -15,6 +15,7 @@ import hashlib
 import ipaddress
 import json
 import os
+import re
 import secrets
 import shutil
 import struct
@@ -1304,6 +1305,48 @@ class Gestore(BaseHTTPRequestHandler):
             return "tablet"
         return None
 
+    def inoltra_jarvis(self, metodo):
+        """Le chiamate /jarvis/* passano a Jarvis (porta 47802): così il visore usa un indirizzo solo, anche in HTTPS
+        (una pagina https non può chiamare un http). Gli eventi (text/event-stream) passano man mano che arrivano."""
+        import http.client
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 8 * 2**20:
+            return self.manda(413, {"errore": "richiesta troppo grande"})
+        corpo = self.rfile.read(n) if n else None
+        intestazioni = {k: self.headers[k] for k in ("X-Token", "Content-Type", "Range", "Accept") if self.headers.get(k)}
+        try:
+            c = http.client.HTTPConnection("127.0.0.1", PORTA_JARVIS, timeout=900)
+            c.request(metodo, self.path, body=corpo, headers=intestazioni)
+            r = c.getresponse()
+        except OSError:
+            return self.manda(502, {"errore": "Jarvis non risponde"})
+        eventi = (r.getheader("Content-Type") or "").startswith("text/event-stream")
+        try:
+            self.send_response(r.status)
+            for k in ("Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Cache-Control"):
+                if r.getheader(k):
+                    self.send_header(k, r.getheader(k))
+            if eventi or not r.getheader("Content-Length"):
+                self.send_header("Connection", "close")
+                self.close_connection = True
+            self.end_headers()
+            while True:
+                pezzo = r.read1(65536) if eventi else r.read(65536)
+                if not pezzo:
+                    break
+                self.wfile.write(pezzo)
+                if eventi:
+                    self.wfile.flush()
+        except (ConnectionError, OSError):
+            self.close_connection = True
+        finally:
+            c.close()
+
+    def do_OPTIONS(self):
+        if self.path.startswith("/jarvis/"):
+            return self.inoltra_jarvis("OPTIONS")
+        self.manda(204)
+
     def corpo_json(self):
         n = int(self.headers.get("Content-Length") or 0)
         if n > 64 * 1024:
@@ -1316,6 +1359,8 @@ class Gestore(BaseHTTPRequestHandler):
             return self.manda(403, {"errore": "solo rete locale"})
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if u.path.startswith("/jarvis/"):
+            return self.inoltra_jarvis("GET")
         if not u.path.startswith("/api/"):
             return self.statico(u.path)
         if u.path == "/api/abbina":
@@ -1323,6 +1368,8 @@ class Gestore(BaseHTTPRequestHandler):
             if not ipaddress.ip_address(self.client_address[0]).is_loopback or not Abbinamento.aperto():
                 return self.manda(403, {"errore": "abbinamento chiuso: aprilo dalle impostazioni sul PC"})
             return self.manda(200, Abbinamento.risposta(self.server.cfg, con_chiave=True))
+        if u.path == "/api/xr/abbina":
+            return self.manda(200, AbbinaVisore.esito(self.server.cfg, (q.get("id") or [""])[0]))
         livello = self.livello(q)
         if not livello:
             return self.manda(401, {"errore": "token mancante o sbagliato"})
@@ -1348,7 +1395,8 @@ class Gestore(BaseHTTPRequestHandler):
                                     "porta": PORTA, "abbinamento": Abbinamento.secondi_rimasti(),
                                     # per l'app Jarvis su iPhone e Apple Watch (solo dal PC stesso)
                                     "app_jarvis": {"indirizzi": indirizzi_del_pc(), "chiave": cfg["token"],
-                                                   "cartella": str(WEB.resolve().parent)}})
+                                                   "cartella": str(WEB.resolve().parent),
+                                                   "xr": dict(XR, richieste=AbbinaVisore.in_attesa())}})
         return self.manda(404, {"errore": "non trovato"})
 
     def icona(self, target):
@@ -1369,7 +1417,10 @@ class Gestore(BaseHTTPRequestHandler):
         return self.manda(200, f.read_bytes(), "image/png", {"Cache-Control": "max-age=86400"})
 
     def statico(self, percorso):
-        nome = {"/": "index.html", "": "index.html", "/impostazioni": "impostazioni.html"}.get(percorso, percorso.lstrip("/"))
+        pagine = {"/": "index.html", "": "index.html", "/impostazioni": "impostazioni.html", "/xr": "xr.html"}
+        if getattr(self.server, "xr", False):   # server HTTPS del visore: l'indirizzo nudo apre Jarvis XR
+            pagine.update({"/": "xr.html", "": "xr.html"})
+        nome = pagine.get(percorso, percorso.lstrip("/"))
         f = (WEB / nome).resolve()
         if WEB.resolve() not in f.parents or not f.is_file():
             return self.manda(404, "non trovato", "text/plain")
@@ -1405,6 +1456,14 @@ class Gestore(BaseHTTPRequestHandler):
         if not rete_locale(self.client_address[0]):
             return self.manda(403, {"errore": "solo rete locale"})
         u = urlparse(self.path)
+        if u.path.startswith("/jarvis/"):
+            return self.inoltra_jarvis("POST")
+        if u.path == "/api/xr/abbina":
+            try:
+                r = AbbinaVisore.nuova(self.server.cfg, self.client_address[0])
+            except PermissionError as e:
+                return self.manda(429, {"errore": str(e)})
+            return self.manda(200, {"id": r["id"], "codice": r["codice"]})
         livello = self.livello(parse_qs(u.query))
         if not livello:
             return self.manda(401, {"errore": "token mancante o sbagliato"})
@@ -1412,6 +1471,8 @@ class Gestore(BaseHTTPRequestHandler):
             dati = self.corpo_json()
             if u.path == "/api/azione":
                 return self.manda(200, self.azione(dati))
+            if livello == "pc" and u.path == "/api/xr/consenti":
+                return self.manda(200, {"ok": AbbinaVisore.decidi(str(dati.get("id", "")), bool(dati.get("ok")))})
             if u.path == "/api/config":
                 return self.manda(200, self.aggiorna_config(dati, livello))
             if livello == "pc" and u.path == "/api/pc/abbina":
@@ -1655,6 +1716,143 @@ class ServerUnico(ThreadingHTTPServer):
     allow_reuse_address = False  # su Windows SO_REUSEADDR farebbe ascoltare due server sulla stessa porta
 
 
+XR = {"attivo": False, "errore": "", "porta": 0, "breve": False}   # HTTPS per Jarvis XR: stato per le impostazioni
+
+
+class AbbinaVisore:
+    """Collegare il Quest senza copiare la chiave: il visore apre https://<IP del PC> e chiede di collegarsi, mostra
+    un codice di 4 cifre e Jarvis lo chiede sul tablet ("Un visore vuole collegarsi, codice 4719: lo consento?",
+    a voce o toccando). In alternativa si consente dalle impostazioni del PC. Una richiesta per volta, al massimo 6
+    ogni 10 minuti, ognuna vale 3 minuti; la chiave si consegna una volta sola."""
+    _richieste = {}
+    _quando = []
+    _blocco = threading.Lock()
+
+    @classmethod
+    def nuova(cls, cfg, ip):
+        ora = time.time()
+        with cls._blocco:
+            cls._quando = [t for t in cls._quando if ora - t < 600]
+            attive = [r for r in cls._richieste.values() if r["stato"] == "attesa" and ora - r["t"] < 180]
+            if attive:
+                return attive[0]
+            if len(cls._quando) >= 6:
+                raise PermissionError("troppe richieste: riprova tra qualche minuto")
+            cls._quando.append(ora)
+            r = {"id": secrets.token_urlsafe(12), "codice": f"{secrets.randbelow(10000):04d}", "stato": "attesa",
+                 "t": ora, "ip": ip}
+            cls._richieste[r["id"]] = r
+        log("visore chiede di collegarsi:", ip, "codice", r["codice"])
+        threading.Thread(target=cls._chiedi_a_jarvis, args=(cfg, r), daemon=True).start()
+        return r
+
+    @classmethod
+    def _chiedi_a_jarvis(cls, cfg, r):
+        import urllib.request
+        cifre = " ".join(r["codice"])
+        corpo = {"domanda": f"Un visore vuole collegarsi al pannello. Il codice è {cifre}: lo vedi anche nel visore. "
+                            "Lo consento?", "opzioni": ["Consenti", "Rifiuta"], "attesa": 170}
+        try:
+            q = urllib.request.Request(f"http://127.0.0.1:{PORTA_JARVIS}/jarvis/domanda",
+                                       data=json.dumps(corpo).encode("utf-8"),
+                                       headers={"X-Token": cfg["token"], "Content-Type": "application/json"})
+            with urllib.request.urlopen(q, timeout=200) as risposta:
+                testo = (json.loads(risposta.read()).get("risposta") or "").lower()
+        except (OSError, ValueError):
+            return   # Jarvis spento: resta il pulsante nelle impostazioni del PC
+        if not testo:
+            return
+        no = re.search(r"\b(no|rifiut\w*|nega|non)\b", testo)
+        si = re.search(r"\b(consent\w*|s[iì]|ok|va bene|certo|vai)\b", testo)
+        cls.decidi(r["id"], bool(si and not no))
+
+    @classmethod
+    def decidi(cls, id_, ok):
+        with cls._blocco:
+            r = cls._richieste.get(id_)
+            if not r or r["stato"] != "attesa":
+                return False
+            r["stato"] = "ok" if ok else "no"
+        log("visore", r["ip"], "consentito" if ok else "rifiutato")
+        return True
+
+    @classmethod
+    def esito(cls, cfg, id_):
+        """Lo stato della richiesta; la chiave solo la prima volta che il visore la ritira."""
+        with cls._blocco:
+            r = cls._richieste.get(id_)
+            if not r:
+                return {"stato": "sconosciuta"}
+            if r["stato"] == "attesa" and time.time() - r["t"] > 180:
+                r["stato"] = "scaduta"
+            esito = {"stato": r["stato"], "codice": r["codice"]}
+            if r["stato"] == "ok":
+                esito["token"] = cfg["token"]
+                r["stato"] = "consegnata"
+            return esito
+
+    @classmethod
+    def in_attesa(cls):
+        ora = time.time()
+        return [{"id": r["id"], "codice": r["codice"], "ip": r["ip"]} for r in cls._richieste.values()
+                if r["stato"] == "attesa" and ora - r["t"] < 180]
+
+
+def rimanda_a_https():
+    """Porta 80: chi scrive solo l'IP nel browser del visore (che prova prima http://) va alla pagina https."""
+    class Rimanda(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            host = (self.headers.get("Host") or "").split(":")[0] or "localhost"
+            self.send_response(301)
+            self.send_header("Location", "https://" + host + "/" + ("" if self.path in ("/", "") else self.path.lstrip("/")))
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+    try:
+        srv = ServerUnico(("0.0.0.0", 80), Rimanda)
+        srv.daemon_threads = True
+        log("porta 80: rimando a https per il visore")
+        srv.serve_forever()
+    except OSError as e:
+        log("porta 80 non disponibile (nel visore scrivi https:// davanti all'IP):", e)
+
+
+def avvia_https_xr(principale):
+    """Le stesse pagine e API anche in HTTPS sulla porta 47443, con un certificato fatto qui (xr_https.py): il Quest
+    apre la realtà mista solo da pagine sicure, così basta il Wi-Fi di casa."""
+    try:
+        import xr_https
+        ctx = xr_https.contesto(indirizzi_del_pc())
+        srv = None
+        # prima la 443: sul visore basta scrivere l'IP, senza porta; se è occupata, la 47443
+        for porta in (443, xr_https.PORTA_XR):
+            try:
+                srv = ServerUnico(("0.0.0.0", porta), Gestore)
+                break
+            except OSError as e:
+                log("porta", porta, "non disponibile per Jarvis XR:", e)
+        if srv is None:
+            raise OSError("porte 443 e 47443 occupate")
+        srv.daemon_threads = True
+        for k in ("tablet", "cfg", "campionatore", "jarvis"):
+            setattr(srv, k, getattr(principale, k))
+        srv.xr = True    # su questo server "/" è la pagina del visore
+        xr_https.avvolgi(srv, ctx)
+        XR.update(attivo=True, porta=srv.server_address[1], breve=srv.server_address[1] == 443)
+        if XR["breve"]:
+            threading.Thread(target=rimanda_a_https, daemon=True).start()
+        log("Jarvis XR in HTTPS sulla porta", XR["porta"])
+        srv.serve_forever()
+    except ImportError:
+        XR["errore"] = "manca il pacchetto cryptography: python -m pip install --user cryptography"
+        log("HTTPS per Jarvis XR non attivo:", XR["errore"])
+    except OSError as e:
+        XR["errore"] = f"porta 47443 non disponibile: {e}"
+        log("HTTPS per Jarvis XR non attivo:", XR["errore"])
+
+
 def main():
     if "--collegamenti" in sys.argv:  # solo crea config.json (se manca) e i collegamenti, poi esce
         crea_collegamenti(carica_config())
@@ -1692,6 +1890,7 @@ def main():
     srv.campionatore = camp
     srv.jarvis = cfg.get("jarvis") is not False and jarvis_installato()
     threading.Thread(target=custode_jarvis, args=(cfg,), daemon=True).start()
+    threading.Thread(target=avvia_https_xr, args=(srv,), daemon=True).start()
     log("pannello in ascolto sulla porta", PORTA)
     if "--stampa" in sys.argv:
         print(f"http://127.0.0.1:{PORTA}/?t={cfg['token']}")
