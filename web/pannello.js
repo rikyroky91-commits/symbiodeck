@@ -480,6 +480,7 @@
     else if (t && !t.armata) testo = "Si attiva fra " + (t.armamento || 0) + " s";
     else testo = "Sorveglia" + (t && !t.rumore ? " (solo telecamera: " + (t.perche_rumore || "microfono spento") + ")" : "");
     if (on && t && t.telecamera && t.telecamera !== "ok") testo += " · telecamera: " + t.telecamera;
+    if (on && t && t.notte) testo += " · notte (bianco e nero)";
     if (t && t.in_coda) testo += " · " + t.in_coda + " in coda";
     $("s-stato").textContent = testo;
     $("s-stato").classList.toggle("on", on);
@@ -491,6 +492,7 @@
       $("s-sens-movimento").value = imp.sens_movimento; $("s-sens-movimento-v").textContent = imp.sens_movimento;
       $("s-sens-rumore").value = imp.sens_rumore; $("s-sens-rumore-v").textContent = imp.sens_rumore;
       $("s-schermo").value = imp.schermo;
+      $("s-notte").value = imp.notte || "auto";
     }
   }
   function caricaEventi() {
@@ -510,7 +512,7 @@
           var v = document.createElement("div"); v.className = "senza"; v.textContent = "🔊"; b.appendChild(v);
         }
         var n = document.createElement("span");
-        n.textContent = nomeEvento(ev) + " · " + oraEvento(ev) + (ev.audio ? " · 🔊" : "");
+        n.textContent = nomeEvento(ev) + " · " + oraEvento(ev) + (ev.video ? " · 🎬" : ev.audio ? " · 🔊" : "");
         b.appendChild(n);
         b.onclick = function () { apriEvento(i); };
         box.appendChild(b);
@@ -538,10 +540,10 @@
     api("/api/sentinella/impostazioni", {
       movimento: $("s-movimento").checked, rumore: $("s-rumore").checked, voce: $("s-voce").checked,
       sens_movimento: Number($("s-sens-movimento").value), sens_rumore: Number($("s-sens-rumore").value),
-      schermo: $("s-schermo").value
+      schermo: $("s-schermo").value, notte: $("s-notte").value
     }).catch(function (e) { avviso(e.message); });
   }
-  ["s-movimento", "s-rumore", "s-voce", "s-schermo", "s-sens-movimento", "s-sens-rumore"].forEach(function (id) {
+  ["s-movimento", "s-rumore", "s-voce", "s-schermo", "s-notte", "s-sens-movimento", "s-sens-rumore"].forEach(function (id) {
     var el = $(id);
     el.onchange = salvaSentinella;
     if (el.type === "range") el.oninput = function () { sent.toccando = true; $(id + "-v").textContent = el.value; };
@@ -563,11 +565,22 @@
     var ev = sent.ev;
     $("e-titolo").textContent = nomeEvento(ev) + " · " + oraEvento(ev) +
       (ev.tipo === "rumore" && ev.valore ? " · " + ev.valore + " dB" : "");
-    mostraQuadro();
+    var vid = $("e-video");
+    vid.classList.toggle("nascosto", !ev.video);
+    $("e-foto").classList.toggle("nascosto", !!ev.video);
+    ["e-indietro", "e-avanti", "e-clip", "e-conta"].forEach(function (id) { $(id).classList.toggle("nascosto", !!ev.video); });
+    // nell'app del tablet la clip la riproduce Android (il lettore del WebView non ha il decoder): qui la foto
+    var nativoVideo = ev.video && nativo && nativo.video;
+    if (nativoVideo) { vid.classList.add("nascosto"); $("e-foto").classList.remove("nascosto"); mostraQuadro(); }
+    $("e-guarda").classList.toggle("nascosto", !nativoVideo);
+    if (ev.video && !nativoVideo) { vid.src = fileEvento(ev, "clip.mp4"); } else { vid.removeAttribute("src"); if (!ev.video) mostraQuadro(); }
     $("e-audio").classList.toggle("nascosto", !ev.audio);
     if (ev.audio) $("e-audio").src = fileEvento(ev, "audio.wav"); else $("e-audio").removeAttribute("src");
     apriFinestra("finestra-evento");
   }
+  $("e-guarda").onclick = function () {
+    nativo.video(location.origin + fileEvento(sent.ev, "clip.mp4"));
+  };
   $("e-avanti").onclick = function () { fermaClip(); sent.quadro++; mostraQuadro(); };
   $("e-indietro").onclick = function () { fermaClip(); sent.quadro--; mostraQuadro(); };
   $("e-clip").onclick = function () {
@@ -585,7 +598,7 @@
     }, 500);
     if (sent.ev.audio) { try { $("e-audio").currentTime = 0; $("e-audio").play(); } catch (e) {} }
   };
-  $("e-torna").onclick = function () { fermaClip(); $("e-audio").pause(); apriFinestra("finestra-sentinella"); caricaEventi(); };
+  $("e-torna").onclick = function () { fermaClip(); $("e-audio").pause(); $("e-video").pause(); apriFinestra("finestra-sentinella"); caricaEventi(); };
   $("e-cancella").onclick = function () {
     fermaClip();
     api("/api/sentinella/cancella", { id: sent.ev.id }).then(function () {

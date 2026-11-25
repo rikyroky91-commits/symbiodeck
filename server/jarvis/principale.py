@@ -262,6 +262,7 @@ class Jarvis:
                 "privata": bool(self.imp.get("privata")), "promemoria": self.promemoria.elenco(),
                 "visore": self.visori > 0,
                 "gioco": self.in_gioco,
+                "allarme": getattr(self, "allarme", None) or {"attiva": False, "armata": False},
                 "eco": self.uscita.aec.stato() if self.uscita.aec is not None else None}
 
     def impostazioni_pubbliche(self):
@@ -415,6 +416,16 @@ class Jarvis:
                 eventi = " Oggi nessun evento."
             self.di(stato + eventi)
         self._torna_libero()
+
+    def stato_sentinella(self, d):
+        """Il tablet ha acceso, armato o spento la sentinella (lo dice il pannello): finché è attiva la sfera di Jarvis
+        (tablet, visore) è un allarme rosso a sirena."""
+        nuovo = {"attiva": bool(d.get("attiva")), "armata": bool(d.get("armata"))}
+        if nuovo != getattr(self, "allarme", None):
+            self.allarme = nuovo
+            log("sentinella:", "attiva" if nuovo["attiva"] else "spenta", "(sorveglia)" if nuovo["armata"] else "")
+            self.evento(allarme=nuovo)
+        return {"ok": True}
 
     def sentinella_evento(self, d):
         """Il pannello avvisa: il tablet ha visto un movimento o sentito un rumore. Sul pannello di Jarvis e nel
@@ -1571,6 +1582,13 @@ class Jarvis:
         threading.Thread(target=self._protetto, args=(self.promemoria.ciclo,), daemon=True, name="promemoria").start()
         threading.Thread(target=self.prepara_frasi, daemon=True, name="frasi-pronte").start()
         threading.Thread(target=self._prepara_stt, daemon=True).start()
+        threading.Thread(target=self._chiedi_stato_sentinella, daemon=True, name="stato-sentinella").start()
+
+    def _chiedi_stato_sentinella(self):
+        """All'avvio di Jarvis la sentinella può essere già attiva: lo stato lo sa il pannello."""
+        time.sleep(3)
+        t = (stato_sentinella() or {}).get("tablet") or {}
+        self.stato_sentinella({"attiva": t.get("attiva"), "armata": t.get("armata")})
 
     def _protetto(self, f):
         while True:
@@ -1922,6 +1940,8 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/sentinella":
                 return self.manda(200, j.sentinella_evento(d))
+            if u.path == "/jarvis/sentinella/stato":
+                return self.manda(200, j.stato_sentinella(d))
             if u.path == "/jarvis/file/apri":
                 try:
                     visore.apri_sul_pc(str(d.get("percorso", "")))

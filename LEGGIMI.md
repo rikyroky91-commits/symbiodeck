@@ -715,74 +715,101 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - **Jarvis XR (browser), telemetria**: "In primo piano" mostrava l'oggetto grezzo (`[object Object]`); ora il titolo
   della finestra, se no il nome del programma, come sul tablet (2026-11-25).
 
-## Modalità sentinella (dal 2026-11-25, app 1.11.0)
+## Modalità sentinella (dal 2026-11-25, app 1.11.0; video, notte e allarme dalla 1.12.0)
 Il tablet fa da telecamera di sicurezza: con la telecamera **davanti** e il microfono si accorge di un movimento o
-di un rumore, registra foto, fotogrammi e audio e li manda **solo al PC**; Jarvis avvisa.
+di un rumore, registra una foto e una **clip video con audio** (da qualche secondo prima) e le manda **solo al PC**, nella
+cartella **Desktop\Sentinella**; Jarvis avvisa. Richieste dell'utente del 2026-11-25 (seconda giornata): disattivabile
+sia a voce sia con il pulsante, Jarvis che diventa un allarme mentre è attiva, sensibile "come una Ring", eventi in una
+cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica in bianco e nero.
 
 - **Accenderla e spegnerla**: pulsante 🛡 in alto nel pannello del tablet (finestra con stato, impostazioni ed
-  eventi; il numero rosso = eventi non ancora visti), oppure a voce: "Jarvis, attiva la sentinella" / "spegni la
-  sentinella" / "com'è la sentinella?" (comandi locali in `principale.py`, `_SENTINELLA_*`: non passano da Claude,
-  funzionano anche in modalità privata), oppure dalle impostazioni sul PC (sezione 🛡 Sentinella). Sul tablet attivo si
-  spegne **tenendo premuto 2 secondi** l'indicatore (un tocco breve mostra solo come si fa). Se il tablet si riavvia
-  (anche da solo, watchdog) la sentinella riparte com'era.
-- **Indicatore**: finché è attiva lo schermo è nero con la luce al minimo, un punto rosso e "SENTINELLA ATTIVA", cosa
-  sta usando (telecamera e microfono, o perché il microfono è spento) e il conto alla rovescia; in più una notifica
-  fissa "Sentinella attiva". Lo schermo resta acceso (attenuato) anche a batteria; con "schermo: spento" si spegne alla
-  fine dell'armamento (`lockNow`) e resta solo la notifica. Accesa da PC o da Jarvis porta il pannello davanti.
-- **Senza scatti da sola**: per 20 s dopo l'accensione non scatta (armamento, il tempo di uscire); ogni cambio dello
-  schermo (acceso, spento, indicatore, luce cambiata dalla pagina) azzera lo sfondo e ferma il movimento per 3 s; un
-  cambio di luce di tutta l'immagine (esposizione automatica, nuvole) si compensa con un guadagno; la voce di Jarvis che
-  esce dal tablet non conta come rumore (fino a 1,5 s dopo l'ultima frase); tra un evento e l'altro almeno 20 s.
-- **Movimento** (`Sentinella.java`): fotogrammi YUV 640×480 dalla telecamera davanti (12-30 al secondo, analizzati 5
-  al secondo), ridotti a una griglia 64×48 di medie e confrontati con uno sfondo che segue piano i cambiamenti lenti.
-  Scatta se la parte cambiata supera la soglia (sensibilità 1-10: dal 30% allo 0,4% dell'immagine; 6 di serie = 2,7%)
-  in due analisi di fila. Una lampada accesa o spenta (luce di tutta l'immagine più che raddoppiata o dimezzata per due
-  analisi) conta come movimento. Al buio niente compensazione: decide la soglia per cella, che sale con il rumore del
-  sensore.
+  eventi; il numero rosso = eventi non ancora visti), oppure a voce: "Jarvis, attiva la sentinella" / "disattiva (o
+  spegni) la sentinella" / "com'è la sentinella?" (comandi locali in `principale.py`, `_SENTINELLA_*`: non passano da
+  Claude, funzionano anche in modalità privata), oppure dalle impostazioni sul PC (sezione 🛡 Sentinella). Sul tablet
+  attivo si spegne **tenendo premuto 2 secondi** l'indicatore (un tocco breve mostra solo come si fa). Se il tablet si
+  riavvia (anche da solo, watchdog) la sentinella riparte com'era, con le ultime impostazioni (salvate anche nel tablet).
+- **Jarvis diventa un allarme** (1.12.0): finché la sentinella è attiva l'indicatore del tablet è la sfera di Jarvis in
+  rosso, con due fasci da sirena che girano e il nucleo che lampeggia (più lento mentre si arma, più veloce mentre
+  registra), "SENTINELLA ATTIVA" e cosa sta facendo (microfono, notte, registrazione, PC irraggiungibile con gli eventi
+  in coda). Il pannello avvisa Jarvis a ogni cambio (`POST /jarvis/sentinella/stato`, evento `allarme`): anche la sfera
+  nel visore (Jarvis XR) e quella del pannello di Jarvis diventano rosse e lampeggiano (etichetta "SENTINELLA ATTIVA"),
+  se Jarvis non sta parlando o lavorando. Schermo del tablet al minimo: la luce della sfera è poca e i cambi di luce
+  generali la sentinella li compensa (provato: nessuno scatto da sola con la sfera animata).
+- **Senza scatti da sola**: per 20 s dopo l'accensione non scatta (armamento); ogni cambio dello schermo azzera lo
+  sfondo e ferma il movimento per 3 s; la voce di Jarvis che esce dal tablet non conta come rumore.
+- **Movimento, "come una Ring"** (`Sentinella.java`): fotogrammi YUV 640×480 (12-30 al secondo, analizzati 5 al
+  secondo) ridotti a una griglia 64×48 di medie e confrontati con uno sfondo che segue piano i cambiamenti lenti. Conta la
+  **macchia più grande** di celle cambiate che si toccano: una persona piccola e lontana fa una macchia, il rumore del
+  sensore fa puntini sparsi. Sensibilità 1-10 (8 di serie): macchia minima da 200 celle a 3 (8 → 8 celle, 0,26%
+  dell'immagine), soglia per cella più bassa con la sensibilità alta e sempre sopra il rumore del sensore. Due analisi
+  di fila. **Contro i falsi allarmi da luce**: il cambio di luce di tutta l'immagine (esposizione automatica, nuvola) si
+  compensa con un guadagno; se cambia più di un terzo dell'immagine tutto nello stesso verso (più chiaro o più scuro:
+  sole, lampada, nuvola) è luce, non movimento, e lo sfondo si rifà senza evento (nella 1.11.0 una lampada contava come
+  movimento: tolto, chi la accende viene visto muoversi subito dopo). Zone da ignorare (maschera): non ancora.
+- **Clip video con pre-registrazione** (`Video.java`): mentre sorveglia l'encoder H.264 del tablet (OMX.Nvidia) codifica
+  sempre ~13-15 fotogrammi al secondo a 640×480 (1,2 Mbit/s, un fotogramma chiave al secondo) e tiene in memoria gli
+  ultimi ~9 s. Quando scatta: la clip parte dal fotogramma chiave ~5 s prima e dura fino a 12 s dopo, allungata finché
+  c'è ancora movimento o rumore (al massimo 30 s); l'audio (anello di 6 s, poi tutto l'evento) diventa AAC e si monta
+  nell'MP4 (`MediaMuxer`). Misurato: clip da 17-18 s, ~2,7 MB, audio e video. Se l'encoder non c'è: foto e fotogrammi
+  JPEG con WAV come nella 1.11.0. Carico misurato: app ~50% di un core, servizio della telecamera ~47%.
+- **Modalità notte automatica** (impostazione `notte`: `auto` di serie, `sempre`, `mai`): se la luce media dei fotogrammi
+  resta sotto 40 per 3 s il video e le foto diventano **in bianco e nero**, con il livello del nero tolto, un guadagno
+  fino a 8 volte, una curva che schiarisce le ombre e la media con il fotogramma prima (meno rumore); sopra 70 per 5 s
+  torna a colori. La telecamera resta impostata uguale (esposizione lunga sempre permessa, 12-30 fotogrammi al secondo),
+  così il passaggio non oscilla. **Limite**: il tablet ha solo la telecamera davanti, senza infrarossi né illuminatore:
+  al buio totale non si vede nulla, serve almeno un po' di luce (lampione, luce dal corridoio, led di un caricatore); la
+  notte alza la luce che c'è, con più grana.
 - **Rumore**: livello RMS di blocchi da 80 ms sopra il rumore di fondo (che si adatta: scende subito, sale ~0,4 dB/s)
   di un margine (sensibilità 1-10: da 30 a 10 dB; 5 di serie = 21 dB) per almeno 240 ms di fila. Il microfono è quello
-  di Jarvis: se Jarvis lo sta usando la sentinella legge gli stessi blocchi (nella modalità "chiamata"), se no
-  `JarvisServizio` lo apre solo per lei (VOICE_RECOGNITION, niente esce dal tablet finché non scatta).
+  di Jarvis: se Jarvis lo sta usando la sentinella legge gli stessi blocchi, se no `JarvisServizio` lo apre solo per lei.
 - **Col visore addosso** (deciso il 2026-11-25): il microfono del tablet resta **spento** anche per la sentinella, come
-  per Jarvis (Jarvis manda al tablet il comando `visore` quando lo metti e lo togli; senza Jarvis collegato si
-  considera tolto). Motivo: con il Quest in testa sei a casa, vicino al PC e al tablet, e il microfono sentirebbe te
-  che parli a Jarvis e l'audio del gioco: scatterebbe di continuo. La telecamera invece continua: chi entra nella
-  stanza mentre sei nel visore viene visto, e l'avviso ti arriva nel visore. L'indicatore scrive "microfono spento:
-  hai il visore" e il PC lo sa (`perche_rumore`).
-- **Quando scatta**: una foto subito (va al PC per prima: da lì parte l'avviso), poi i fotogrammi da ~2 s prima a ~4 s
-  dopo (2 al secondo, 640×480, orientamento nell'EXIF) e l'audio da 3 s prima a 5 s dopo (WAV 16 kHz). Il PC li salva
-  in `server/sentinella-dati/<id>/` (fuori da git: `foto.jpg`, `clip-NN.jpg`, `audio.wav`, `evento.json`), cancella
-  quelli più vecchi di 30 giorni e avvisa: notifica sul pannello del tablet (contatore e messaggio), Jarvis
-  (`POST /jarvis/sentinella`: avviso sul pannello di Jarvis e nel visore, che apre anche la foto se lo indossi; a voce
-  "Attenzione: la sentinella ha registrato un movimento davanti al tablet alle 14:32", al massimo ogni 45 s).
-  PC spento o in sospensione: gli eventi restano in coda nel tablet (`files/sentinella-coda`, al massimo ~60 MB, i più
-  vecchi si buttano) e partono appena il PC torna; quelli arrivati con più di 2 minuti di ritardo non si dicono a voce.
+  per Jarvis (Jarvis manda al tablet il comando `visore`; senza Jarvis collegato si considera tolto). Con il Quest in
+  testa sei a casa, vicino al tablet: il microfono sentirebbe te e il gioco e scatterebbe di continuo. La telecamera
+  continua e l'avviso arriva nel visore.
+- **Dove finiscono gli eventi** (1.12.0): `Desktop\Sentinella\AAAA-MM-GG\hh.mm.ss movimento|rumore (xxxx)\` con
+  `foto.jpg`, `clip.mp4` ed `evento.json` (tipo, ora, valore). Il Desktop si trova con `SHGetKnownFolderPath` (anche se è
+  in OneDrive); un'altra cartella con `"cartella_sentinella"` in `config.json`. Gli eventi della 1.11.0
+  (`server/sentinella-dati`) vengono spostati lì al primo avvio. Più vecchi di 30 giorni: cancellati.
+- **Avvisi**: notifica sul pannello del tablet (contatore e messaggio), Jarvis (`POST /jarvis/sentinella`: avviso sul suo
+  pannello e nel visore, che apre anche la foto se lo indossi; a voce "Attenzione: la sentinella ha registrato un
+  movimento davanti al tablet alle 14:32", al massimo ogni 45 s).
+- **PC spento o irraggiungibile**: gli eventi restano nel tablet (`files/sentinella-coda`, al massimo 300 MB e mai sotto
+  500 MB liberi, i più vecchi si buttano) e partono appena il PC torna; quelli arrivati con più di 2 minuti di ritardo
+  non si dicono a voce. L'indicatore scrive "PC non raggiungibile: N eventi in attesa sul tablet".
+- **Guardare gli eventi**: sul tablet 🛡 → evento → "▶ Guarda la clip" (lettore di Android: quello del WebView su questo
+  tablet non ottiene il decoder H.264, "Cannot obtain IOmx service", mentre `VideoView` decodifica nel servizio media
+  di sistema); sul PC dalla sezione 🛡 delle impostazioni o direttamente dalla cartella sul Desktop. Il pannello serve
+  i file anche a pezzi (richieste `Range`, risposta 206), come vogliono i lettori video.
 - **Privacy**: niente servizi esterni. Il tablet manda solo al pannello del PC (gli stessi indirizzi USB/Wi-Fi della
-  pagina, con la chiave del pannello); il PC tiene tutto in locale. Foto ed eventi si vedono solo con la chiave.
+  pagina, con la chiave del pannello); il PC tiene tutto in locale.
 - **Impostazioni** in `config.json` (chiave `sentinella`, `server/sentinella.py`): `movimento`, `sens_movimento`,
-  `rumore`, `sens_rumore`, `armamento` (s), `pausa` (s), `schermo` (`attenuato`/`spento`), `voce`, `conserva_giorni`.
-  Il tablet le riceve nel flusso del pannello (`/api/flusso`, parte `sentinella`) insieme al comando di accensione
-  (id che cresce, valido 90 s: un tablet appena riavviato non riapplica un comando vecchio).
-- **API** (chiave del pannello): `GET /api/sentinella` (impostazioni, stato del tablet, eventi), `GET /api/sentinella/file?id=&nome=`,
-  `POST /api/sentinella/file?id=&nome=&valore=&ora=` (dal tablet, corpo grezzo; id `AAAAMMGG-hhmmss-movimento|rumore-xxxx`,
-  nomi `foto.jpg`, `clip-NN.jpg`, `audio.wav` o `evento`), `POST /api/sentinella/stato` (dal tablet, ogni 30 s e a ogni
-  cambio), `/comando`, `/impostazioni`, `/visti`, `/cancella`, `/riassunto`.
+  `rumore`, `sens_rumore`, `armamento` (s), `pausa` (s), `schermo` (`attenuato`/`spento`), `notte`
+  (`auto`/`sempre`/`mai`), `voce`, `conserva_giorni`. Il tablet le riceve nel flusso del pannello (parte `sentinella`)
+  insieme al comando di accensione (id che cresce, valido 90 s) e le salva.
+- **API** (chiave del pannello): `GET /api/sentinella` (impostazioni, stato del tablet, eventi), `GET /api/sentinella/file?id=&nome=`
+  (anche a pezzi), `POST /api/sentinella/file?id=&nome=&valore=&ora=` (dal tablet; nomi `foto.jpg`, `clip.mp4`,
+  `clip-NN.jpg`, `audio.wav` o `evento`), `POST /api/sentinella/stato` (dal tablet), `/comando`, `/impostazioni`,
+  `/visti`, `/cancella`, `/riassunto`. Jarvis: `POST /jarvis/sentinella` (evento), `/jarvis/sentinella/stato` (allarme).
+- **Prova da adb** (per chi sviluppa; solo dalla shell adb, il ricevitore vuole il permesso `DUMP`):
+  `adb shell am broadcast -a it.rikyr.pannello.SENTINELLA_PROVA --es tipo movimento` fa scattare un evento come se la
+  telecamera avesse visto qualcosa (serve la sentinella armata).
 - **Telecamera in comune con Jarvis "guarda"**: se Jarvis chiede una foto (sempre col sì dell'utente) mentre la sentinella
   sorveglia, la sentinella chiude la telecamera, la presta per la foto e poi la riapre (`prestaTelecamera`).
-- **Provato** (2026-11-25, app 1.11.0 sul tablet): test Python (`tests/test_sentinella.py`, 18: impostazioni, comandi
-  nel flusso, stato del tablet, eventi con foto/fotogrammi/audio, dati non validi e percorsi rifiutati, ora del tablet
-  sbagliata, eventi arrivati tardi, visti dopo un riavvio, pulizia, indirizzi HTTP veri, avviso a Jarvis, frasi a voce,
-  avviso a voce limitato e foto nel visore); tutti i test del progetto verdi. **Dal vero**: accesa dal PC → indicatore e
-  conto alla rovescia sul tablet → armata; tablet reinstallato (riavvio) → ripartita da sola; telecamera davanti aperta
-  a 640×480, ~5 analisi al secondo, stanza ferma = movimento 0,000 (nessuno scatto a vuoto in 5 minuti); rumore di fondo
-  −59 dB, picchi brevi a −42 dB non scattano; un rumore vero a −28,9 dB → evento con foto dritta, 12 fotogrammi e 8 s di
-  audio sul PC in meno di un secondo → Jarvis l'ha detto a voce; visore messo/tolto (simulato con `visore/sessione`) →
-  microfono della sentinella spento e riacceso, indicatore aggiornato; "com'è la sentinella?" e "spegni la sentinella"
-  scritti a Jarvis → risposta giusta e sentinella spenta; pulsante 🛡, finestra, evento con foto/fotogrammi/audio;
-  accesa dal pulsante del tablet e spenta tenendo premuto. **Non provato**: un movimento vero davanti al tablet (nessuno
-  si è mosso davanti alla telecamera durante la prova), la stanza al buio e una lampada accesa, la coda con il PC spento,
-  lo schermo "spento", la foto di Jarvis "guarda" mentre la sentinella sorveglia, l'avviso nel Quest vero, la sezione
-  delle impostazioni sul PC vista nel browser.
+- **Provato 1.11.0**: vedi la storia git (accensione da PC, tablet e Jarvis scritto; ripresa dopo il riavvio; rumore vero
+  → evento → voce di Jarvis; visore messo/tolto simulato; pulsante e pressione lunga).
+- **Provato 1.12.0** (2026-11-25 mattina, sul tablet): test Python (`tests/test_sentinella.py`, 25, e tutti i 19 file di
+  test verdi). **Dal vero**: "Jarvis, attiva la sentinella" e "Jarvis, disattiva la sentinella" detti con una voce
+  sintetica locale (Piper) e mandati a Jarvis come dal visore → Whisper ha capito, sentinella accesa e spenta, Jarvis ha
+  risposto e lo stato d'allarme di Jarvis (`/jarvis/stato` → `allarme`) è passato da attivo a spento; pulsante 🛡 →
+  Attiva e pressione lunga → spenta (1.11.0, stesso codice); indicatore a sirena animato; due rumori veri (−28,9 e −28,4
+  dB) e due eventi di prova da adb → clip MP4 da 17-18 s con 5-6 s di pre-registrazione, audio AAC e foto in
+  `Desktop\Sentinella`; notte "sempre" → foto e video in bianco e nero schiariti; **pannello fermato** → 2 eventi in coda
+  sul tablet, l'indicatore lo diceva, pannello riacceso → arrivati entrambi ("arrivato 44 s dopo") e annunciati da
+  Jarvis; evento vecchio della 1.11.0 spostato sul Desktop; clip guardata sul tablet con "▶ Guarda la clip". Nessuno
+  scatto da solo in ~10 minuti (stanza ferma, macchia massima 0). **Non provato**: un movimento vero (piccolo e lontano)
+  davanti alla telecamera, la notte automatica con la stanza davvero buia, la luce del sole o di una lampada che cambia,
+  la sfera d'allarme nel Quest vero e nel pannello di Jarvis (codice controllato, non visto), lo schermo "spento", la foto
+  di Jarvis "guarda" con la sentinella attiva.
 - Installare con il Quest collegato via USB: adb vede due dispositivi e lo script si ferma ("more than one device"). Si
   sceglie il tablet con `ANDROID_SERIAL=<seriale del tablet> python android/costruisci.py --installa`.
 
@@ -802,4 +829,4 @@ di un rumore, registra foto, fotogrammi e audio e li manda **solo al PC**; Jarvi
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.11.0 (2026-11-25, modalità sentinella); app iPhone/Watch: `jarvis-ios-N`.
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.12.0 (2026-11-25, sentinella con video, notte e allarme); app iPhone/Watch: `jarvis-ios-N`.

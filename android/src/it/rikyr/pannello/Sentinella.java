@@ -21,10 +21,12 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaFormat;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.PowerManager;
+import android.os.StatFs;
 import android.os.SystemClock;
 import android.util.Log;
 import android.util.Range;
@@ -58,28 +60,35 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Modalità sentinella: il tablet fa da telecamera di sicurezza (richiesta dell'utente, 2026-11-25).
+ * Modalità sentinella: il tablet fa da telecamera di sicurezza (richieste dell'utente, 2026-11-25).
  *
- * - Movimento: telecamera DAVANTI (come per Jarvis "guarda"), fotogrammi YUV ~640x480 ridotti a una griglia 64x48 di
- *   medie; ognuno si confronta con uno sfondo che si aggiorna piano. Prima del confronto si toglie il cambio di
- *   luce generale (guadagno: esposizione automatica, schermo che si attenua, nuvola), così scatta solo se cambia una
- *   parte dell'immagine. Serve la soglia superata in due analisi di fila (~0,4 s).
- * - Rumore: livello RMS del microfono (blocchi da 80 ms) sopra il rumore di fondo di un margine (sensibilità) per
- *   almeno 240 ms. Il microfono è lo stesso di Jarvis: se Jarvis lo sta usando si leggono i suoi blocchi, se no
- *   JarvisServizio lo apre solo per la sentinella (in locale, niente va al PC finché non scatta). Mentre il tablet
- *   suona (voce di Jarvis) il rumore non conta. Con il visore addosso il microfono del tablet resta SPENTO, come per
- *   Jarvis: la sentinella guarda solo con la telecamera (lo dice nell'indicatore e al PC).
- * - Quando scatta: una foto subito (mandata al PC per prima: l'avviso parte da lì), poi i fotogrammi da 2 s prima a
- *   4 s dopo (2 al secondo) e l'audio da 3 s prima a 5 s dopo. Tutto va SOLO al PC (/api/sentinella/file); se il PC
- *   non risponde resta in coda nel tablet (files/sentinella-coda, al massimo ~60 MB) e parte appena torna.
- * - Schermo: niente scatti da soli. Per 20 s (armamento) dopo l'accensione non scatta; ogni cambio di schermo
- *   (acceso, spento, luce) azzera lo sfondo e mette in pausa il movimento per 3 s.
- * Stato, impostazioni e comandi passano dal flusso del pannello (Simbiosi) e da POST /api/sentinella/stato.
+ * - Movimento, sensibile "come una Ring": telecamera DAVANTI, fotogrammi YUV 640x480 ridotti a una griglia 64x48 di
+ *   medie e confrontati con uno sfondo che si aggiorna piano. Conta la MACCHIA più grande di celle cambiate (vicine
+ *   tra loro): una persona piccola e lontana fa una macchia, il rumore del sensore fa puntini sparsi. Scatta se la
+ *   macchia supera la soglia (sensibilità 8 di serie: 8 celle, 0,26% dell'immagine) in due analisi di fila.
+ *   Contro i falsi allarmi da luce: il cambio di luce di tutta l'immagine (esposizione automatica, nuvola, lampada)
+ *   si compensa con un guadagno, e se cambia gran parte dell'immagine tutta nello stesso verso (più chiara o più
+ *   scura) è luce, non movimento: lo sfondo si rifà senza evento.
+ * - Notte automatica: se la stanza è buia (luce media dei fotogrammi sotto 40 per 3 s; torna a colori sopra 70 per
+ *   5 s) il video e le foto diventano in BIANCO E NERO, con il livello del nero tolto, guadagno fino a 8x, una curva
+ *   che schiarisce le ombre e la media con il fotogramma prima (meno rumore). La telecamera resta impostata uguale
+ *   (esposizione lunga sempre permessa): così il passaggio non oscilla. Niente infrarossi: al buio totale non si
+ *   vede nulla, serve almeno un po' di luce (lampione, standby, luce dal corridoio).
+ * - Rumore: RMS di blocchi da 80 ms sopra il rumore di fondo di un margine per almeno 240 ms. Microfono condiviso con
+ *   Jarvis (JarvisServizio); col visore addosso il microfono del tablet resta spento: si guarda solo.
+ * - Quando scatta: foto subito (al PC per prima: da lì parte l'avviso), poi la CLIP VIDEO (H.264, Video.java) da ~5 s
+ *   PRIMA dell'evento fino a 12 s dopo, allungata finché c'è ancora movimento o rumore (al massimo 30 s), con l'audio
+ *   (AAC). Se l'encoder non c'è: fotogrammi JPEG e WAV come nella 1.11.0.
+ * - Tutto va SOLO al PC (/api/sentinella/file). PC spento o irraggiungibile: gli eventi restano in coda nel tablet
+ *   (files/sentinella-coda, al massimo 300 MB e mai sotto 500 MB liberi, i più vecchi si buttano) e partono appena
+ *   il PC torna. Impostazioni e stato attiva/spenta sono salvati nel tablet: funziona anche a PC spento.
+ * - Niente scatti da soli: armamento (20 s), e ogni cambio di schermo ferma il movimento per 3 s.
  */
 final class Sentinella {
     interface Ascoltatore { void cambiata(); }
 
     private static final String TAG = "PannelloSentinella";
+    static final String PROVA = "it.rikyr.pannello.SENTINELLA_PROVA";
     private static Sentinella unica;
 
     static synchronized Sentinella di(Context c) {
@@ -98,6 +107,7 @@ final class Sentinella {
     private volatile boolean visore = false;          // l'utente ha il visore addosso: microfono del tablet spento
     private volatile long calmaFino = 0;              // schermo appena cambiato: il movimento non conta
     private volatile long silenzioFino = 0;           // il tablet sta suonando: il rumore non conta
+    private volatile long fineSuono = 0;
     private volatile long ultimoAudio = 0, ultimoFotogramma = 0;
     private volatile String erroreTelecamera = "";
     private volatile int eventiDaAccensione = 0;
@@ -105,12 +115,13 @@ final class Sentinella {
     private volatile String ultimoComando = "";
     private volatile String impostazioniPc = "";
 
-    // impostazioni (dal PC, config.json "sentinella"; valori predefiniti uguali a server/sentinella.py)
-    private volatile boolean movimentoOn = true, rumoreOn = true, voceOn = true;
-    private volatile int sensMovimento = 6, sensRumore = 5, armamento = 20, pausa = 20;
+    // impostazioni (dal PC, config.json "sentinella"; salvate anche qui; predefinite uguali a server/sentinella.py)
+    private volatile boolean movimentoOn = true, rumoreOn = true;
+    private volatile int sensMovimento = 8, sensRumore = 5, armamento = 20, pausa = 20;
     private volatile String schermo = "attenuato";
+    private volatile String modoNotte = "auto";      // "auto", "sempre", "mai"
 
-    // telecamera
+    // telecamera e video
     private final HandlerThread filo = new HandlerThread("sentinella-telecamera");
     private final Handler h;
     private CameraDevice telecamera;
@@ -119,40 +130,49 @@ final class Sentinella {
     private int orientamentoSensore = 0;
     private boolean davanti = true;
     private int prestata = 0;                       // Jarvis sta usando la telecamera per una foto
-    private byte[] luma, nv21;
+    private boolean aprendo = false;
+    private final Video video = new Video();
+    private volatile boolean videoOk = false;
+    private String erroreVideo = "";
+    private byte[] luma, yOut, uOut, vOut;
+    private int[] media;                            // per la riduzione del rumore di notte
+    private final int[] curva = new int[256];       // luce -> luce, di notte
     private float[] griglia, sfondo;
+    private boolean[] cambiate;
+    private int[] coda;
     private final int[] istogramma = new int[256];
-    private int sopraDiFila = 0, luceDiFila = 0;
-    private volatile int fotogrammi = 0;            // per il registro: fotogrammi analizzati negli ultimi 30 s
-    private volatile float luce = -1;               // luce media dell'ultimo fotogramma (0-255), per il registro
-    private long ultimaAnalisi = 0, ultimoJpeg = 0;
-    private float movimentoMax = 0;                 // per il registro e il PC: il massimo degli ultimi 30 s
-    private final ArrayList<long[]> tempiAnello = new ArrayList<>();
-    private final ArrayList<byte[]> anello = new ArrayList<>();   // JPEG degli ultimi ~2 s
+    private int sopraDiFila = 0;
+    private volatile int fotogrammi = 0;
+    private volatile float luce = -1;               // luce media dell'ultimo fotogramma (0-255)
+    private volatile boolean notte = false;
+    private long buioDa = 0, chiaroDa = 0;
+    private long ultimaAnalisi = 0, ultimoCodificato = 0, ultimoJpeg = 0;
+    private float movimentoMax = 0;                 // per il registro: la macchia più grande (frazione) in 30 s
+    private final ArrayList<byte[]> anello = new ArrayList<>();   // JPEG degli ultimi ~2 s (solo senza video)
     private static final int GW = 64, GH = 48;
 
     // audio
-    private final byte[] anelloAudio = new byte[16000 * 2 * 3];  // ultimi 3 s di PCM 16 kHz
+    private final byte[] anelloAudio = new byte[16000 * 2 * 6];  // ultimi 6 s di PCM 16 kHz
     private int posAudio = 0;
     private boolean anelloPieno = false;
+    private long fineAnelloUs = 0;                  // istante dell'ultimo campione nell'anello
     private float fondo = Float.NaN;
     private int bloccoSopra = 0;
     private float rumoreMax = -120;
 
-    // evento in corso
     private Evento evento;
-
     private final Thread invio;
 
     private static final class Evento {
         String id, tipo;
         double valore;
-        long oraMs, inizio;
+        long oraMs, inizio, fine;
         byte[] foto;
-        boolean fotoChiusa;                        // foto arrivata o rinunciata (telecamera ferma)
+        boolean fotoChiusa;
         final ArrayList<byte[]> clip = new ArrayList<>();
+        final List<Video.Pacchetto> video = Collections.synchronizedList(new ArrayList<Video.Pacchetto>());
         final ByteArrayOutputStream audio = new ByteArrayOutputStream();
-        boolean audioChiuso;
+        long audioInizioUs;
         long ultimoClip;
         File cartella;
     }
@@ -168,8 +188,21 @@ final class Sentinella {
         c.registerReceiver(new BroadcastReceiver() {
             @Override public void onReceive(Context x, Intent i) { calma(3000); }
         }, f);
+        // prova dal PC con adb (solo chi ha il permesso DUMP, cioè adb shell e il sistema):
+        //   adb shell am broadcast -a it.rikyr.pannello.SENTINELLA_PROVA --es tipo movimento
+        c.registerReceiver(new BroadcastReceiver() {
+            @Override public void onReceive(Context x, Intent i) {
+                final String tipo = "rumore".equals(i.getStringExtra("tipo")) ? "rumore" : "movimento";
+                Log.i(TAG, "prova da adb: " + tipo);
+                h.post(new Runnable() { @Override public void run() { ultimoEvento = 0; scatta(tipo, -1); } });
+            }
+        }, new IntentFilter(PROVA), "android.permission.DUMP", null);
         NotificationManager nm = (NotificationManager) c.getSystemService(Context.NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel("sentinella", "Sentinella", NotificationManager.IMPORTANCE_LOW));
+        String salvate = prefs.getString("imp", null);
+        if (salvate != null) {
+            try { applica(new JSONObject(salvate)); } catch (Exception e) { Log.w(TAG, "impostazioni salvate: " + e); }
+        }
         invio = new Thread(new Runnable() { @Override public void run() { cicloInvio(); } }, "sentinella-invio");
         invio.setDaemon(true);
         invio.start();
@@ -181,13 +214,14 @@ final class Sentinella {
     int secondiAllArmamento() { return (int) Math.max(0, (armataDa - SystemClock.elapsedRealtime() + 999) / 1000); }
     boolean schermoSpento() { return "spento".equals(schermo); }
     boolean visore() { return visore; }
+    boolean notte() { return notte; }
+    boolean registra() { synchronized (this) { return evento != null; } }
     int eventi() { return eventiDaAccensione; }
     String erroreTelecamera() { return erroreTelecamera; }
 
     /** Microfono in uso adesso per la sentinella (blocchi arrivati negli ultimi 2 s). */
     boolean sente() { return attiva && SystemClock.elapsedRealtime() - ultimoAudio < 2000; }
 
-    /** Perché non sente, per l'indicatore e il PC ("" se sente). */
     String percheNonSente() {
         if (!rumoreOn) return "rumore spento nelle impostazioni";
         if (visore) return "visore addosso";
@@ -224,12 +258,18 @@ final class Sentinella {
                 eventiDaAccensione = 0;
                 fondo = Float.NaN;
                 h.post(new Runnable() { @Override public void run() { apri(); } });
-                // lo schermo spento all'armamento, se è stato scelto "spento" (in modalità attenuata resta acceso)
                 h.postDelayed(spegniSeVoluto, armamento * 1000L + 500);
             } else {
                 h.removeCallbacks(spegniSeVoluto);
-                h.post(new Runnable() { @Override public void run() { chiudi(); } });
                 synchronized (this) { if (evento != null) chiudiEvento(true); }
+                h.post(new Runnable() {
+                    @Override public void run() {
+                        chiudi();
+                        video.ferma();
+                        videoOk = false;
+                        notte = false;
+                    }
+                });
             }
         }
         notifica();
@@ -269,16 +309,9 @@ final class Sentinella {
     void dalPc(JSONObject s) {
         JSONObject imp = s.optJSONObject("imp");
         if (imp != null && !imp.toString().equals(impostazioniPc)) {
-            impostazioniPc = imp.toString();
             boolean rumorePrima = rumoreOn;
-            movimentoOn = imp.optBoolean("movimento", true);
-            rumoreOn = imp.optBoolean("rumore", true);
-            voceOn = imp.optBoolean("voce", true);
-            sensMovimento = limita(imp.optInt("sens_movimento", 6), 1, 10);
-            sensRumore = limita(imp.optInt("sens_rumore", 5), 1, 10);
-            armamento = limita(imp.optInt("armamento", 20), 0, 300);
-            pausa = limita(imp.optInt("pausa", 20), 5, 600);
-            schermo = imp.optString("schermo", "attenuato");
+            applica(imp);
+            prefs.edit().putString("imp", impostazioniPc).apply();   // valgono anche a PC spento e dopo un riavvio
             Log.i(TAG, "impostazioni dal PC: " + impostazioniPc);
             if (rumorePrima != rumoreOn) JarvisServizio.svegliaMicrofono();
             calma(1500);
@@ -292,6 +325,18 @@ final class Sentinella {
                 attiva(c.optBoolean("attiva", false), "PC");
             }
         }
+    }
+
+    private void applica(JSONObject imp) {
+        impostazioniPc = imp.toString();
+        movimentoOn = imp.optBoolean("movimento", true);
+        rumoreOn = imp.optBoolean("rumore", true);
+        sensMovimento = limita(imp.optInt("sens_movimento", 8), 1, 10);
+        sensRumore = limita(imp.optInt("sens_rumore", 5), 1, 10);
+        armamento = limita(imp.optInt("armamento", 20), 0, 300);
+        pausa = limita(imp.optInt("pausa", 20), 5, 600);
+        schermo = imp.optString("schermo", "attenuato");
+        modoNotte = imp.optString("notte", "auto");
     }
 
     private static int limita(int v, int lo, int hi) { return Math.max(lo, Math.min(hi, v)); }
@@ -316,12 +361,11 @@ final class Sentinella {
     void suonoInUscita(int byte24k) {
         long durata = byte24k * 1000L / (24000 * 2);
         long ora = SystemClock.elapsedRealtime();
-        fineSuono = Math.max(fineSuono, ora) + durata;   // l'audio in coda suona uno dopo l'altro
+        fineSuono = Math.max(fineSuono, ora) + durata;
         silenzioFino = fineSuono + 1500;
     }
-    private volatile long fineSuono = 0;
 
-    // ------------------------------------------------------------------ indicatore (notifica)
+    // ------------------------------------------------------------------ notifica
     private void notifica() {
         NotificationManager nm = (NotificationManager) app.getSystemService(Context.NOTIFICATION_SERVICE);
         if (!attiva) { nm.cancel(48); return; }
@@ -337,7 +381,6 @@ final class Sentinella {
     }
 
     // ------------------------------------------------------------------ telecamera
-    private boolean aprendo = false;
     private final Runnable riapri = new Runnable() { @Override public void run() { apri(); } };
 
     private void apri() {
@@ -364,7 +407,8 @@ final class Sentinella {
             davanti = verso != null && verso == CameraCharacteristics.LENS_FACING_FRONT;
             Size misura = misura(car.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
                     .getOutputSizes(ImageFormat.YUV_420_888));
-            final Range<Integer> fps = fps(car.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES));
+            Range<Integer>[] campi = car.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            final Range<Integer> fps = fps(campi);
             lettore = ImageReader.newInstance(misura.getWidth(), misura.getHeight(), ImageFormat.YUV_420_888, 3);
             lettore.setOnImageAvailableListener(new ImageReader.OnImageAvailableListener() {
                 @Override public void onImageAvailable(ImageReader r) {
@@ -379,10 +423,15 @@ final class Sentinella {
                     }
                 }
             }, h);
+            if (!video.attivo()) {
+                videoOk = video.avvia(misura.getWidth(), misura.getHeight());
+                erroreVideo = videoOk ? "" : "encoder non disponibile";
+            }
             aprendo = true;
-            Log.i(TAG, "apro la telecamera " + scelta + (davanti ? " (davanti)" : "") + " " + misura + " fps " + fps);
+            Log.i(TAG, "apro la telecamera " + scelta + (davanti ? " (davanti)" : "") + " " + misura + " fps " + fps
+                    + " (possibili " + Arrays.toString(campi) + ")");
             cm.openCamera(scelta, new CameraDevice.StateCallback() {
-                @Override public void onOpened(CameraDevice d) {
+                @Override public void onOpened(final CameraDevice d) {
                     aprendo = false;
                     if (!attiva || prestata > 0) { d.close(); return; }
                     telecamera = d;
@@ -392,9 +441,10 @@ final class Sentinella {
                                     @Override public void onConfigured(CameraCaptureSession s) {
                                         sessione = s;
                                         try {
-                                            CaptureRequest.Builder b = d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
+                                            CaptureRequest.Builder b = d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
                                             b.addTarget(lettore.getSurface());
                                             b.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
+                                            b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
                                             if (fps != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fps);
                                             s.setRepeatingRequest(b.build(), null, h);
                                             erroreTelecamera = "";
@@ -419,7 +469,6 @@ final class Sentinella {
         }
     }
 
-    /** Telecamera persa: si chiude tutto e si riprova fra 10 s. */
     private void guasto(String perche) {
         erroreTelecamera = perche;
         Log.w(TAG, "telecamera: " + perche);
@@ -437,7 +486,8 @@ final class Sentinella {
         if (lettore != null) lettore.close();
         lettore = null;
         sfondo = null;
-        synchronized (this) { anello.clear(); tempiAnello.clear(); }
+        media = null;
+        synchronized (this) { anello.clear(); }
     }
 
     /** Jarvis vuole una foto (Fotocamera.scatta) mentre la sentinella usa la telecamera: gliela si presta. */
@@ -463,59 +513,79 @@ final class Sentinella {
         return migliore;
     }
 
-    /** Fotogrammi lenti (esposizione più lunga al buio, meno lavoro): il campo con il massimo più basso da 10 in su. */
+    /** Il minimo più basso possibile (al buio l'esposizione si allunga), con un massimo tra 15 e 30 (più in alto
+     *  la telecamera e il telefono lavorano per niente: il video ne usa ~15 al secondo). */
     private static Range<Integer> fps(Range<Integer>[] campi) {
         if (campi == null) return null;
         Range<Integer> scelto = null;
         for (Range<Integer> r : campi) {
-            if (r.getUpper() < 10) continue;
-            if (scelto == null || r.getUpper() < scelto.getUpper()
-                    || (r.getUpper().equals(scelto.getUpper()) && r.getLower() < scelto.getLower())) scelto = r;
+            if (r.getUpper() < 15 || r.getUpper() > 30) continue;
+            if (scelto == null || r.getLower() < scelto.getLower()
+                    || (r.getLower().equals(scelto.getLower()) && r.getUpper() < scelto.getUpper())) scelto = r;
         }
         return scelto;
     }
 
-    // ------------------------------------------------------------------ analisi dei fotogrammi (thread telecamera)
+    // ------------------------------------------------------------------ fotogrammi (thread telecamera)
     private void fotogramma(Image im) {
         long ora = SystemClock.elapsedRealtime();
         ultimoFotogramma = ora;
         boolean analisi = ora - ultimaAnalisi >= 200;
+        boolean codifica = videoOk && ora - ultimoCodificato >= 62;       // ~15 al secondo
         Evento ev;
         synchronized (this) { ev = evento; }
-        boolean serveJpeg = ora - ultimoJpeg >= 500 || (ev != null && !ev.fotoChiusa);
-        if (!analisi && !serveJpeg) return;
+        boolean serveFoto = ev != null && !ev.fotoChiusa;
+        boolean serveJpeg = serveFoto || (!videoOk && ora - ultimoJpeg >= 500);
+        if (!analisi && !codifica && !serveJpeg) return;
         int w = im.getWidth(), hh = im.getHeight();
         if (luma == null || luma.length != w * hh) {
             luma = new byte[w * hh];
-            nv21 = new byte[w * hh * 3 / 2];
+            yOut = new byte[w * hh];
+            uOut = new byte[w * hh / 4];
+            vOut = new byte[w * hh / 4];
+            media = null;
         }
         copiaLuma(im, luma, w, hh);
         if (analisi) {
             ultimaAnalisi = ora;
             analizza(luma, w, hh, ora);
         }
+        if (!codifica && !serveJpeg) return;
+        elabora(im, w, hh);
+        if (codifica) {
+            ultimoCodificato = ora;
+            try {
+                video.codifica(yOut, uOut, vOut, SystemClock.elapsedRealtimeNanos() / 1000);
+            } catch (Exception e) {
+                Log.w(TAG, "video: " + e);
+                videoOk = false;
+                erroreVideo = e.toString();
+                video.ferma();
+            }
+        }
         if (serveJpeg) {
             ultimoJpeg = ora;
-            byte[] jpeg = jpeg(im, w, hh);
+            byte[] jpeg = jpeg(w, hh);
             if (jpeg == null) return;
             synchronized (this) {
-                anello.add(jpeg);
-                tempiAnello.add(new long[] { ora });
-                while (anello.size() > 4) { anello.remove(0); tempiAnello.remove(0); }
+                if (!videoOk) {
+                    anello.add(jpeg);
+                    while (anello.size() > 4) anello.remove(0);
+                }
                 if (evento != null) {
                     if (!evento.fotoChiusa) {
                         evento.foto = jpeg;
                         evento.fotoChiusa = true;
                         evento.ultimoClip = ora;
                         mandaFoto(evento);
-                    } else if (ora - evento.ultimoClip >= 450 && ora - evento.inizio <= 4500 && evento.clip.size() < 20) {
+                    } else if (!videoOk && ora - evento.ultimoClip >= 450 && evento.clip.size() < 40) {
                         evento.clip.add(jpeg);
                         evento.ultimoClip = ora;
                     }
-                    if (ora - evento.inizio > 4500 && evento.audioChiuso) chiudiEvento(false);
                 }
             }
         }
+        synchronized (this) { if (evento != null && ora > evento.fine) chiudiEvento(false); }
     }
 
     private static void copiaLuma(Image im, byte[] out, int w, int hh) {
@@ -533,9 +603,58 @@ final class Sentinella {
         }
     }
 
+    /** Il fotogramma che va nel video e nelle foto: a colori di giorno; di notte bianco e nero, più luce, meno rumore. */
+    private void elabora(Image im, int w, int hh) {
+        int n = w * hh;
+        if (!notte) {
+            System.arraycopy(luma, 0, yOut, 0, n);
+            Image.Plane[] p = im.getPlanes();
+            ByteBuffer u = p[1].getBuffer(), v = p[2].getBuffer();
+            int passo = p[1].getRowStride(), pixel = p[1].getPixelStride();
+            int k = 0;
+            for (int r = 0; r < hh / 2; r++) {
+                int base = r * passo;
+                for (int c = 0; c < w / 2; c++, k++) {
+                    int i = base + c * pixel;
+                    uOut[k] = u.get(i);
+                    vOut[k] = v.get(i);
+                }
+            }
+            media = null;
+            return;
+        }
+        if (media == null || media.length != n) {
+            media = new int[n];
+            for (int i = 0; i < n; i++) media[i] = curva[luma[i] & 0xff] << 4;
+        }
+        // media mobile (metà fotogramma nuovo, metà vecchio) in virgola fissa: il rumore del sensore cala
+        for (int i = 0; i < n; i++) {
+            int nuovo = curva[luma[i] & 0xff] << 4;
+            int m = (media[i] + nuovo) >> 1;
+            media[i] = m;
+            yOut[i] = (byte) (m >> 4);
+        }
+        Arrays.fill(uOut, (byte) 128);
+        Arrays.fill(vOut, (byte) 128);
+    }
+
+    /** Curva della notte: toglie il livello del nero, guadagno fino a 8x e schiarisce le ombre. */
+    private void preparaCurva(int nero, float mediaLuce) {
+        float guadagno = Math.max(1f, Math.min(8f, 110f / Math.max(1f, mediaLuce - nero)));
+        for (int i = 0; i < 256; i++) {
+            float x = Math.max(0, i - nero) * guadagno / 255f;
+            float y = (float) Math.pow(Math.min(1f, x), 0.75);
+            curva[i] = Math.min(255, Math.round(y * 255));
+        }
+    }
+
     private void analizza(byte[] y, int w, int hh, long ora) {
         int n = GW * GH;
-        if (griglia == null) griglia = new float[n];
+        if (griglia == null) {
+            griglia = new float[n];
+            cambiate = new boolean[n];
+            coda = new int[n];
+        }
         int cw = w / GW, ch = hh / GH;
         float somma = 0;
         for (int gy = 0; gy < GH; gy++) {
@@ -550,9 +669,10 @@ final class Sentinella {
                 somma += v;
             }
         }
-        float media = somma / n;
-        luce = media;
+        float mediaLuce = somma / n;
+        luce = mediaLuce;
         fotogrammi++;
+        decidiNotte(mediaLuce, ora);
         if (sfondo == null || ora < calmaFino) {
             if (sfondo == null) sfondo = new float[n];
             System.arraycopy(griglia, 0, sfondo, 0, n);
@@ -562,70 +682,109 @@ final class Sentinella {
         float mediaSfondo = 0;
         for (float v : sfondo) mediaSfondo += v;
         mediaSfondo /= n;
-        // Cambio di luce generale (esposizione automatica, nuvola): si compensa con un guadagno. Al buio (media
-        // bassissima) il rapporto sarebbe solo rumore: niente compensazione, decide la soglia per cella.
+        // cambio di luce generale: si compensa con un guadagno (al buio il rapporto sarebbe solo rumore)
         float guadagno = 1f;
-        if (Math.max(media, mediaSfondo) >= 12) {
-            guadagno = mediaSfondo / Math.max(1f, media);
-            if (guadagno < 0.5f || guadagno > 2f) {
-                // la luce è cambiata del tutto (una lampada accesa o spenta): se resta così è un evento, poi si
-                // riparte con lo sfondo nuovo. Lo schermo del tablet non c'entra: i suoi cambi passano da calma().
-                if (++luceDiFila >= 2) {
-                    luceDiFila = 0;
-                    System.arraycopy(griglia, 0, sfondo, 0, n);
-                    calmaFino = ora + 1500;
-                    sopraDiFila = 0;
-                    movimentoMax = 1f;
-                    if (movimentoOn && armata()) scatta("movimento", 1.0);
-                }
-                return;
-            }
+        if (Math.max(mediaLuce, mediaSfondo) >= 12) {
+            guadagno = mediaSfondo / Math.max(1f, mediaLuce);
+            if (guadagno < 0.4f || guadagno > 2.5f) { rifaiSfondo(ora); return; }   // luce cambiata del tutto
         }
-        luceDiFila = 0;
         Arrays.fill(istogramma, 0);
         float[] diff = new float[n];
         for (int i = 0; i < n; i++) {
-            float d = Math.abs(griglia[i] * guadagno - sfondo[i]);
+            float d = griglia[i] * guadagno - sfondo[i];
             diff[i] = d;
-            istogramma[Math.min(255, (int) d)]++;
+            istogramma[Math.min(255, (int) Math.abs(d))]++;
         }
         int meta = n / 2, cum = 0, mediana = 0;
         for (int i = 0; i < 256; i++) { cum += istogramma[i]; if (cum >= meta) { mediana = i; break; } }
-        // soglia per cella: sopra il rumore del sensore (al buio è alto) e più bassa con la sensibilità alta
-        float sogliaCella = Math.max(24 - sensMovimento, 3.5f * mediana + 4);
-        int sopra = 0;
-        for (float d : diff) if (d > sogliaCella) sopra++;
-        float frazione = (float) sopra / n;
-        float sogliaFrazione = (float) (0.30 * Math.pow(0.62, sensMovimento - 1));
+        // soglia per cella: sopra il rumore del sensore (al buio è alto), più bassa con la sensibilità alta
+        float sogliaCella = Math.max(26f - 1.5f * sensMovimento, 3.5f * mediana + 3);
+        int cambi = 0, piu = 0;
+        for (int i = 0; i < n; i++) {
+            boolean c = Math.abs(diff[i]) > sogliaCella;
+            cambiate[i] = c;
+            if (c) { cambi++; if (diff[i] > 0) piu++; }
+        }
+        int macchia = macchiaPiuGrande();
+        float frazione = (float) macchia / n;
         if (frazione > movimentoMax) movimentoMax = frazione;
-        boolean mosso = frazione > sogliaFrazione;
+        // tanta parte dell'immagine cambiata tutta nello stesso verso: è la luce (sole, nuvola, lampada), non movimento
+        if (cambi > n * 0.35f && (piu > cambi * 0.85f || piu < cambi * 0.15f)) { rifaiSfondo(ora); return; }
+        int minimo = Math.max(3, Math.round(200f * (float) Math.pow(0.63, sensMovimento - 1)));
+        boolean mosso = macchia >= minimo;
         sopraDiFila = mosso ? sopraDiFila + 1 : 0;
-        // lo sfondo segue piano i cambiamenti lenti (luce del giorno); fermo mentre qualcosa si muove
-        float a = mosso ? 0.01f : 0.08f;
+        float a = mosso ? 0.01f : 0.08f;      // lo sfondo segue i cambiamenti lenti; fermo mentre qualcosa si muove
         for (int i = 0; i < n; i++) sfondo[i] = sfondo[i] * (1 - a) + griglia[i] * a;
         if (sopraDiFila >= 2 && movimentoOn && armata()) {
             sopraDiFila = 0;
-            scatta("movimento", Math.round(frazione * 1000) / 1000.0);
+            scatta("movimento", Math.round(frazione * 10000) / 10000.0);
         }
     }
 
-    /** YUV_420_888 -> NV21 -> JPEG ~640x480, con l'orientamento nell'EXIF (la pagina e il PC lo raddrizzano). */
-    private byte[] jpeg(Image im, int w, int hh) {
-        try {
-            System.arraycopy(luma, 0, nv21, 0, w * hh);
-            Image.Plane[] p = im.getPlanes();
-            ByteBuffer u = p[1].getBuffer(), v = p[2].getBuffer();
-            int passo = p[1].getRowStride(), pixel = p[1].getPixelStride();
-            int pos = w * hh;
-            for (int r = 0; r < hh / 2; r++) {
-                for (int c = 0; c < w / 2; c++) {
-                    int i = r * passo + c * pixel;
-                    nv21[pos++] = v.get(i);
-                    nv21[pos++] = u.get(i);
+    private void rifaiSfondo(long ora) {
+        System.arraycopy(griglia, 0, sfondo, 0, griglia.length);
+        calmaFino = ora + 1500;
+        sopraDiFila = 0;
+    }
+
+    /** La macchia più grande di celle cambiate che si toccano (anche in diagonale). */
+    private int macchiaPiuGrande() {
+        int n = GW * GH, migliore = 0;
+        boolean[] visto = new boolean[n];
+        for (int s = 0; s < n; s++) {
+            if (!cambiate[s] || visto[s]) continue;
+            int testa = 0, fondoCoda = 0, conta = 0;
+            coda[fondoCoda++] = s;
+            visto[s] = true;
+            while (testa < fondoCoda) {
+                int i = coda[testa++];
+                conta++;
+                int x = i % GW, y = i / GW;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= GW || ny >= GH) continue;
+                        int j = ny * GW + nx;
+                        if (cambiate[j] && !visto[j]) { visto[j] = true; coda[fondoCoda++] = j; }
+                    }
                 }
             }
+            if (conta > migliore) migliore = conta;
+        }
+        return migliore;
+    }
+
+    /** Notte se la stanza resta buia per 3 s, di nuovo giorno se resta chiara per 5 s. */
+    private void decidiNotte(float mediaLuce, long ora) {
+        if (mediaLuce < 40) { chiaroDa = 0; if (buioDa == 0) buioDa = ora; }
+        else if (mediaLuce > 70) { buioDa = 0; if (chiaroDa == 0) chiaroDa = ora; }
+        else { buioDa = 0; chiaroDa = 0; }
+        boolean prima = notte;
+        if (!notte && buioDa > 0 && ora - buioDa > 3000) notte = true;
+        if (notte && chiaroDa > 0 && ora - chiaroDa > 5000) notte = false;
+        if ("sempre".equals(modoNotte)) notte = true;
+        else if ("mai".equals(modoNotte)) notte = false;
+        if (notte) {
+            // livello del nero: le celle più scure (5%)
+            float[] c = griglia.clone();
+            Arrays.sort(c);
+            preparaCurva((int) Math.max(0, Math.min(40, c[c.length / 20] - 2)), mediaLuce);
+        }
+        if (prima != notte) {
+            Log.i(TAG, notte ? "modalità notte: bianco e nero, più luce" : "di nuovo giorno: colori");
+            avvisaAscoltatori();
+        }
+    }
+
+    /** yOut/uOut/vOut -> NV21 -> JPEG, con l'orientamento nell'EXIF. */
+    private byte[] jpeg(int w, int hh) {
+        try {
+            byte[] nv21 = new byte[w * hh * 3 / 2];
+            System.arraycopy(yOut, 0, nv21, 0, w * hh);
+            int pos = w * hh;
+            for (int k = 0; k < uOut.length; k++) { nv21[pos++] = vOut[k]; nv21[pos++] = uOut[k]; }
             ByteArrayOutputStream out = new ByteArrayOutputStream(64 * 1024);
-            new YuvImage(nv21, ImageFormat.NV21, w, hh, null).compressToJpeg(new Rect(0, 0, w, hh), 75, out);
+            new YuvImage(nv21, ImageFormat.NV21, w, hh, null).compressToJpeg(new Rect(0, 0, w, hh), 80, out);
             return conOrientamento(out.toByteArray(), rotazione());
         } catch (Exception e) {
             Log.w(TAG, "jpeg: " + e);
@@ -633,7 +792,6 @@ final class Sentinella {
         }
     }
 
-    /** Di quanto va girata l'immagine (in senso orario) per vederla dritta con il tablet com'è adesso. */
     private int rotazione() {
         int gradi = 0;
         try {
@@ -647,12 +805,12 @@ final class Sentinella {
     static byte[] conOrientamento(byte[] jpeg, int gradi) {
         int o = gradi == 90 ? 6 : gradi == 180 ? 3 : gradi == 270 ? 8 : 1;
         byte[] exif = {
-                (byte) 0xFF, (byte) 0xE1, 0, 34,                       // APP1, lunghezza 34
+                (byte) 0xFF, (byte) 0xE1, 0, 34,
                 'E', 'x', 'i', 'f', 0, 0,
-                'M', 'M', 0, 42, 0, 0, 0, 8,                            // TIFF big-endian, IFD a 8
-                0, 1,                                                   // una voce
-                0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, (byte) o, 0, 0,        // Orientation, SHORT, 1, valore
-                0, 0, 0, 0 };                                           // nessun IFD dopo
+                'M', 'M', 0, 42, 0, 0, 0, 8,
+                0, 1,
+                0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, (byte) o, 0, 0,
+                0, 0, 0, 0 };
         byte[] r = new byte[jpeg.length + exif.length];
         r[0] = jpeg[0];
         r[1] = jpeg[1];
@@ -662,7 +820,6 @@ final class Sentinella {
     }
 
     // ------------------------------------------------------------------ audio (thread del microfono)
-    /** Un blocco PCM 16 kHz dal microfono (quello di Jarvis o quello aperto solo per la sentinella). */
     void audio(byte[] b, int n) {
         if (!attiva || n < 2) return;
         long ora = SystemClock.elapsedRealtime();
@@ -674,7 +831,6 @@ final class Sentinella {
         }
         double rms = Math.sqrt(s / (n / 2));
         float db = (float) (20 * Math.log10(rms / 32768.0 + 1e-9));
-        boolean scattato = false;
         synchronized (this) {
             int k = Math.min(n, anelloAudio.length);
             for (int i = 0; i < k; i++) {
@@ -682,52 +838,62 @@ final class Sentinella {
                 posAudio = (posAudio + 1) % anelloAudio.length;
             }
             if (posAudio < k) anelloPieno = true;
-            if (evento != null && !evento.audioChiuso) {
-                evento.audio.write(b, 0, n);
-                if (evento.audio.size() >= 16000 * 2 * 8) evento.audioChiuso = true;   // 3 s prima + 5 s dopo
-                if (evento.audioChiuso && evento.fotoChiusa && ora - evento.inizio > 4500) chiudiEvento(false);
-            }
+            fineAnelloUs = SystemClock.elapsedRealtimeNanos() / 1000;
+            if (evento != null && evento.audio.size() < 16000 * 2 * 40) evento.audio.write(b, 0, n);
         }
-        if (ora < silenzioFino) { bloccoSopra = 0; return; }   // sta suonando Jarvis: né soglia né fondo
+        if (ora < silenzioFino) { bloccoSopra = 0; return; }
         if (db > rumoreMax) rumoreMax = db;
         if (Float.isNaN(fondo)) fondo = db;
         else if (db < fondo) fondo = fondo * 0.8f + db * 0.2f;
-        else fondo = Math.min(db, fondo + 0.03f);          // sale piano (~0,4 dB/s): un rumore costante non scatta per sempre
+        else fondo = Math.min(db, fondo + 0.03f);
         float margine = 30f - 2.2f * (sensRumore - 1);
         float soglia = Math.max(fondo + margine, -55f);
         bloccoSopra = db > soglia ? bloccoSopra + 1 : 0;
         if (bloccoSopra >= 3 && rumoreOn && armata() && !visore) {
             bloccoSopra = 0;
-            scattato = true;
+            scatta("rumore", Math.round(db * 10) / 10.0);
         }
-        if (scattato) scatta("rumore", Math.round(db * 10) / 10.0);
     }
 
     // ------------------------------------------------------------------ eventi
     private void scatta(String tipo, double valore) {
         long ora = SystemClock.elapsedRealtime();
         synchronized (this) {
-            if (!armata() || evento != null || (ultimoEvento != 0 && ora - ultimoEvento < pausa * 1000L)) return;
+            if (evento != null) {
+                // ancora movimento o rumore durante la registrazione: la clip si allunga (al massimo 30 s)
+                evento.fine = Math.min(evento.inizio + 30_000, Math.max(evento.fine, ora + 8000));
+                return;
+            }
+            if (!armata() || (ultimoEvento != 0 && ora - ultimoEvento < pausa * 1000L)) return;
             ultimoEvento = ora;
-            Evento ev = new Evento();
+            final Evento ev = new Evento();
             ev.tipo = tipo;
             ev.valore = valore;
             ev.oraMs = System.currentTimeMillis();
             ev.inizio = ora;
+            ev.fine = ora + 12_000;
             ev.id = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(new Date(ev.oraMs)) + "-" + tipo + "-"
                     + String.format(Locale.ROOT, "%04x", new Random().nextInt(0x10000));
-            // i fotogrammi già presi (~2 s prima) aprono la clip; l'audio parte da 3 s prima
-            ev.clip.addAll(anello);
-            if (anelloPieno) ev.audio.write(anelloAudio, posAudio, anelloAudio.length - posAudio);
-            ev.audio.write(anelloAudio, 0, posAudio);
-            if (!sente()) ev.audioChiuso = true;
+            long adessoUs = SystemClock.elapsedRealtimeNanos() / 1000;
+            if (videoOk) {
+                ev.video.addAll(video.da(adessoUs - 5_000_000));   // ~5 s prima dell'evento
+                video.uscita = new Video.Uscita() { @Override public void pacchetto(Video.Pacchetto p) { ev.video.add(p); } };
+            } else {
+                ev.clip.addAll(anello);
+            }
+            // audio: gli ultimi 5 s dell'anello
+            int pieno = anelloPieno ? anelloAudio.length : posAudio;
+            int prendi = Math.min(pieno, 16000 * 2 * 5);
+            int da = (posAudio - prendi + anelloAudio.length) % anelloAudio.length;
+            for (int i = 0; i < prendi; i++) ev.audio.write(anelloAudio[(da + i) % anelloAudio.length]);
+            ev.audioInizioUs = fineAnelloUs - prendi / 2 * 1_000_000L / 16000;
             if (telecamera == null || ora - ultimoFotogramma > 2000) ev.fotoChiusa = true;   // telecamera ferma
             evento = ev;
             eventiDaAccensione++;
-            Log.i(TAG, "scattata: " + tipo + " " + valore + " -> " + ev.id);
+            Log.i(TAG, "scattata: " + tipo + " " + valore + (notte ? " (notte)" : "") + " -> " + ev.id
+                    + ", video da " + (ev.video.isEmpty() ? 0 : (adessoUs - ev.video.get(0).pts) / 1000) + " ms prima");
             if (ev.fotoChiusa) mandaFoto(ev);
         }
-        // la foto la prende il prossimo fotogramma; se non arriva entro 1,5 s l'evento parte senza
         h.postDelayed(new Runnable() {
             @Override public void run() {
                 synchronized (Sentinella.this) {
@@ -735,10 +901,14 @@ final class Sentinella {
                 }
             }
         }, 1500);
-        // a 6 s dall'inizio si chiude comunque (microfono fermo a metà, telecamera persa)
+        // telecamera ferma a metà: si chiude comunque
         h.postDelayed(new Runnable() {
-            @Override public void run() { synchronized (Sentinella.this) { if (evento != null) chiudiEvento(true); } }
-        }, 6500);
+            @Override public void run() {
+                synchronized (Sentinella.this) {
+                    if (evento != null && SystemClock.elapsedRealtime() > evento.fine + 2000) chiudiEvento(true);
+                }
+            }
+        }, 33_000);
         avvisaAscoltatori();
     }
 
@@ -753,6 +923,7 @@ final class Sentinella {
             m.put("tipo", ev.tipo);
             m.put("valore", ev.valore);
             m.put("ora", ev.oraMs);
+            m.put("notte", notte);
             scrivi(new File(c, "evento.json"), m.toString().getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             Log.w(TAG, "evento non salvato: " + e);
@@ -760,23 +931,49 @@ final class Sentinella {
         invia();
     }
 
-    /** Fotogrammi e audio dell'evento nella coda, poi l'evento è finito. Sotto blocco. */
-    private void chiudiEvento(boolean comunque) {
-        Evento ev = evento;
+    /** Fine dell'evento: la clip si monta (thread a parte) e va nella coda. Sotto blocco. */
+    private void chiudiEvento(final boolean comunque) {
+        final Evento ev = evento;
         if (ev == null) return;
         evento = null;
-        try {
-            if (ev.cartella == null) { ev.fotoChiusa = true; mandaFoto(ev); }
-            int i = 1;
-            for (byte[] f : ev.clip) scrivi(new File(ev.cartella, String.format(Locale.ROOT, "clip-%02d.jpg", i++)), f);
-            if (ev.audio.size() > 16000) scrivi(new File(ev.cartella, "audio.wav"), wav(ev.audio.toByteArray()));
-            scrivi(new File(ev.cartella, "completo"), new byte[0]);
-            Log.i(TAG, "evento " + ev.id + ": " + ev.clip.size() + " fotogrammi, " + ev.audio.size() / 32000.0 + " s di audio"
-                    + (comunque ? " (chiuso per tempo)" : ""));
-        } catch (Exception e) {
-            Log.w(TAG, "evento non chiuso: " + e);
-        }
-        invia();
+        video.uscita = null;
+        if (ev.cartella == null) { ev.fotoChiusa = true; mandaFoto(ev); }
+        final MediaFormat formato = video.formato();
+        final int rot = rotazione();
+        new Thread(new Runnable() {
+            @Override public void run() {
+                try {
+                    byte[] pcm = ev.audio.toByteArray();
+                    List<Video.Pacchetto> pacchetti;
+                    synchronized (ev.video) { pacchetti = new ArrayList<>(ev.video); }
+                    boolean fatto = false;
+                    if (!pacchetti.isEmpty() && formato != null) {
+                        File tmp = new File(ev.cartella, "clip.mp4.tmp");
+                        try {
+                            Video.monta(tmp, formato, pacchetti, pcm, ev.audioInizioUs, rot);
+                            fatto = tmp.renameTo(new File(ev.cartella, "clip.mp4"));
+                            Log.i(TAG, "evento " + ev.id + ": clip di " + (pacchetti.get(pacchetti.size() - 1).pts
+                                    - pacchetti.get(0).pts) / 100_000 / 10.0 + " s, " + tmp.getParentFile().list().length
+                                    + " file, audio " + pcm.length / 32000.0 + " s" + (comunque ? " (chiusa per tempo)" : ""));
+                        } catch (Exception e) {
+                            Log.w(TAG, "clip non montata: " + e);
+                            tmp.delete();
+                        }
+                    }
+                    if (!fatto) {
+                        int i = 1;
+                        for (byte[] f : ev.clip) scrivi(new File(ev.cartella, String.format(Locale.ROOT, "clip-%02d.jpg", i++)), f);
+                        if (pcm.length > 16000) scrivi(new File(ev.cartella, "audio.wav"), wav(pcm));
+                        Log.i(TAG, "evento " + ev.id + ": " + ev.clip.size() + " fotogrammi JPEG, " + pcm.length / 32000.0 + " s di audio");
+                    }
+                    scrivi(new File(ev.cartella, "completo"), new byte[0]);
+                } catch (Exception e) {
+                    Log.w(TAG, "evento non chiuso: " + e);
+                }
+                invia();
+                avvisaAscoltatori();
+            }
+        }, "sentinella-clip").start();
     }
 
     private static byte[] wav(byte[] pcm) {
@@ -799,12 +996,17 @@ final class Sentinella {
     // ------------------------------------------------------------------ invio al PC (solo al PC)
     private final Object sveglia = new Object();
     private volatile boolean daInviare = true;
-    private long ultimoStato = 0;
+    private long ultimoStato = 0, ultimoRegistro = 0;
     private String statoInviato = "";
+    private volatile String ultimiLivelli = "";
+    private volatile boolean pcRaggiungibile = true;
 
     private void invia() {
         synchronized (sveglia) { daInviare = true; sveglia.notifyAll(); }
     }
+
+    boolean pcRaggiungibile() { return pcRaggiungibile; }
+    int inCoda() { return contaCoda(); }
 
     private void cicloInvio() {
         long attesa = 0;
@@ -817,13 +1019,12 @@ final class Sentinella {
             try {
                 ok = svuotaCoda();
                 ok &= mandaStato();
-                // microfono voluto ma muto (JarvisServizio l'aveva lasciato): lo si risveglia
                 if (vuoleMicrofono() && SystemClock.elapsedRealtime() - ultimoAudio > 4000) JarvisServizio.svegliaMicrofono();
                 long ora = SystemClock.elapsedRealtime();
                 if (ora - ultimoRegistro > 30_000 && attiva) {
                     ultimoRegistro = ora;
-                    ultimiLivelli = String.format(Locale.ROOT, "mov %.3f (%d analisi, luce %.0f), rum %.1f dB, fondo %.1f dB",
-                            movimentoMax, fotogrammi, luce, rumoreMax, fondo);
+                    ultimiLivelli = String.format(Locale.ROOT, "macchia max %.4f (%d analisi, luce %.0f%s), rum %.1f dB, fondo %.1f dB",
+                            movimentoMax, fotogrammi, luce, notte ? ", notte" : "", rumoreMax, fondo);
                     Log.i(TAG, "ultimi 30 s: " + ultimiLivelli);
                     fotogrammi = 0;
                     movimentoMax = 0;
@@ -833,11 +1034,10 @@ final class Sentinella {
                 Log.w(TAG, "invio: " + e);
                 ok = false;
             }
+            if (ok != pcRaggiungibile) { pcRaggiungibile = ok; avvisaAscoltatori(); }
             attesa = ok ? 5000 : 20_000;
         }
     }
-    private long ultimoRegistro = 0;
-    private volatile String ultimiLivelli = "";
 
     private boolean mandaStato() throws Exception {
         JSONObject s = new JSONObject();
@@ -847,6 +1047,8 @@ final class Sentinella {
         s.put("rumore", sente());
         s.put("perche_rumore", attiva ? percheNonSente() : "");
         s.put("telecamera", attiva ? (erroreTelecamera.isEmpty() ? "ok" : erroreTelecamera) : "");
+        s.put("video", attiva ? (videoOk ? "ok" : erroreVideo) : "");
+        s.put("notte", attiva && notte);
         s.put("visore", visore);
         s.put("in_coda", contaCoda());
         s.put("livelli", ultimiLivelli);
@@ -870,11 +1072,10 @@ final class Sentinella {
         File[] cartelle = coda().listFiles();
         if (cartelle == null || cartelle.length == 0) return true;
         Arrays.sort(cartelle);
-        limitaCoda(cartelle);
+        cartelle = limitaCoda(cartelle);
         for (File c : cartelle) {
             File meta = new File(c, "evento.json");
             if (!meta.exists()) {
-                // senza dati dell'evento: rimasta a metà da un riavvio, o non ancora pronta
                 if (System.currentTimeMillis() - c.lastModified() > 60_000) cancellaTutto(c);
                 continue;
             }
@@ -893,10 +1094,10 @@ final class Sentinella {
             if (nomi == null) continue;
             Arrays.sort(nomi);
             for (String n : nomi) {
-                if (!(n.startsWith("clip-") && n.endsWith(".jpg")) && !n.equals("audio.wav")) continue;
+                if (!(n.startsWith("clip-") && n.endsWith(".jpg")) && !n.equals("audio.wav") && !n.equals("clip.mp4")) continue;
                 File f = new File(c, n);
-                if (!post("/api/sentinella/file", "id=" + Uri.encode(c.getName()) + "&nome=" + n,
-                        leggi(f), n.endsWith(".wav") ? "audio/wav" : "image/jpeg")) return false;
+                String tipo = n.endsWith(".wav") ? "audio/wav" : n.endsWith(".mp4") ? "video/mp4" : "image/jpeg";
+                if (!post("/api/sentinella/file", "id=" + Uri.encode(c.getName()) + "&nome=" + n, leggi(f), tipo)) return false;
                 f.delete();
             }
             if (new File(c, "completo").exists()) cancellaTutto(c);
@@ -904,15 +1105,22 @@ final class Sentinella {
         return true;
     }
 
-    /** Coda troppo grande (PC spento per giorni): si buttano gli eventi più vecchi. */
-    private void limitaCoda(File[] cartelle) {
+    /** Coda troppo grande (PC spento a lungo): al massimo 300 MB e mai sotto 500 MB liberi; si buttano i più vecchi. */
+    private File[] limitaCoda(File[] cartelle) {
         long totale = 0;
         for (File c : cartelle) totale += dimensione(c);
-        for (int i = 0; i < cartelle.length && totale > 60L * 1024 * 1024; i++) {
-            totale -= dimensione(cartelle[i]);
+        long liberi;
+        try { liberi = new StatFs(app.getFilesDir().getPath()).getAvailableBytes(); } catch (Exception e) { liberi = Long.MAX_VALUE; }
+        int i = 0;
+        while (i < cartelle.length - 1 && (totale > 300L * 1024 * 1024 || liberi < 500L * 1024 * 1024)) {
+            long d = dimensione(cartelle[i]);
+            totale -= d;
+            liberi += d;
             Log.w(TAG, "coda piena: butto " + cartelle[i].getName());
             cancellaTutto(cartelle[i]);
+            i++;
         }
+        return Arrays.copyOfRange(cartelle, i, cartelle.length);
     }
 
     private static long dimensione(File c) {
@@ -955,7 +1163,7 @@ final class Sentinella {
                 c = (HttpURLConnection) new URL(base + percorso + "?t=" + Uri.encode(t == null ? "" : t)
                         + (query != null ? "&" + query : "")).openConnection();
                 c.setConnectTimeout(3000);
-                c.setReadTimeout(10_000);
+                c.setReadTimeout(30_000);
                 c.setDoOutput(true);
                 c.setRequestMethod("POST");
                 c.setRequestProperty("Content-Type", tipo);
@@ -964,7 +1172,7 @@ final class Sentinella {
                 int codice = c.getResponseCode();
                 if (codice == 200) return true;
                 Log.w(TAG, percorso + " su " + base + ": " + codice);
-                if (codice == 400) return true;   // il PC non lo vuole (dati sbagliati): inutile riprovare all'infinito
+                if (codice == 400 || codice == 413) return true;   // il PC non lo vuole: inutile riprovare all'infinito
             } catch (IOException e) {
                 Log.d(TAG, percorso + " su " + base + ": " + e);
             } finally {

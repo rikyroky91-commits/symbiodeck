@@ -205,3 +205,9 @@
 #jarvis-linguetta[data-stato=spento], #jarvis-linguetta.assente { opacity: .12; background: #56606c; box-shadow: none; }
 #scia-jarvis { position: fixed; left: 0; top: 0; bottom: 0; width: 0; z-index: 19; pointer-events: none;
   background: linear-gradient(90deg, rgba(57, 213, 255, .35), transparent); }
+
+/* sentinella attiva: Jarvis diventa un allarme (rosso, la linguetta lampeggia come una sirena) */
+#jarvis.allarme { --j-colore: #ff2634; }
+#jarvis-linguetta.allarme { background: #ff2634; box-shadow: 0 0 18px 4px rgba(255, 38, 52, .7);
+  animation: j-sirena 0.9s steps(2, jump-none) infinite; }
+@keyframes j-sirena { 0% { opacity: 1; } 100% { opacity: .25; } }

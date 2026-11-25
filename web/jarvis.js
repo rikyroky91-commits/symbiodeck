@@ -12,6 +12,14 @@
     lavoro: "Al lavoro", parlo: "Parlo", conferma: "Conferma", seguito: "Ti ascolto" };
 
   var stato = "riposo", imp = {}, livello = 0, livelloVisto = 0, aperto = false, collegato = false;
+  // sentinella del tablet attiva: la sfera diventa un allarme (rosso, a sirena) finché non si spegne
+  var allarme = { attiva: false, armata: false };
+  function impostaAllarme(a) {
+    allarme = a || { attiva: false, armata: false };
+    radice.classList.toggle("allarme", !!allarme.attiva);
+    linguetta.classList.toggle("allarme", !!allarme.attiva);
+    impostaStato(stato);
+  }
   var corrente = null, confermaId = null, dispositivi = null, sottofondo = false, emergenza = false;
   var promemoria = [];
 
@@ -123,6 +131,7 @@
       emergenza = !!(s.emergenza && s.emergenza.attiva);
       promemoria = s.promemoria || [];
       impostaStato(s.stato);
+      impostaAllarme(s.allarme);
       mostraConferma(s.conferma);
       $("j-azione").textContent = s.azione || "";
       chip("j-chip-pc", s.claude ? "PC ✓" : "CLAUDE ✕", !!s.claude);
@@ -132,6 +141,7 @@
     }
     if (d.sottofondo !== undefined) { sottofondo = !!d.sottofondo; impostaStato(stato); }
     if (d.stato) impostaStato(d.stato);
+    if (d.allarme) impostaAllarme(d.allarme);
     if (d.livello !== undefined) livello = d.livello;
     if (d.utente) { chiudiCorrente(); messaggio("utente", d.utente); }
     if (d.jarvis_pezzo) {
@@ -170,9 +180,10 @@
     stato = s || "riposo";
     radice.setAttribute("data-stato", stato);
     linguetta.setAttribute("data-stato", stato);
-    linguetta.className = "";
-    $("j-stato").textContent = (stato === "riposo" || stato === "seguito") && sottofondo ? "Lavoro in corso" :
-      (NOMI_STATO[stato] || stato);
+    linguetta.className = allarme.attiva ? "allarme" : "";
+    $("j-stato").textContent = allarme.attiva && (stato === "riposo" || stato === "seguito")
+      ? (allarme.armata ? "Sentinella: sorveglio" : "Sentinella: si attiva…")
+      : (stato === "riposo" || stato === "seguito") && sottofondo ? "Lavoro in corso" : (NOMI_STATO[stato] || stato);
     if (stato === "riposo" || stato === "spento") $("j-azione").textContent = "";
     if (stato === "conferma" && !aperto && nativo) apri();
   }
@@ -564,7 +575,8 @@
     if (!aperto) return;
     requestAnimationFrame(disegna);
     var t = (Date.now() - t0) / 1000;
-    var rgb = COLORI[stato] || COLORI.riposo;
+    var sirena = allarme.attiva && (stato === "riposo" || stato === "seguito" || stato === "spento");
+    var rgb = sirena ? "255,38,52" : COLORI[stato] || COLORI.riposo;
     var c = function (a) { return "rgba(" + rgb + "," + a + ")"; };
     var veloce = { lavoro: 3.2, penso: 2.4, ascolto: 1.4, seguito: 1.2, parlo: 1.6, conferma: 0.6 }[stato] || 0.5;
     fase += 0.016 * veloce;
@@ -597,6 +609,19 @@
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 140, -0.5, 0); ctx.closePath();
       g.addColorStop(0, c(0)); g.addColorStop(1, c(0.25)); ctx.fillStyle = g; ctx.fill();
       ctx.restore();
+    }
+    // sentinella: due fasci da sirena che girano e un lampeggio del nucleo (più lento mentre si arma)
+    if (sirena) {
+      var giro = t * (allarme.armata ? 3.2 : 1.4);
+      for (var f = 0; f < 2; f++) {
+        ctx.save(); ctx.rotate(giro + f * Math.PI);
+        var gf = ctx.createRadialGradient(0, 0, 20, 0, 0, 185);
+        gf.addColorStop(0, "rgba(255,38,52,0.55)"); gf.addColorStop(1, "rgba(255,38,52,0)");
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, 185, -0.35, 0.35); ctx.closePath();
+        ctx.fillStyle = gf; ctx.fill();
+        ctx.restore();
+      }
+      livelloVisto = Math.max(livelloVisto, 0.25 + 0.25 * Math.max(0, Math.sin(t * (allarme.armata ? 6 : 3))));
     }
     // barre del livello audio
     var n = 72;

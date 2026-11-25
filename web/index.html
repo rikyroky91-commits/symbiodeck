@@ -109,7 +109,8 @@
       <button id="s-accendi" class="primario">Attiva</button>
     </div>
     <div class="s-nota">Il tablet sorveglia con la telecamera davanti e il microfono e avvisa quando vede un movimento o sente un rumore.
-      Foto, fotogrammi e audio vanno solo al PC. Col visore addosso il microfono resta spento: guarda solo la telecamera.</div>
+      Foto e video vanno solo al PC. Col visore addosso il microfono resta spento: guarda solo la telecamera. Quando scatta registra una clip video da qualche
+      secondo prima; al buio passa da sola alla modalità notte (bianco e nero). Gli eventi sono sul Desktop del PC, cartella Sentinella.</div>
     <div class="s-imp">
       <label class="s-check"><input type="checkbox" id="s-movimento"> Movimento</label>
       <label class="s-cursore">sensibilità <input type="range" id="s-sens-movimento" min="1" max="10"><b id="s-sens-movimento-v"></b></label>
@@ -117,16 +118,19 @@
       <label class="s-cursore">sensibilità <input type="range" id="s-sens-rumore" min="1" max="10"><b id="s-sens-rumore-v"></b></label>
       <label class="s-check"><input type="checkbox" id="s-voce"> Avviso a voce</label>
       <label class="s-cursore">schermo <select id="s-schermo"><option value="attenuato">attenuato con l'indicatore</option><option value="spento">spento</option></select></label>
+      <span></span>
+      <label class="s-cursore">notte <select id="s-notte"><option value="auto">automatica quando è buio</option><option value="sempre">sempre (bianco e nero)</option><option value="mai">mai (sempre a colori)</option></select></label>
     </div>
     <div class="s-titolo">Eventi <button id="s-aggiorna" class="s-piccolo">⟳</button></div>
     <div class="s-eventi" id="s-eventi"></div>
   </div>
   <div class="finestra" id="finestra-evento">
     <div class="testa-finestra"><strong id="e-titolo">Evento</strong><button class="chiudi">✕</button></div>
+    <video id="e-video" class="e-foto nascosto" controls playsinline preload="metadata"></video>
     <img id="e-foto" class="e-foto" alt="">
     <div class="e-comandi"><button id="e-indietro">◀</button><span id="e-conta"></span><button id="e-avanti">▶</button>
       <button id="e-clip">▶ Clip</button><audio id="e-audio" controls preload="none"></audio>
-      <button id="e-cancella" class="s-piccolo">🗑</button><button id="e-torna">Elenco</button></div>
+      <button id="e-guarda" class="primario nascosto">▶ Guarda la clip</button><button id="e-cancella" class="s-piccolo">🗑</button><button id="e-torna">Elenco</button></div>
   </div>
   <div class="finestra" id="finestra-energia">
     <div class="testa-finestra"><strong>Cosa vuoi fare con il PC?</strong><button class="chiudi">✕</button></div>

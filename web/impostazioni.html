@@ -101,7 +101,7 @@
       Le scorciatoie non arrivano ai programmi avviati come amministratore.</p>
   </section>
   <section class="largo" id="sentinella-sezione">
-    <h2>🛡 Sentinella <small>il tablet sorveglia con la telecamera davanti e il microfono · foto e audio restano su questo PC (server\sentinella-dati)</small></h2>
+    <h2>🛡 Sentinella <small>il tablet sorveglia con la telecamera davanti e il microfono · foto e clip video restano su questo PC, nel Desktop, cartella Sentinella</small></h2>
     <div class="barra"><span id="sn-stato" style="min-width:320px">…</span>
       <button id="sn-accendi" class="primario">Attiva</button>
       <span>armamento</span><input id="sn-armamento" type="number" min="0" max="300" style="width:70px"> s
@@ -506,12 +506,12 @@
       var t = d.tablet;
       attiva = !!(t && t.attiva);
       $("sn-stato").textContent = !t ? "Tablet: stato sconosciuto (non si fa sentire)" : !t.attiva ? "Spenta"
-        : !t.armata ? "Si attiva fra " + t.armamento + " s" : "Sorveglia" + (t.rumore ? " (telecamera e microfono)" : " (solo telecamera: " + (t.perche_rumore || "microfono spento") + ")");
+        : !t.armata ? "Si attiva fra " + t.armamento + " s" : "Sorveglia" + (t.rumore ? " (telecamera e microfono)" : " (solo telecamera: " + (t.perche_rumore || "microfono spento") + ")") + (t.notte ? " · notte" : "");
       $("sn-accendi").textContent = attiva ? "Spegni" : "Attiva";
       if (document.activeElement.tagName !== "INPUT") {
         $("sn-armamento").value = d.imp.armamento; $("sn-pausa").value = d.imp.pausa; $("sn-giorni").value = d.imp.conserva_giorni;
       }
-      var firma = d.eventi.map(function (e) { return e.id + e.clip.length + e.audio; }).join();
+      var firma = d.eventi.map(function (e) { return e.id + e.clip.length + e.audio + e.video; }).join();
       if (firma === ultimi) return;
       ultimi = firma;
       var box = $("sn-eventi");
@@ -519,7 +519,7 @@
       d.eventi.forEach(function (ev) {
         var a = document.createElement("a");
         a.target = "_blank";
-        a.href = file(ev, ev.foto ? "foto.jpg" : ev.clip[0] || "audio.wav");
+        a.href = file(ev, ev.video ? "clip.mp4" : ev.foto ? "foto.jpg" : ev.clip[0] || "audio.wav");
         a.style.cssText = "display:flex;flex-direction:column;gap:4px;color:inherit;text-decoration:none;font-size:12px";
         if (ev.foto || ev.clip.length) {
           var img = document.createElement("img");
@@ -529,7 +529,7 @@
         }
         var d0 = new Date(ev.ora * 1000), s = document.createElement("span");
         s.textContent = (ev.tipo === "movimento" ? "Movimento" : "Rumore") + " · " + d0.toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-          + " · " + ev.clip.length + " fotogrammi" + (ev.audio ? " · audio" : "");
+          + (ev.video ? " · video" : " · " + ev.clip.length + " fotogrammi" + (ev.audio ? " · audio" : ""));
         a.appendChild(s);
         box.appendChild(a);
       });

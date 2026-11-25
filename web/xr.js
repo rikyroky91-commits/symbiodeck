@@ -171,10 +171,25 @@ const sfera = (() => {
   return {
     gruppo: g, collisione,
     aggiorna(dt, t, testa) {
-      const st = S.registra ? "ascolto" : S.stato;
-      if (st !== statoVisto) { statoVisto = st; ondaT = 0; etichetta.scrivi(S.registra ? "REGISTRO… LASCIA PER INVIARE" : NOMI[st] || st); }
-      colore.lerp(new THREE.Color(COLORI[st] || COLORI.riposo), Math.min(1, dt * 6));
-      const veloce = { lavoro: 3.2, penso: 2.4, ascolto: 1.6, seguito: 1.2, parlo: 1.8, conferma: 0.7 }[st] || 0.5;
+      // sentinella del tablet attiva: la sfera è un allarme rosso che lampeggia (se Jarvis non sta facendo altro)
+      const a = S.allarme && S.allarme.attiva && ["riposo", "seguito", "spento"].includes(S.stato) && !S.registra;
+      const st = a ? (S.allarme.armata ? "sentinella" : "sentinella-armo") : S.registra ? "ascolto" : S.stato;
+      if (st !== statoVisto) {
+        statoVisto = st; ondaT = 0;
+        etichetta.scrivi(S.registra ? "REGISTRO… LASCIA PER INVIARE" : st === "sentinella" ? "SENTINELLA ATTIVA"
+          : st === "sentinella-armo" ? "SENTINELLA: SI ATTIVA" : NOMI[st] || st);
+      }
+      if (a) {
+        const lampo = 0.5 + 0.5 * Math.max(0, Math.sin(t * (S.allarme.armata ? 6 : 3)));
+        colore.lerp(new THREE.Color(0xff2634).multiplyScalar(0.45 + 0.75 * lampo), Math.min(1, dt * 12));
+        alone.material.opacity = 0.35 + 0.55 * lampo;
+        if (ondaT > 1.1) ondaT = 0;   // onde d'urto continue, come una sirena
+      } else {
+        alone.material.opacity = 0.55;
+        colore.lerp(new THREE.Color(COLORI[st] || COLORI.riposo), Math.min(1, dt * 6));
+      }
+      const veloce = { lavoro: 3.2, penso: 2.4, ascolto: 1.6, seguito: 1.2, parlo: 1.8, conferma: 0.7, sentinella: 4,
+        "sentinella-armo": 1.5 }[st] || 0.5;
       fase += dt * veloce;
       const parla = st === "parlo" ? 0.35 + 0.25 * Math.sin(t * 9) * Math.sin(t * 3.3) : 0;
       livelloVisto += (Math.max(S.livello, parla, S.registra ? micLivello * 4 : 0) - livelloVisto) * 0.25;
@@ -2027,12 +2042,14 @@ function eventoJarvis(d) {
     const s = d.tutto;
     S.imp = s.impostazioni || {}; S.stato = s.stato || "riposo"; S.promemoria = s.promemoria || [];
     S.emergenza = !!(s.emergenza && s.emergenza.attiva); S.azione = s.azione || "";
+    S.allarme = s.allarme || null;
     mostraConferma(s.conferma || null);
     // Jarvis appena (ri)collegato, magari dopo un riavvio: se sei nel visore glielo si ridice (microfono del tablet)
     if (renderer.xr.isPresenting) apiJ("/jarvis/visore/sessione", { immersivo: true }).catch(() => {});
     sporca(); return;
   }
   if (d.stato) S.stato = d.stato;
+  if (d.allarme) S.allarme = d.allarme;
   if (d.livello !== undefined) S.livello = d.livello;
   if (d.utente) { S.corrente = null; aggiungi("utente", d.utente); }
   if (d.jarvis_pezzo) {

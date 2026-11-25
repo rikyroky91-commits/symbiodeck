@@ -1,9 +1,10 @@
 """Modalità sentinella: il tablet fa da telecamera di sicurezza (telecamera davanti e microfono) e, quando vede un
-movimento o sente un rumore, manda qui foto, fotogrammi e audio. Tutto resta sul PC, in server/sentinella-dati/
-(fuori da git): niente servizi esterni.
+movimento o sente un rumore, manda qui la foto e la clip video con l'audio. Tutto resta sul PC, nella cartella
+Sentinella sul Desktop (Desktop\\Sentinella\\AAAA-MM-GG\\hh.mm.ss tipo (xxxx)\\): niente servizi esterni.
 
 Il tablet decide da solo (Sentinella.java); il PC:
-  - conserva gli eventi: una cartella per evento con evento.json, foto.jpg, clip-NN.jpg, audio.wav;
+  - conserva gli eventi: una cartella per evento con evento.json, foto.jpg e clip.mp4 (video H.264 con audio AAC,
+    da qualche secondo prima a dopo l'evento); se il tablet non riesce a fare il video, clip-NN.jpg e audio.wav;
   - tiene le impostazioni (config.json, chiave "sentinella") e le manda al tablet nel flusso del pannello;
   - passa al tablet i comandi "attiva/disattiva" (dal PC, da Jarvis a voce) nel flusso, con un numero che cresce;
   - sa lo stato che il tablet gli dice (attiva, in armamento, microfono usato o no e perché).
@@ -19,22 +20,25 @@ from pathlib import Path
 
 PREDEFINITE = {
     "movimento": True,        # scatta con il movimento davanti alla telecamera
-    "sens_movimento": 6,      # 1 (solo movimenti grandi) … 10 (anche piccoli)
+    "sens_movimento": 8,      # 1 (solo movimenti grandi) … 10 (anche piccoli e lontani); 8 = come una Ring
     "rumore": True,           # scatta con un rumore
     "sens_rumore": 5,         # 1 (solo rumori forti) … 10 (anche deboli)
     "armamento": 20,          # secondi tra l'accensione e l'inizio della sorveglianza (per uscire dalla stanza)
     "pausa": 20,              # secondi minimi tra un evento e il successivo
     "schermo": "attenuato",   # "attenuato" (nero con l'indicatore, luce al minimo) o "spento"
+    "notte": "auto",          # bianco e nero con più luce: "auto" (quando la stanza è buia), "sempre", "mai"
     "voce": True,             # Jarvis lo dice a voce
     "conserva_giorni": 30,    # gli eventi più vecchi si cancellano
 }
 LIMITI = {"sens_movimento": (1, 10), "sens_rumore": (1, 10), "armamento": (0, 300), "pausa": (5, 600),
           "conserva_giorni": (1, 365)}
-SCELTE = {"schermo": ("attenuato", "spento")}
+SCELTE = {"schermo": ("attenuato", "spento"), "notte": ("auto", "sempre", "mai")}
 
 ID = re.compile(r"^\d{8}-\d{6}-(movimento|rumore)-[0-9a-f]{4}$")
-NOME = re.compile(r"^(foto|clip-\d{2})\.jpg$|^audio\.wav$")
-MAX_FILE = {".jpg": 3 * 2**20, ".wav": 4 * 2**20}
+NOME = re.compile(r"^(foto|clip-\d{2})\.jpg$|^audio\.wav$|^clip\.mp4$")
+MAX_FILE = {".jpg": 3 * 2**20, ".wav": 4 * 2**20, ".mp4": 40 * 2**20}
+CARTELLA_EVENTO = re.compile(r"^(\d{2})\.(\d{2})\.(\d{2}) (movimento|rumore) \(([0-9a-f]{4})\)$")
+GIORNO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 MAX_FILE_EVENTO = 48            # foto + fotogrammi + audio
 COMANDO_VALIDO = 90             # secondi: un comando vecchio non si applica (es. al riavvio del tablet)
 STATO_VECCHIO = 120             # secondi senza notizie dal tablet: stato sconosciuto
@@ -79,6 +83,41 @@ def _wav(dati):
     return len(dati) >= 44 and dati[:4] == b"RIFF" and dati[8:12] == b"WAVE"
 
 
+def _mp4(dati):
+    return len(dati) > 12 and dati[4:8] == b"ftyp"
+
+
+def cartella_desktop():
+    """La cartella Sentinella sul Desktop dell'utente (anche se il Desktop è in OneDrive)."""
+    try:
+        import ctypes
+        import uuid
+        from ctypes import wintypes
+        guid = uuid.UUID("{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}")   # FOLDERID_Desktop
+        buf = ctypes.create_string_buffer(guid.bytes_le)
+        percorso = wintypes.LPWSTR()
+        if ctypes.windll.shell32.SHGetKnownFolderPath(buf, 0, None, ctypes.byref(percorso)) == 0:
+            desktop = Path(percorso.value)
+            ctypes.windll.ole32.CoTaskMemFree(percorso)
+            return desktop / "Sentinella"
+    except (AttributeError, OSError, ValueError):
+        pass
+    return Path.home() / "Desktop" / "Sentinella"
+
+
+def sottocartella(id_):
+    """20261125-082115-rumore-73b9 -> 2026-11-25/08.21.15 rumore (73b9)"""
+    g, o, tipo, coda = id_.split("-")
+    return Path(f"{g[:4]}-{g[4:6]}-{g[6:]}") / f"{o[:2]}.{o[2:4]}.{o[4:]} {tipo} ({coda})"
+
+
+def id_da(giorno, nome):
+    a, m = GIORNO.match(giorno), CARTELLA_EVENTO.match(nome)
+    if not a or not m:
+        return None
+    return f"{a[1]}{a[2]}{a[3]}-{m[1]}{m[2]}{m[3]}-{m[4]}-{m[5]}"
+
+
 class Sentinella:
     def __init__(self, cartella, cfg, salva_config=None, log=print, avvisa=None):
         """cartella: dove stanno gli eventi. cfg: la config del pannello (si legge e si scrive "sentinella").
@@ -96,6 +135,7 @@ class Sentinella:
         self.ultimo_evento = None
         self.non_visti = 0
         self.cambiato = None                # chiamata quando cambia qualcosa che il flusso deve mandare subito
+        self.su_stato = None                # chiamata (stato) quando il tablet accende/spegne o arma la sentinella
         self._conta_non_visti()
 
     # ------------------------------------------------------------ impostazioni e comandi
@@ -122,7 +162,7 @@ class Sentinella:
     def stato_dal_tablet(self, d, ip=""):
         prima = self.tablet or {}
         s = {k: d.get(k) for k in ("attiva", "armata", "armamento", "rumore", "perche_rumore", "telecamera",
-                                    "in_coda", "visore", "livelli") if k in d}
+                                    "in_coda", "visore", "livelli", "notte", "video") if k in d}
         s["attiva"] = bool(s.get("attiva"))
         s["ricevuto"] = time.time()
         s["ip"] = ip
@@ -134,7 +174,15 @@ class Sentinella:
                      "microfono: " + ("sì" if s.get("rumore") else f"no ({s.get('perche_rumore') or '-'})")
                      if s["attiva"] else "")
             self._cambiato()
+            if self.su_stato:
+                threading.Thread(target=self._su_stato, args=(dict(s),), daemon=True).start()
         return {"ok": True}
+
+    def _su_stato(self, s):
+        try:
+            self.su_stato(s)
+        except Exception as e:
+            self.log("sentinella: stato non passato:", repr(e))
 
     def stato_tablet(self):
         t = self.tablet
@@ -152,7 +200,7 @@ class Sentinella:
         t = self.stato_tablet()
         if t:
             d["tablet"] = {k: t.get(k) for k in ("attiva", "armata", "armamento", "rumore", "perche_rumore",
-                                                  "telecamera", "in_coda")}
+                                                  "telecamera", "in_coda", "notte")}
         if self.ultimo_evento:
             d["ultimo"] = {k: self.ultimo_evento.get(k) for k in ("id", "tipo", "ora")}
         return d
@@ -182,7 +230,9 @@ class Sentinella:
                 raise ValueError("non è un JPEG")
             if est == ".wav" and not _wav(dati):
                 raise ValueError("non è un WAV")
-        cartella = self.cartella / id_
+            if est == ".mp4" and not _mp4(dati):
+                raise ValueError("non è un MP4")
+        cartella = self.cartella / sottocartella(id_)
         nuovo = False
         with self.blocco:
             if not cartella.exists():
@@ -223,29 +273,63 @@ class Sentinella:
     def evento(self, id_):
         if not ID.match(id_ or ""):
             return None
-        c = self.cartella / id_
+        c = self.cartella / sottocartella(id_)
         try:
             ev = json.loads((c / "evento.json").read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None
         file = sorted(p.name for p in c.iterdir() if NOME.match(p.name))
         ev["foto"] = "foto.jpg" in file
+        ev["video"] = "clip.mp4" in file
         ev["clip"] = [f for f in file if f.startswith("clip-")]
         ev["audio"] = "audio.wav" in file
+        ev["cartella"] = str(c)
         return ev
 
-    def elenco(self, quanti=60):
+    def _ids(self):
+        """Gli id di tutti gli eventi, dal più recente."""
         if not self.cartella.exists():
             return []
-        ids = sorted((p.name for p in self.cartella.iterdir() if p.is_dir() and ID.match(p.name)), reverse=True)
-        return [e for e in (self.evento(i) for i in ids[:quanti]) if e]
+        ids = []
+        for g in self.cartella.iterdir():
+            if g.is_dir() and GIORNO.match(g.name):
+                ids += [i for i in (id_da(g.name, e.name) for e in g.iterdir() if e.is_dir()) if i]
+        return sorted(ids, reverse=True)
+
+    def elenco(self, quanti=60):
+        return [e for e in (self.evento(i) for i in self._ids()[:quanti]) if e]
 
     def file(self, id_, nome):
         """Il percorso di un file di un evento, o None (niente percorsi fuori dalla cartella)."""
         if not ID.match(id_ or "") or not NOME.match(nome or ""):
             return None
-        p = self.cartella / id_ / nome
+        p = self.cartella / sottocartella(id_) / nome
         return p if p.is_file() else None
+
+    def migra(self, vecchia):
+        """Gli eventi della prima versione (server/sentinella-dati/<id>/) passano nella cartella nuova."""
+        vecchia = Path(vecchia)
+        if not vecchia.is_dir() or vecchia.resolve() == self.cartella.resolve():
+            return 0
+        spostati = 0
+        for p in vecchia.iterdir():
+            if p.is_dir() and ID.match(p.name):
+                dove = self.cartella / sottocartella(p.name)
+                if not dove.exists():
+                    dove.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(p), str(dove))
+                    spostati += 1
+        if (vecchia / "visti.json").exists() and not (self.cartella / "visti.json").exists():
+            self.cartella.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(vecchia / "visti.json"), str(self.cartella / "visti.json"))
+        if spostati:
+            self.log("sentinella:", spostati, "eventi spostati in", self.cartella)
+            self._conta_non_visti()
+        try:
+            vecchia.rmdir()
+        except OSError:
+            pass
+        return spostati
 
     def segna_visti(self):
         self.non_visti = 0
@@ -259,9 +343,13 @@ class Sentinella:
     def cancella(self, id_):
         if not ID.match(id_ or ""):
             raise ValueError("id dell'evento non valido")
-        c = self.cartella / id_
+        c = self.cartella / sottocartella(id_)
         if c.is_dir():
             shutil.rmtree(c, ignore_errors=True)
+            try:
+                c.parent.rmdir()   # il giorno è rimasto vuoto
+            except OSError:
+                pass
             self.log("sentinella: evento cancellato", id_)
             if self.ultimo_evento and self.ultimo_evento.get("id") == id_:
                 self.ultimo_evento = None
@@ -274,12 +362,10 @@ class Sentinella:
             return 0
         limite = (adesso or time.time()) - self.impostazioni()["conserva_giorni"] * 86400
         tolti = 0
-        for p in self.cartella.iterdir():
-            if not (p.is_dir() and ID.match(p.name)):
-                continue
-            ev = self.evento(p.name)
+        for i in self._ids():
+            ev = self.evento(i)
             if ev and ev.get("ora", 0) < limite:
-                shutil.rmtree(p, ignore_errors=True)
+                self.cancella(i)
                 tolti += 1
         if tolti:
             self.log("sentinella: cancellati", tolti, "eventi vecchi")

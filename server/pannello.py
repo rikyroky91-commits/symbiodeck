@@ -32,14 +32,14 @@ try:
 except ImportError:  # il pannello funziona lo stesso, con meno dati
     psutil = None
 
-from sentinella import Sentinella, descrivi as descrivi_sentinella
+from sentinella import Sentinella, cartella_desktop, descrivi as descrivi_sentinella
 
 QUI = Path(__file__).resolve().parent
 WEB = QUI.parent / "web"
 CONFIG = QUI / "config.json"
 ICONE = QUI / "cache-icone"
 REGISTRO = QUI / "pannello.log"
-SENTINELLA_DATI = QUI / "sentinella-dati"   # foto, fotogrammi e audio della sentinella (restano sul PC, fuori da git)
+SENTINELLA_VECCHIA = QUI / "sentinella-dati"   # dove stavano gli eventi della 1.11.0: si spostano sul Desktop
 PORTA = 47800
 PORTA_JARVIS = 47802
 SENZA_FINESTRA = 0x08000000  # CREATE_NO_WINDOW
@@ -1421,8 +1421,21 @@ class Gestore(BaseHTTPRequestHandler):
             f = self.server.sentinella.file((q.get("id") or [""])[0], (q.get("nome") or [""])[0])
             if not f:
                 return self.manda(404, {"errore": "file non trovato"})
-            return self.manda(200, f.read_bytes(), "audio/wav" if f.suffix == ".wav" else "image/jpeg",
-                              {"Cache-Control": "private, max-age=86400"})
+            tipo = {".wav": "audio/wav", ".mp4": "video/mp4"}.get(f.suffix, "image/jpeg")
+            dati = f.read_bytes()
+            extra = {"Cache-Control": "private, max-age=86400", "Accept-Ranges": "bytes"}
+            pezzo = re.match(r"bytes=(\d*)-(\d*)$", self.headers.get("Range") or "")
+            if pezzo and (pezzo[1] or pezzo[2]):   # i lettori video chiedono il file a pezzi (per saltare)
+                if pezzo[1]:
+                    da, a = int(pezzo[1]), int(pezzo[2]) if pezzo[2] else len(dati) - 1
+                else:
+                    da, a = max(0, len(dati) - int(pezzo[2])), len(dati) - 1
+                a = min(a, len(dati) - 1)
+                if da > a:
+                    return self.manda(416, b"", tipo, {"Content-Range": f"bytes */{len(dati)}"})
+                extra["Content-Range"] = f"bytes {da}-{a}/{len(dati)}"
+                return self.manda(206, dati[da:a + 1], tipo, extra)
+            return self.manda(200, dati, tipo, extra)
         if livello == "pc" and u.path == "/api/pc/stato":
             ora = time.time()
             return self.manda(200, {"tablet": [{"ip": ip, "secondi_fa": round(ora - t)}
@@ -1557,7 +1570,7 @@ class Gestore(BaseHTTPRequestHandler):
     def file_sentinella(self, q):
         """Un file di un evento della sentinella (foto, fotogramma, audio), corpo grezzo."""
         n = int(self.headers.get("Content-Length") or 0)
-        if n > 4 * 2**20:
+        if n > 41 * 2**20:
             return self.manda(413, {"errore": "file troppo grande"})
         dati = self.rfile.read(n) if n else b""
         prendi = lambda k: (q.get(k) or [None])[0]  # noqa: E731
@@ -1708,11 +1721,16 @@ def avvisa_sentinella(cfg, ev):
     if cfg.get("jarvis") is False:
         return
     imp = SENTINELLA.impostazioni() if SENTINELLA else {}
-    foto = SENTINELLA_DATI / ev["id"] / "foto.jpg"
+    foto = SENTINELLA.file(ev["id"], "foto.jpg") if SENTINELLA else None
     corpo = {"id": ev["id"], "tipo": ev["tipo"], "testo": descrivi_sentinella(ev), "ritardo": ev.get("ritardo", 0),
              "voce": bool(imp.get("voce", True)) and ev.get("ritardo", 0) < 120,
-             "foto": str(foto) if foto.is_file() else ""}
-    r = urllib.request.Request(f"http://127.0.0.1:{PORTA_JARVIS}/jarvis/sentinella", method="POST",
+             "foto": str(foto) if foto else ""}
+    a_jarvis(cfg, "/jarvis/sentinella", corpo)
+
+
+def a_jarvis(cfg, percorso, corpo):
+    import urllib.request
+    r = urllib.request.Request(f"http://127.0.0.1:{PORTA_JARVIS}{percorso}", method="POST",
                                data=json.dumps(corpo).encode("utf-8"),
                                headers={"X-Token": cfg["token"], "Content-Type": "application/json"})
     try:
@@ -1720,6 +1738,13 @@ def avvisa_sentinella(cfg, ev):
             risposta.read()
     except OSError as e:
         log("sentinella: Jarvis non avvisato:", repr(e))
+
+
+def stato_sentinella_a_jarvis(cfg, stato):
+    """La sentinella si accende, si arma o si spegne: la sfera di Jarvis diventa (o smette di essere) un allarme."""
+    if cfg.get("jarvis") is not False:
+        a_jarvis(cfg, "/jarvis/sentinella/stato", {"attiva": bool(stato.get("attiva")),
+                                                    "armata": bool(stato.get("armata"))})
 
 
 SENTINELLA = None   # Sentinella del server (main)
@@ -2007,8 +2032,15 @@ def main():
     PORTA = int(cfg.get("porta", PORTA))
     camp = Campionatore()
     global SENTINELLA
-    SENTINELLA = Sentinella(SENTINELLA_DATI, cfg, salva_config, log, avvisa=lambda ev: avvisa_sentinella(cfg, ev))
+    SENTINELLA = Sentinella(Path(cfg["cartella_sentinella"]) if cfg.get("cartella_sentinella") else cartella_desktop(),
+                            cfg, salva_config, log, avvisa=lambda ev: avvisa_sentinella(cfg, ev))
+    try:
+        SENTINELLA.migra(SENTINELLA_VECCHIA)
+    except OSError as e:
+        log("sentinella: eventi vecchi non spostati:", repr(e))
+    log("sentinella: eventi in", SENTINELLA.cartella)
     SENTINELLA.cambiato = camp.sentinella_cambiata
+    SENTINELLA.su_stato = lambda st: stato_sentinella_a_jarvis(cfg, st)
     camp.sentinella = SENTINELLA
     camp.start()
     threading.Thread(target=pulizia_sentinella, daemon=True, name="pulizia-sentinella").start()

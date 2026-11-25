@@ -17,7 +17,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 import sentinella as modulo  # noqa: E402
-from sentinella import Sentinella, correggi, descrivi, impostazioni  # noqa: E402
+from sentinella import Sentinella, correggi, descrivi, id_da, impostazioni, sottocartella  # noqa: E402
 
 TMP = Path(__file__).resolve().parent / "_tmp_sentinella"
 JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 200 + b"\xff\xd9"
@@ -27,6 +27,9 @@ def _wav(secondi=0.5):
     pcm = b"\x00\x01" * int(16000 * secondi)
     return (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVEfmt " + struct.pack("<IHHIIHH", 16, 1, 1, 16000, 32000, 2, 16)
             + b"data" + struct.pack("<I", len(pcm)) + pcm)
+
+
+MP4 = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 300
 
 
 def _id(tipo="movimento", coda="ab12", quando=None):
@@ -263,7 +266,7 @@ def test_avviso_a_jarvis_dal_pannello():
     id_ = _id()
     s.ricevi_file(id_, "foto.jpg", JPEG)
     ev = s.evento(id_)
-    with mock.patch.object(pannello, "SENTINELLA_DATI", TMP / "dati"), mock.patch("urllib.request.urlopen", apri):
+    with mock.patch("urllib.request.urlopen", apri):
         pannello.avvisa_sentinella({"token": "k"}, ev)
         pannello.avvisa_sentinella({"token": "k"}, dict(ev, ritardo=900))   # arrivato tardi: niente voce
         pannello.avvisa_sentinella({"token": "k", "jarvis": False}, ev)      # Jarvis spento: nessuna chiamata
@@ -356,6 +359,107 @@ def test_jarvis_avvisa_a_voce_al_massimo_ogni_45_secondi_e_mostra_la_foto_nel_vi
     j._voce_sentinella -= 60
     j.sentinella_evento(dict(d, voce=False))                 # arrivato tardi: solo l'avviso
     assert len(j.detti) == 1 and j.mostrati == [{"cosa": "file", "percorso": "C:/x/foto.jpg"}]
+
+
+# ---------------------------------------------------------------- 1.12: Desktop, clip video, allarme di Jarvis
+def test_cartella_sul_desktop_per_giorno_e_ora():
+    assert str(sottocartella("20261125-082115-rumore-73b9")).replace("\\", "/") == "2026-11-25/08.21.15 rumore (73b9)"
+    assert id_da("2026-11-25", "08.21.15 rumore (73b9)") == "20261125-082115-rumore-73b9"
+    assert id_da("2026-11-25", "foto delle vacanze") is None and id_da("vacanze", "08.21.15 rumore (73b9)") is None
+    s = _sentinella()
+    id_ = "20261125-082115-movimento-0a0b"
+    s.ricevi_file(id_, "foto.jpg", JPEG)
+    assert (TMP / "dati" / "2026-11-25" / "08.21.15 movimento (0a0b)" / "foto.jpg").is_file()
+    # cartelle e file dell'utente nella cartella Sentinella non danno fastidio
+    (TMP / "dati" / "2026-11-25" / "appunti").mkdir()
+    (TMP / "dati" / "leggimi.txt").write_text("x")
+    assert [e["id"] for e in s.elenco()] == [id_]
+    assert s.cancella(id_) and not (TMP / "dati" / "2026-11-25" / "08.21.15 movimento (0a0b)").exists()
+
+
+def test_clip_video_mp4():
+    s = _sentinella()
+    id_ = _id()
+    s.ricevi_file(id_, "foto.jpg", JPEG)
+    s.ricevi_file(id_, "clip.mp4", MP4)
+    ev = s.evento(id_)
+    assert ev["video"] and ev["foto"] and not ev["clip"] and Path(ev["cartella"]).is_dir()
+    for nome, dati in (("clip.mp4", JPEG), ("clip.avi", MP4), ("clip-01.mp4", MP4)):
+        try:
+            s.ricevi_file(id_, nome, dati)
+        except ValueError:
+            continue
+        raise AssertionError(f"accettato: {nome}")
+
+
+def test_eventi_vecchi_spostati_nella_cartella_nuova():
+    shutil.rmtree(TMP, ignore_errors=True)
+    vecchia = TMP / "sentinella-dati"
+    id_ = "20261125-082115-rumore-73b9"
+    (vecchia / id_).mkdir(parents=True)
+    (vecchia / id_ / "evento.json").write_text(json.dumps({"id": id_, "tipo": "rumore", "ora": time.time(),
+                                                           "ricevuto": time.time()}))
+    (vecchia / id_ / "foto.jpg").write_bytes(JPEG)
+    (vecchia / "visti.json").write_text(json.dumps({"fino": 0}))
+    s = Sentinella(TMP / "Desktop" / "Sentinella", {}, log=lambda *a: None)
+    assert s.migra(vecchia) == 1 and not vecchia.exists()
+    assert s.elenco()[0]["foto"] and s.non_visti == 1
+    assert s.migra(vecchia) == 0
+
+
+def test_stato_passato_a_jarvis_quando_cambia():
+    s = _sentinella()
+    passati = []
+    s.su_stato = passati.append
+    s.stato_dal_tablet({"attiva": True, "armata": False})
+    s.stato_dal_tablet({"attiva": True, "armata": False, "in_coda": 2})
+    s.stato_dal_tablet({"attiva": True, "armata": True, "notte": True})
+    s.stato_dal_tablet({"attiva": False})
+    assert _aspetta(lambda: len(passati) == 3)
+    assert [(p["attiva"], p.get("armata")) for p in passati] == [(True, False), (True, True), (False, None)]
+    assert s.per_flusso()["tablet"]["attiva"] is False
+
+
+def test_jarvis_diventa_un_allarme():
+    j = _jarvis()
+    j.stato_sentinella({"attiva": True, "armata": False})
+    j.stato_sentinella({"attiva": True, "armata": False})
+    j.stato_sentinella({"attiva": True, "armata": True})
+    j.stato_sentinella({"attiva": False})
+    assert [e["allarme"] for e in j.eventi if "allarme" in e] == [
+        {"attiva": True, "armata": False}, {"attiva": True, "armata": True}, {"attiva": False, "armata": False}]
+
+
+def test_clip_servita_a_pezzi_per_i_lettori_video():
+    srv, base = _server()
+    try:
+        id_ = _id()
+        _chiama(base, f"/api/sentinella/file?id={id_}&nome=foto.jpg", grezzo=JPEG)
+        _chiama(base, f"/api/sentinella/file?id={id_}&nome=clip.mp4", grezzo=MP4)
+        url = base + f"/api/sentinella/file?id={id_}&nome=clip.mp4&t=tablet-prova"
+        for intervallo, atteso in (("bytes=0-9", MP4[:10]), ("bytes=10-", MP4[10:]), ("bytes=-8", MP4[-8:])):
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"Range": intervallo}), timeout=5) as r:
+                assert r.status == 206 and r.read() == atteso and r.headers["Content-Type"] == "video/mp4"
+                assert r.headers["Content-Range"].endswith(f"/{len(MP4)}")
+        with urllib.request.urlopen(url, timeout=5) as r:
+            assert r.status == 200 and r.read() == MP4 and r.headers["Accept-Ranges"] == "bytes"
+        try:
+            urllib.request.urlopen(urllib.request.Request(url, headers={"Range": "bytes=999999-"}), timeout=5)
+            raise AssertionError("intervallo fuori dal file accettato")
+        except urllib.error.HTTPError as e:
+            assert e.code == 416
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def test_pannello_passa_lo_stato_a_jarvis():
+    import pannello
+    mandate = []
+    with mock.patch.object(pannello, "a_jarvis", lambda cfg, percorso, corpo: mandate.append((percorso, corpo))):
+        pannello.stato_sentinella_a_jarvis({"token": "k"}, {"attiva": True, "armata": True, "notte": True})
+        pannello.stato_sentinella_a_jarvis({"token": "k", "jarvis": False}, {"attiva": True})
+    assert mandate == [("/jarvis/sentinella/stato", {"attiva": True, "armata": True})]
 
 
 if __name__ == "__main__":

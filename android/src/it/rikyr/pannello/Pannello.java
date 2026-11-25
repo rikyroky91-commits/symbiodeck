@@ -85,6 +85,52 @@ public class Pannello extends Activity {
         schermoAcceso();
     }
 
+    private View videoAperto;
+
+    private void mostraVideo(String url) {
+        chiudiVideo();
+        final FrameLayout fondo = new FrameLayout(this);
+        fondo.setBackgroundColor(Color.argb(235, 0, 0, 0));
+        final android.widget.VideoView v = new android.widget.VideoView(this);
+        // tutto lo schermo che serve, con le proporzioni del video (VideoView le tiene da sé)
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT, android.view.Gravity.CENTER);
+        fondo.addView(v, lp);
+        android.widget.TextView chiudi = new android.widget.TextView(this);
+        chiudi.setText("✕  Chiudi");
+        chiudi.setTextColor(Color.WHITE);
+        chiudi.setTextSize(20);
+        chiudi.setPadding(36, 24, 36, 24);
+        chiudi.setBackgroundColor(Color.argb(160, 40, 40, 40));
+        fondo.addView(chiudi, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.TOP | android.view.Gravity.END));
+        chiudi.setOnClickListener(new View.OnClickListener() { @Override public void onClick(View x) { chiudiVideo(); } });
+        android.widget.MediaController comandi = new android.widget.MediaController(this);
+        comandi.setAnchorView(v);
+        v.setMediaController(comandi);
+        v.setOnErrorListener(new android.media.MediaPlayer.OnErrorListener() {
+            @Override public boolean onError(android.media.MediaPlayer mp, int a, int b) {
+                web.evaluateJavascript("window.dispatchEvent(new CustomEvent('errore-nativo',{detail:'Video non riproducibile ("
+                        + a + "/" + b + ")'}))", null);
+                chiudiVideo();
+                return true;
+            }
+        });
+        v.setOnPreparedListener(new android.media.MediaPlayer.OnPreparedListener() {
+            @Override public void onPrepared(android.media.MediaPlayer mp) { v.start(); }
+        });
+        ((ViewGroup) indicatore.getParent()).addView(fondo, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        videoAperto = fondo;
+        v.setVideoURI(android.net.Uri.parse(url));
+    }
+
+    private void chiudiVideo() {
+        if (videoAperto == null) return;
+        ((ViewGroup) videoAperto.getParent()).removeView(videoAperto);
+        videoAperto = null;
+    }
+
     private void luce(float valore) {
         WindowManager.LayoutParams lp = getWindow().getAttributes();
         lp.screenBrightness = valore;
@@ -232,6 +278,7 @@ public class Pannello extends Activity {
     }
 
     @Override public void onBackPressed() {
+        if (videoAperto != null) { chiudiVideo(); return; }
         // È la schermata Home: Indietro non deve chiuderla
     }
 
@@ -343,6 +390,12 @@ public class Pannello extends Activity {
         }
 
         @JavascriptInterface public boolean sentinellaAttiva() { return Sentinella.di(Pannello.this).attiva(); }
+
+        /** Clip della sentinella con il lettore di Android: il lettore del WebView su questo tablet non ottiene il
+         *  decoder H.264 ("Cannot obtain IOmx service"), VideoView decodifica nel servizio media di sistema. */
+        @JavascriptInterface public void video(final String url) {
+            runOnUiThread(new Runnable() { @Override public void run() { mostraVideo(url); } });
+        }
 
         /** Jarvis: il microfono del tablet è utilizzabile? */
         @JavascriptInterface public boolean microfono() { return microfonoConcesso(); }
