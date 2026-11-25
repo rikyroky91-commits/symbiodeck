@@ -100,6 +100,17 @@
     <p class="nota">"Prova" preme la combinazione dopo 3 secondi, così hai il tempo di passare alla finestra giusta.
       Le scorciatoie non arrivano ai programmi avviati come amministratore.</p>
   </section>
+  <section class="largo" id="sentinella-sezione">
+    <h2>🛡 Sentinella <small>il tablet sorveglia con la telecamera davanti e il microfono · foto e audio restano su questo PC (server\sentinella-dati)</small></h2>
+    <div class="barra"><span id="sn-stato" style="min-width:320px">…</span>
+      <button id="sn-accendi" class="primario">Attiva</button>
+      <span>armamento</span><input id="sn-armamento" type="number" min="0" max="300" style="width:70px"> s
+      <span>pausa tra eventi</span><input id="sn-pausa" type="number" min="5" max="600" style="width:70px"> s
+      <span>conserva</span><input id="sn-giorni" type="number" min="1" max="365" style="width:70px"> giorni</div>
+    <p class="nota">Sensibilità, movimento/rumore e schermo si cambiano dal tablet (pulsante 🛡). A voce: "Jarvis, attiva la sentinella",
+      "spegni la sentinella", "com'è la sentinella?". Col visore addosso il microfono del tablet resta spento: guarda solo la telecamera.</p>
+    <div id="sn-eventi" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px"></div>
+  </section>
   <section class="largo" id="jarvis-sezione">
     <h2>🎙️ Jarvis <small>comandi vocali: "Ehi Jarvis" vicino al tablet · tutte le impostazioni anche sul tablet (scorri dal bordo sinistro)</small></h2>
     <p class="nota" id="j-stato">…</p>
@@ -475,6 +486,66 @@
     } catch (e) { $("j-xr-qr").textContent = ""; }
     if (a.cartella) $("j-mcp").textContent = 'claude mcp add --scope user jarvis -- python "' + a.cartella + '\\server\\jarvis\\jarvis_mcp.py"';
   }, function () {});
+})();
+</script>
+<script>
+/* Sentinella: stato del tablet, accensione, tempi ed eventi (le foto si aprono in una scheda nuova). */
+(function () {
+  "use strict";
+  var token = location.hash.slice(1), $ = function (id) { return document.getElementById(id); };
+  if (!token) return;
+  function api(p, corpo) {
+    var o = { headers: { "X-Token": token } };
+    if (corpo !== undefined) { o.method = "POST"; o.headers["Content-Type"] = "application/json"; o.body = JSON.stringify(corpo); }
+    return fetch(p, o).then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.errore || r.status); return j; }); });
+  }
+  function file(ev, nome) { return "/api/sentinella/file?t=" + encodeURIComponent(token) + "&id=" + encodeURIComponent(ev.id) + "&nome=" + nome; }
+  var attiva = false, ultimi = "";
+  function carica() {
+    api("/api/sentinella?quanti=24").then(function (d) {
+      var t = d.tablet;
+      attiva = !!(t && t.attiva);
+      $("sn-stato").textContent = !t ? "Tablet: stato sconosciuto (non si fa sentire)" : !t.attiva ? "Spenta"
+        : !t.armata ? "Si attiva fra " + t.armamento + " s" : "Sorveglia" + (t.rumore ? " (telecamera e microfono)" : " (solo telecamera: " + (t.perche_rumore || "microfono spento") + ")");
+      $("sn-accendi").textContent = attiva ? "Spegni" : "Attiva";
+      if (document.activeElement.tagName !== "INPUT") {
+        $("sn-armamento").value = d.imp.armamento; $("sn-pausa").value = d.imp.pausa; $("sn-giorni").value = d.imp.conserva_giorni;
+      }
+      var firma = d.eventi.map(function (e) { return e.id + e.clip.length + e.audio; }).join();
+      if (firma === ultimi) return;
+      ultimi = firma;
+      var box = $("sn-eventi");
+      box.innerHTML = d.eventi.length ? "" : '<span class="nota">Nessun evento registrato.</span>';
+      d.eventi.forEach(function (ev) {
+        var a = document.createElement("a");
+        a.target = "_blank";
+        a.href = file(ev, ev.foto ? "foto.jpg" : ev.clip[0] || "audio.wav");
+        a.style.cssText = "display:flex;flex-direction:column;gap:4px;color:inherit;text-decoration:none;font-size:12px";
+        if (ev.foto || ev.clip.length) {
+          var img = document.createElement("img");
+          img.src = file(ev, ev.foto ? "foto.jpg" : ev.clip[0]);
+          img.style.cssText = "width:100%;height:96px;object-fit:cover;border-radius:8px;background:#000";
+          a.appendChild(img);
+        }
+        var d0 = new Date(ev.ora * 1000), s = document.createElement("span");
+        s.textContent = (ev.tipo === "movimento" ? "Movimento" : "Rumore") + " · " + d0.toLocaleString("it-IT", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+          + " · " + ev.clip.length + " fotogrammi" + (ev.audio ? " · audio" : "");
+        a.appendChild(s);
+        box.appendChild(a);
+      });
+    }, function () { $("sn-stato").textContent = "Pannello non raggiungibile"; });
+  }
+  $("sn-accendi").onclick = function () {
+    api("/api/sentinella/comando", { attiva: !attiva, da: "impostazioni" }).then(function (r) {
+      if (!r.tablet_collegato) $("sn-stato").textContent = "Il tablet non è collegato";
+      setTimeout(carica, 1500);
+    });
+  };
+  [["sn-armamento", "armamento"], ["sn-pausa", "pausa"], ["sn-giorni", "conserva_giorni"]].forEach(function (c) {
+    $(c[0]).onchange = function () { var o = {}; o[c[1]] = Number(this.value); api("/api/sentinella/impostazioni", o).then(carica); };
+  });
+  carica();
+  setInterval(carica, 5000);
 })();
 </script>
 </body>

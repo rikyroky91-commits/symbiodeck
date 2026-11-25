@@ -32,11 +32,14 @@ try:
 except ImportError:  # il pannello funziona lo stesso, con meno dati
     psutil = None
 
+from sentinella import Sentinella, descrivi as descrivi_sentinella
+
 QUI = Path(__file__).resolve().parent
 WEB = QUI.parent / "web"
 CONFIG = QUI / "config.json"
 ICONE = QUI / "cache-icone"
 REGISTRO = QUI / "pannello.log"
+SENTINELLA_DATI = QUI / "sentinella-dati"   # foto, fotogrammi e audio della sentinella (restano sul PC, fuori da git)
 PORTA = 47800
 PORTA_JARVIS = 47802
 SENZA_FINESTRA = 0x08000000  # CREATE_NO_WINDOW
@@ -324,6 +327,20 @@ class Campionatore(threading.Thread):
 
     stato_pc = "acceso"   # "spegnimento" o "sospensione": il tablet spegne lo schermo
     versione_config = 1   # cambia a ogni salvataggio: il pannello ricarica app e scorciatoie
+    sentinella = None     # Sentinella: impostazioni, comando e stato nel flusso (il tablet li legge da lì)
+
+    def _sentinella(self):
+        try:
+            return self.sentinella.per_flusso() if self.sentinella else None
+        except Exception as e:
+            log("sentinella nel flusso:", repr(e))
+            return None
+
+    def sentinella_cambiata(self):
+        """Comando, stato o evento nuovo della sentinella: al tablet e alla pagina subito, non al giro dopo."""
+        with self.cond:
+            self.ultima = dict(self.ultima or {}, sentinella=self._sentinella(), t=time.time())
+            self.cond.notify_all()
 
     def config_cambiata(self):
         self.versione_config += 1
@@ -348,6 +365,7 @@ class Campionatore(threading.Thread):
                 dati = {"errore": str(e), "t": time.time()}
             dati["pc"] = self.stato_pc
             dati["config"] = self.versione_config
+            dati["sentinella"] = self._sentinella()
             with self.cond:
                 self.ultima = dati
                 self.cond.notify_all()
@@ -1391,6 +1409,20 @@ class Gestore(BaseHTTPRequestHandler):
             return self.manda(200, catalogo())
         if u.path == "/api/icona":
             return self.icona((q.get("target") or [""])[0])
+        if u.path == "/api/sentinella":
+            s = self.server.sentinella
+            try:
+                quanti = max(1, min(200, int((q.get("quanti") or ["60"])[0])))
+            except ValueError:
+                quanti = 60
+            return self.manda(200, {"imp": s.impostazioni(), "tablet": s.stato_tablet(), "non_visti": s.non_visti,
+                                    "eventi": s.elenco(quanti)})
+        if u.path == "/api/sentinella/file":
+            f = self.server.sentinella.file((q.get("id") or [""])[0], (q.get("nome") or [""])[0])
+            if not f:
+                return self.manda(404, {"errore": "file non trovato"})
+            return self.manda(200, f.read_bytes(), "audio/wav" if f.suffix == ".wav" else "image/jpeg",
+                              {"Cache-Control": "private, max-age=86400"})
         if livello == "pc" and u.path == "/api/pc/stato":
             ora = time.time()
             return self.manda(200, {"tablet": [{"ip": ip, "secondi_fa": round(ora - t)}
@@ -1467,9 +1499,12 @@ class Gestore(BaseHTTPRequestHandler):
             except PermissionError as e:
                 return self.manda(429, {"errore": str(e)})
             return self.manda(200, {"id": r["id"], "codice": r["codice"]})
-        livello = self.livello(parse_qs(u.query))
+        q = parse_qs(u.query)
+        livello = self.livello(q)
         if not livello:
             return self.manda(401, {"errore": "token mancante o sbagliato"})
+        if u.path == "/api/sentinella/file":
+            return self.file_sentinella(q)
         try:
             dati = self.corpo_json()
             if u.path == "/api/azione":
@@ -1481,6 +1516,8 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, {"ok": deciso})
             if u.path == "/api/config":
                 return self.manda(200, self.aggiorna_config(dati, livello))
+            if u.path.startswith("/api/sentinella/"):
+                return self.api_sentinella(u.path, dati)
             if livello == "pc" and u.path == "/api/pc/abbina":
                 Abbinamento.apri()
                 return self.manda(200, {"abbinamento": Abbinamento.secondi_rimasti()})
@@ -1496,6 +1533,44 @@ class Gestore(BaseHTTPRequestHandler):
             log("errore azione:", repr(e))
             return self.manda(500, {"errore": str(e)})
         return self.manda(404, {"errore": "non trovato"})
+
+    def api_sentinella(self, percorso, d):
+        s = self.server.sentinella
+        if percorso == "/api/sentinella/stato":            # dal tablet: com'è messa la sentinella
+            return self.manda(200, s.stato_dal_tablet(d, self.client_address[0]))
+        if percorso == "/api/sentinella/comando":          # dal PC, da Jarvis o dalla pagina: accendi / spegni
+            c = s.comanda(bool(d.get("attiva")), str(d.get("da") or "pc")[:20])
+            ora = time.time()
+            collegati = [ip for ip, t in self.server.tablet.items() if ora - t < 30]
+            return self.manda(200, {"ok": True, "comando": c, "tablet_collegato": bool(collegati)})
+        if percorso == "/api/sentinella/impostazioni":
+            return self.manda(200, {"imp": s.cambia_impostazioni(d)})
+        if percorso == "/api/sentinella/visti":
+            s.segna_visti()
+            return self.manda(200, {"ok": True})
+        if percorso == "/api/sentinella/cancella":
+            return self.manda(200, {"ok": s.cancella(str(d.get("id", "")))})
+        if percorso == "/api/sentinella/riassunto":
+            return self.manda(200, s.riassunto())
+        return self.manda(404, {"errore": "non trovato"})
+
+    def file_sentinella(self, q):
+        """Un file di un evento della sentinella (foto, fotogramma, audio), corpo grezzo."""
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 4 * 2**20:
+            return self.manda(413, {"errore": "file troppo grande"})
+        dati = self.rfile.read(n) if n else b""
+        prendi = lambda k: (q.get(k) or [None])[0]  # noqa: E731
+        try:
+            valore = prendi("valore")
+            r = self.server.sentinella.ricevi_file(prendi("id") or "", prendi("nome") or "", dati,
+                                                   valore=float(valore) if valore else None, ora=prendi("ora"))
+        except ValueError as e:
+            return self.manda(400, {"errore": str(e)})
+        except OSError as e:
+            log("sentinella: file non salvato:", repr(e))
+            return self.manda(500, {"errore": str(e)})
+        return self.manda(200, r)
 
     def azione(self, d):
         cfg = self.server.cfg
@@ -1624,6 +1699,39 @@ def custode_jarvis(cfg):
 
 
 ATTIVITA_JARVIS = "Pannello PC - Jarvis"
+
+
+def avvisa_sentinella(cfg, ev):
+    """Evento nuovo della sentinella: lo dice Jarvis (a voce, sul pannello di Jarvis e nel visore se è collegato).
+    Gli eventi arrivati tardi (il PC dormiva e il tablet li aveva in coda) non si dicono a voce."""
+    import urllib.request
+    if cfg.get("jarvis") is False:
+        return
+    imp = SENTINELLA.impostazioni() if SENTINELLA else {}
+    foto = SENTINELLA_DATI / ev["id"] / "foto.jpg"
+    corpo = {"id": ev["id"], "tipo": ev["tipo"], "testo": descrivi_sentinella(ev), "ritardo": ev.get("ritardo", 0),
+             "voce": bool(imp.get("voce", True)) and ev.get("ritardo", 0) < 120,
+             "foto": str(foto) if foto.is_file() else ""}
+    r = urllib.request.Request(f"http://127.0.0.1:{PORTA_JARVIS}/jarvis/sentinella", method="POST",
+                               data=json.dumps(corpo).encode("utf-8"),
+                               headers={"X-Token": cfg["token"], "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(r, timeout=10) as risposta:
+            risposta.read()
+    except OSError as e:
+        log("sentinella: Jarvis non avvisato:", repr(e))
+
+
+SENTINELLA = None   # Sentinella del server (main)
+
+
+def pulizia_sentinella():
+    while True:
+        try:
+            SENTINELLA.pulisci()
+        except Exception as e:
+            log("sentinella: pulizia:", repr(e))
+        time.sleep(6 * 3600)
 
 
 def attivita_jarvis():
@@ -1898,7 +2006,12 @@ def main():
     global PORTA
     PORTA = int(cfg.get("porta", PORTA))
     camp = Campionatore()
+    global SENTINELLA
+    SENTINELLA = Sentinella(SENTINELLA_DATI, cfg, salva_config, log, avvisa=lambda ev: avvisa_sentinella(cfg, ev))
+    SENTINELLA.cambiato = camp.sentinella_cambiata
+    camp.sentinella = SENTINELLA
     camp.start()
+    threading.Thread(target=pulizia_sentinella, daemon=True, name="pulizia-sentinella").start()
     threading.Thread(target=adb_reverse, daemon=True).start()
     if not cfg.get("abbinato") or "--abbina" in sys.argv:
         Abbinamento.apri()
@@ -1913,6 +2026,7 @@ def main():
     CustodeGioco(cfg).start()
     srv.cfg = cfg
     srv.campionatore = camp
+    srv.sentinella = SENTINELLA
     srv.jarvis = cfg.get("jarvis") is not False and jarvis_installato()
     threading.Thread(target=custode_jarvis, args=(cfg,), daemon=True).start()
     threading.Thread(target=avvia_https_xr, args=(srv,), daemon=True).start()

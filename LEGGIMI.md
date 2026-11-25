@@ -699,6 +699,77 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   ripartito con `/jarvis/riavvia`, eco sul PC attiva, Claude Code trovato, tablet ricollegato (altoparlante e
   microfono). **Non provato**: Quest vero, conferma da telefono/orologio dal vivo, interruzione a voce con l'eco.
 
+## Modalità sentinella (dal 2026-11-25, app 1.11.0)
+Il tablet fa da telecamera di sicurezza: con la telecamera **davanti** e il microfono si accorge di un movimento o
+di un rumore, registra foto, fotogrammi e audio e li manda **solo al PC**; Jarvis avvisa.
+
+- **Accenderla e spegnerla**: pulsante 🛡 in alto nel pannello del tablet (finestra con stato, impostazioni ed
+  eventi; il numero rosso = eventi non ancora visti), oppure a voce: "Jarvis, attiva la sentinella" / "spegni la
+  sentinella" / "com'è la sentinella?" (comandi locali in `principale.py`, `_SENTINELLA_*`: non passano da Claude,
+  funzionano anche in modalità privata), oppure dalle impostazioni sul PC (sezione 🛡 Sentinella). Sul tablet attivo si
+  spegne **tenendo premuto 2 secondi** l'indicatore (un tocco breve mostra solo come si fa). Se il tablet si riavvia
+  (anche da solo, watchdog) la sentinella riparte com'era.
+- **Indicatore**: finché è attiva lo schermo è nero con la luce al minimo, un punto rosso e "SENTINELLA ATTIVA", cosa
+  sta usando (telecamera e microfono, o perché il microfono è spento) e il conto alla rovescia; in più una notifica
+  fissa "Sentinella attiva". Lo schermo resta acceso (attenuato) anche a batteria; con "schermo: spento" si spegne alla
+  fine dell'armamento (`lockNow`) e resta solo la notifica. Accesa da PC o da Jarvis porta il pannello davanti.
+- **Senza scatti da sola**: per 20 s dopo l'accensione non scatta (armamento, il tempo di uscire); ogni cambio dello
+  schermo (acceso, spento, indicatore, luce cambiata dalla pagina) azzera lo sfondo e ferma il movimento per 3 s; un
+  cambio di luce di tutta l'immagine (esposizione automatica, nuvole) si compensa con un guadagno; la voce di Jarvis che
+  esce dal tablet non conta come rumore (fino a 1,5 s dopo l'ultima frase); tra un evento e l'altro almeno 20 s.
+- **Movimento** (`Sentinella.java`): fotogrammi YUV 640×480 dalla telecamera davanti (12-30 al secondo, analizzati 5
+  al secondo), ridotti a una griglia 64×48 di medie e confrontati con uno sfondo che segue piano i cambiamenti lenti.
+  Scatta se la parte cambiata supera la soglia (sensibilità 1-10: dal 30% allo 0,4% dell'immagine; 6 di serie = 2,7%)
+  in due analisi di fila. Una lampada accesa o spenta (luce di tutta l'immagine più che raddoppiata o dimezzata per due
+  analisi) conta come movimento. Al buio niente compensazione: decide la soglia per cella, che sale con il rumore del
+  sensore.
+- **Rumore**: livello RMS di blocchi da 80 ms sopra il rumore di fondo (che si adatta: scende subito, sale ~0,4 dB/s)
+  di un margine (sensibilità 1-10: da 30 a 10 dB; 5 di serie = 21 dB) per almeno 240 ms di fila. Il microfono è quello
+  di Jarvis: se Jarvis lo sta usando la sentinella legge gli stessi blocchi (nella modalità "chiamata"), se no
+  `JarvisServizio` lo apre solo per lei (VOICE_RECOGNITION, niente esce dal tablet finché non scatta).
+- **Col visore addosso** (deciso il 2026-11-25): il microfono del tablet resta **spento** anche per la sentinella, come
+  per Jarvis (Jarvis manda al tablet il comando `visore` quando lo metti e lo togli; senza Jarvis collegato si
+  considera tolto). Motivo: con il Quest in testa sei a casa, vicino al PC e al tablet, e il microfono sentirebbe te
+  che parli a Jarvis e l'audio del gioco: scatterebbe di continuo. La telecamera invece continua: chi entra nella
+  stanza mentre sei nel visore viene visto, e l'avviso ti arriva nel visore. L'indicatore scrive "microfono spento:
+  hai il visore" e il PC lo sa (`perche_rumore`).
+- **Quando scatta**: una foto subito (va al PC per prima: da lì parte l'avviso), poi i fotogrammi da ~2 s prima a ~4 s
+  dopo (2 al secondo, 640×480, orientamento nell'EXIF) e l'audio da 3 s prima a 5 s dopo (WAV 16 kHz). Il PC li salva
+  in `server/sentinella-dati/<id>/` (fuori da git: `foto.jpg`, `clip-NN.jpg`, `audio.wav`, `evento.json`), cancella
+  quelli più vecchi di 30 giorni e avvisa: notifica sul pannello del tablet (contatore e messaggio), Jarvis
+  (`POST /jarvis/sentinella`: avviso sul pannello di Jarvis e nel visore, che apre anche la foto se lo indossi; a voce
+  "Attenzione: la sentinella ha registrato un movimento davanti al tablet alle 14:32", al massimo ogni 45 s).
+  PC spento o in sospensione: gli eventi restano in coda nel tablet (`files/sentinella-coda`, al massimo ~60 MB, i più
+  vecchi si buttano) e partono appena il PC torna; quelli arrivati con più di 2 minuti di ritardo non si dicono a voce.
+- **Privacy**: niente servizi esterni. Il tablet manda solo al pannello del PC (gli stessi indirizzi USB/Wi-Fi della
+  pagina, con la chiave del pannello); il PC tiene tutto in locale. Foto ed eventi si vedono solo con la chiave.
+- **Impostazioni** in `config.json` (chiave `sentinella`, `server/sentinella.py`): `movimento`, `sens_movimento`,
+  `rumore`, `sens_rumore`, `armamento` (s), `pausa` (s), `schermo` (`attenuato`/`spento`), `voce`, `conserva_giorni`.
+  Il tablet le riceve nel flusso del pannello (`/api/flusso`, parte `sentinella`) insieme al comando di accensione
+  (id che cresce, valido 90 s: un tablet appena riavviato non riapplica un comando vecchio).
+- **API** (chiave del pannello): `GET /api/sentinella` (impostazioni, stato del tablet, eventi), `GET /api/sentinella/file?id=&nome=`,
+  `POST /api/sentinella/file?id=&nome=&valore=&ora=` (dal tablet, corpo grezzo; id `AAAAMMGG-hhmmss-movimento|rumore-xxxx`,
+  nomi `foto.jpg`, `clip-NN.jpg`, `audio.wav` o `evento`), `POST /api/sentinella/stato` (dal tablet, ogni 30 s e a ogni
+  cambio), `/comando`, `/impostazioni`, `/visti`, `/cancella`, `/riassunto`.
+- **Telecamera in comune con Jarvis "guarda"**: se Jarvis chiede una foto (sempre col sì dell'utente) mentre la sentinella
+  sorveglia, la sentinella chiude la telecamera, la presta per la foto e poi la riapre (`prestaTelecamera`).
+- **Provato** (2026-11-25, app 1.11.0 sul tablet): test Python (`tests/test_sentinella.py`, 18: impostazioni, comandi
+  nel flusso, stato del tablet, eventi con foto/fotogrammi/audio, dati non validi e percorsi rifiutati, ora del tablet
+  sbagliata, eventi arrivati tardi, visti dopo un riavvio, pulizia, indirizzi HTTP veri, avviso a Jarvis, frasi a voce,
+  avviso a voce limitato e foto nel visore); tutti i test del progetto verdi. **Dal vero**: accesa dal PC → indicatore e
+  conto alla rovescia sul tablet → armata; tablet reinstallato (riavvio) → ripartita da sola; telecamera davanti aperta
+  a 640×480, ~5 analisi al secondo, stanza ferma = movimento 0,000 (nessuno scatto a vuoto in 5 minuti); rumore di fondo
+  −59 dB, picchi brevi a −42 dB non scattano; un rumore vero a −28,9 dB → evento con foto dritta, 12 fotogrammi e 8 s di
+  audio sul PC in meno di un secondo → Jarvis l'ha detto a voce; visore messo/tolto (simulato con `visore/sessione`) →
+  microfono della sentinella spento e riacceso, indicatore aggiornato; "com'è la sentinella?" e "spegni la sentinella"
+  scritti a Jarvis → risposta giusta e sentinella spenta; pulsante 🛡, finestra, evento con foto/fotogrammi/audio;
+  accesa dal pulsante del tablet e spenta tenendo premuto. **Non provato**: un movimento vero davanti al tablet (nessuno
+  si è mosso davanti alla telecamera durante la prova), la stanza al buio e una lampada accesa, la coda con il PC spento,
+  lo schermo "spento", la foto di Jarvis "guarda" mentre la sentinella sorveglia, l'avviso nel Quest vero, la sezione
+  delle impostazioni sul PC vista nel browser.
+- Installare con il Quest collegato via USB: adb vede due dispositivi e lo script si ferma ("more than one device"). Si
+  sceglie il tablet con `ANDROID_SERIAL=<seriale del tablet> python android/costruisci.py --installa`.
+
 ## Abbinamento automatico (APK generico, dal 2026-11-15)
 - `python android/costruisci.py --generico` crea in `android/build-generico/` un APK senza IP né chiave: è quello
   pubblicato nelle Release per chiunque. La build personale (`costruisci.py` senza opzioni) resta com'era.
@@ -715,4 +786,4 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.10.1 (2026-11-24, telecamera davanti del tablet); app iPhone/Watch: `jarvis-ios-N`.
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.11.0 (2026-11-25, modalità sentinella); app iPhone/Watch: `jarvis-ios-N`.

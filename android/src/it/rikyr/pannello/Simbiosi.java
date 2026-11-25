@@ -36,6 +36,8 @@ final class Simbiosi extends Thread {
         void accendiSchermo();
         void spegniTablet();
         void riavviaAdb();
+        /** La parte "sentinella" del flusso: impostazioni e comandi dal PC (Sentinella.dalPc). */
+        void sentinella(JSONObject s);
     }
 
     private static final String TAG = "PannelloSimbiosi";
@@ -192,7 +194,12 @@ final class Simbiosi extends Thread {
                         soloReteDa = ultimoDato;
                         Log.i(TAG, "dati dal PC solo via rete con il cavo USB collegato: controllo il collegamento USB");
                     }
-                    stato(new JSONObject(riga.substring(6)).optString("pc", "acceso"));
+                    JSONObject dati = new JSONObject(riga.substring(6));
+                    stato(dati.optString("pc", "acceso"));
+                    JSONObject sentinella = dati.optJSONObject("sentinella");
+                    if (sentinella != null) {
+                        try { azioni.sentinella(sentinella); } catch (Exception e) { Log.w(TAG, "sentinella: " + e); }
+                    }
                 } else if (riga.startsWith(":")) {
                     ultimoContatto = SystemClock.elapsedRealtime();
                 }

@@ -40,6 +40,9 @@ import java.net.URL;
  * - "microfono": finché il PC lo chiede, POST a pezzi con il PCM 16 kHz del microfono.
  * Mentre il PC è collegato si tengono un wakelock parziale e il Wi-Fi ad alte prestazioni (anche a batteria):
  * senza, a schermo spento la CPU dorme e l'audio si ferma. PC spento o addormentato: si lascia tutto e si riprova.
+ * Il microfono serve anche alla sentinella (Sentinella.java): se Jarvis lo usa, la sentinella legge gli stessi
+ * blocchi; se Jarvis non lo vuole (PC spento, microfono sul PC) lo si apre solo per lei, senza mandare niente.
+ * Con il visore addosso resta spento per tutti e due.
  */
 public class JarvisServizio extends Service {
     private static final String TAG = "PannelloJarvis";
@@ -58,6 +61,14 @@ public class JarvisServizio extends Service {
     private AudioTrack traccia;
     private PowerManager.WakeLock sveglio;
     private WifiManager.WifiLock wifi;
+
+    private static volatile JarvisServizio istanza;
+
+    /** La sentinella ha cambiato idea sul microfono: lo si apre (o il ciclo si chiude da solo se non serve). */
+    static void svegliaMicrofono() {
+        JarvisServizio s = istanza;
+        if (s != null) s.avviaMicrofono();
+    }
 
     static void avvia(Context c) {
         try {
@@ -86,6 +97,8 @@ public class JarvisServizio extends Service {
         wifi.setReferenceCounted(false);
         altoparlante = new Thread(new Runnable() { @Override public void run() { cicloAltoparlante(); } }, "jarvis-voce");
         altoparlante.start();
+        istanza = this;
+        avviaMicrofono();   // la sentinella può essere già attiva (riavvio del tablet)
     }
 
     @Override public int onStartCommand(Intent i, int flags, int id) { return START_STICKY; }
@@ -93,6 +106,7 @@ public class JarvisServizio extends Service {
     @Override public IBinder onBind(Intent i) { return null; }
 
     @Override public void onDestroy() {
+        istanza = null;
         vivo = false;
         microfonoVoluto = false;
         if (altoparlante != null) altoparlante.interrupt();
@@ -138,6 +152,8 @@ public class JarvisServizio extends Service {
             base = null;
             fermaTraccia();
             tieniSveglio(false);
+            Sentinella.di(this).visore(false);   // senza Jarvis non si sa del visore: il microfono torna alla sentinella
+            avviaMicrofono();
             giro++;
             try { Thread.sleep(collegato ? 1000 : 4000); } catch (InterruptedException e) { return; }
         }
@@ -163,7 +179,7 @@ public class JarvisServizio extends Service {
                 if (n < 0 || n > buf.length) throw new IOException("trama troppo grande: " + n);
                 in.readFully(buf, 0, n);
                 // microfono voluto ma fermo (permesso arrivato dopo, AudioRecord occupato...): si riprova
-                if (tipo == 0 && microfonoVoluto) avviaMicrofono();
+                if (tipo == 0 && (microfonoVoluto || Sentinella.di(this).vuoleMicrofono())) avviaMicrofono();
                 if (tipo == 1) suona(buf, n);
                 else if (tipo == 2) comando(new String(buf, 0, n, "UTF-8"));
                 else if (tipo == 3) taci();
@@ -188,6 +204,7 @@ public class JarvisServizio extends Service {
                 microfonoVoluto = o.getBoolean("microfono");
                 if (microfonoVoluto) avviaMicrofono();
             }
+            if (o.has("visore")) Sentinella.di(this).visore(o.getBoolean("visore"));
             if (o.has("attivato") && accendiSchermo) svegliaSchermo();
             if (o.has("foto")) mandaFoto(o.getString("foto"));
         } catch (Exception e) {
@@ -201,7 +218,9 @@ public class JarvisServizio extends Service {
             byte[] jpeg = null;
             String errore = null;
             try {
-                jpeg = Fotocamera.scatta(this);
+                final Sentinella s = Sentinella.di(this);
+                // la sentinella tiene aperta la stessa telecamera: la presta per la foto e poi la riprende
+                jpeg = s.attiva() ? s.prestaTelecamera(() -> Fotocamera.scatta(this)) : Fotocamera.scatta(this);
             } catch (Exception e) {
                 errore = e.getMessage() != null ? e.getMessage() : e.toString();
                 Log.w(TAG, "foto non riuscita", e);
@@ -256,6 +275,7 @@ public class JarvisServizio extends Service {
                     .build();
             traccia.play();
         }
+        Sentinella.di(this).suonoInUscita(n);   // la sentinella non conta come rumore la voce di Jarvis
         traccia.write(pcm, 0, n);
     }
 
@@ -274,6 +294,7 @@ public class JarvisServizio extends Service {
 
     // ------------------------------------------------------------------ microfono
     private synchronized void avviaMicrofono() {
+        if (!vivo || !(microfonoVoluto || Sentinella.di(this).vuoleMicrofono())) return;
         if (microfono != null && microfono.isAlive()) return;
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             Log.w(TAG, "permesso del microfono non concesso");
@@ -284,13 +305,40 @@ public class JarvisServizio extends Service {
     }
 
     private void cicloMicrofono() {
-        while (vivo && microfonoVoluto && base != null) {
+        while (vivo) {
+            String b = base;
+            boolean versoPc = microfonoVoluto && b != null;
+            if (!versoPc && !Sentinella.di(this).vuoleMicrofono()) return;
             try {
-                inviaMicrofono(base, token);
+                if (versoPc) inviaMicrofono(b, token);
+                else ascoltaPerSentinella();
             } catch (Exception e) {
                 Log.i(TAG, "microfono interrotto: " + e);
             }
-            try { Thread.sleep(1000); } catch (InterruptedException e) { return; }
+            try { Thread.sleep(versoPc ? 1000 : 300); } catch (InterruptedException e) { return; }
+        }
+    }
+
+    /** Microfono aperto solo per la sentinella (Jarvis non lo usa): niente esce dal tablet finché non scatta. */
+    private void ascoltaPerSentinella() throws IOException {
+        Sentinella s = Sentinella.di(this);
+        int min = AudioRecord.getMinBufferSize(FREQ_IN, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+        AudioRecord rec = new AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, FREQ_IN,
+                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, Math.max(min, 2560 * 4));
+        try {
+            rec.startRecording();
+            if (rec.getRecordingState() != AudioRecord.RECORDSTATE_RECORDING) throw new IOException("microfono occupato");
+            Log.i(TAG, "microfono aperto per la sentinella");
+            byte[] buf = new byte[2560];   // 80 ms
+            while (vivo && s.vuoleMicrofono() && !(microfonoVoluto && base != null)) {
+                int n = rec.read(buf, 0, buf.length);
+                if (n < 0) throw new IOException("AudioRecord: " + n);
+                if (n > 0) s.audio(buf, n);
+            }
+        } finally {
+            try { rec.stop(); } catch (Exception e) { /* non partito */ }
+            rec.release();
+            Log.i(TAG, "microfono della sentinella chiuso");
         }
     }
 
@@ -325,11 +373,12 @@ public class JarvisServizio extends Service {
             c.setRequestProperty("Content-Type", "application/octet-stream");
             OutputStream out = c.getOutputStream();
             byte[] buf = new byte[2560];   // 80 ms
+            Sentinella sentinella = Sentinella.di(this);
             Log.i(TAG, "microfono collegato a Jarvis");
             while (vivo && microfonoVoluto && indirizzo.equals(base) && conEco == eco) {
                 int n = rec.read(buf, 0, buf.length);
                 if (n < 0) throw new IOException("AudioRecord: " + n);
-                if (n > 0) { out.write(buf, 0, n); out.flush(); }
+                if (n > 0) { out.write(buf, 0, n); out.flush(); sentinella.audio(buf, n); }
             }
             out.close();
             InputStream in = c.getInputStream();

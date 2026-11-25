@@ -23,6 +23,7 @@
       <button data-media="volume_mute" aria-label="Muto">🔇</button>
       <button data-media="volume_up" aria-label="Volume su">🔊</button>
     </div>
+    <button id="sentinella" class="sentinella-btn" aria-label="Sentinella">🛡<span id="sentinella-n" class="conta nascosto"></span></button>
     <button id="monitor" class="monitor" aria-label="Secondo monitor">🖥️ Monitor</button>
     <div class="stato"><span id="punto" class="punto"></span><button id="modifica" aria-label="Modifica">✎</button></div>
   </header>
@@ -100,6 +101,32 @@
     <div class="suggerimento">Tasti: ctrl, shift, alt, win, a–z, 0–9, f1–f24, tab, esc, enter, space, printscreen, frecce (left, up…), volume_up/down/mute, media_play_pause</div>
     <div class="icone" id="t-icone"></div>
     <div class="azioni"><button class="via-tastiera" type="button">⌨ Fine</button><button id="t-salva" class="primario">Salva</button></div>
+  </div>
+  <div class="finestra" id="finestra-sentinella">
+    <div class="testa-finestra"><strong>🛡 Sentinella</strong><button class="chiudi">✕</button></div>
+    <div class="s-riga">
+      <div class="s-stato" id="s-stato">—</div>
+      <button id="s-accendi" class="primario">Attiva</button>
+    </div>
+    <div class="s-nota">Il tablet sorveglia con la telecamera davanti e il microfono e avvisa quando vede un movimento o sente un rumore.
+      Foto, fotogrammi e audio vanno solo al PC. Col visore addosso il microfono resta spento: guarda solo la telecamera.</div>
+    <div class="s-imp">
+      <label class="s-check"><input type="checkbox" id="s-movimento"> Movimento</label>
+      <label class="s-cursore">sensibilità <input type="range" id="s-sens-movimento" min="1" max="10"><b id="s-sens-movimento-v"></b></label>
+      <label class="s-check"><input type="checkbox" id="s-rumore"> Rumore</label>
+      <label class="s-cursore">sensibilità <input type="range" id="s-sens-rumore" min="1" max="10"><b id="s-sens-rumore-v"></b></label>
+      <label class="s-check"><input type="checkbox" id="s-voce"> Avviso a voce</label>
+      <label class="s-cursore">schermo <select id="s-schermo"><option value="attenuato">attenuato con l'indicatore</option><option value="spento">spento</option></select></label>
+    </div>
+    <div class="s-titolo">Eventi <button id="s-aggiorna" class="s-piccolo">⟳</button></div>
+    <div class="s-eventi" id="s-eventi"></div>
+  </div>
+  <div class="finestra" id="finestra-evento">
+    <div class="testa-finestra"><strong id="e-titolo">Evento</strong><button class="chiudi">✕</button></div>
+    <img id="e-foto" class="e-foto" alt="">
+    <div class="e-comandi"><button id="e-indietro">◀</button><span id="e-conta"></span><button id="e-avanti">▶</button>
+      <button id="e-clip">▶ Clip</button><audio id="e-audio" controls preload="none"></audio>
+      <button id="e-cancella" class="s-piccolo">🗑</button><button id="e-torna">Elenco</button></div>
   </div>
   <div class="finestra" id="finestra-energia">
     <div class="testa-finestra"><strong>Cosa vuoi fare con il PC?</strong><button class="chiudi">✕</button></div>

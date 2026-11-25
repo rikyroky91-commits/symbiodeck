@@ -169,6 +169,35 @@ body.tastiera #finestra-tasti .suggerimento, body.tastiera #finestra-tasti .icon
 .scelte-energia small { color: var(--tenue); font-size: 12px; }
 .scelte-energia .pericolo { border-color: rgba(255, 77, 94, .45); }
 .scelte-energia .pericolo .nome-e { color: var(--rovente); }
+.sentinella-btn { position: relative; height: 34px; width: 42px; border-radius: 10px; background: var(--scheda);
+  border: 1px solid rgba(255, 77, 94, .30); font-size: 17px; flex: none; }
+.sentinella-btn:active { background: var(--scheda-2); }
+.sentinella-btn.attiva { border-color: #e63c3c; box-shadow: 0 0 0 2px rgba(230, 60, 60, .35) inset; }
+.sentinella-btn .conta { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+  background: #e63c3c; color: #fff; font-size: 11px; line-height: 18px; font-weight: 700; }
+#finestra-sentinella, #finestra-evento { width: 760px; gap: 10px; }
+.s-riga { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.s-stato { font-size: 15px; }
+.s-stato.on { color: #ff6b6b; font-weight: 600; }
+.s-nota { color: var(--tenue); font-size: 12px; line-height: 1.4; }
+.s-imp { display: grid; grid-template-columns: 170px 1fr; gap: 6px 14px; align-items: center; }
+.finestra label.s-check { flex-direction: row; align-items: center; gap: 8px; color: inherit; font-size: 14px; }
+.finestra label.s-cursore { flex-direction: row; align-items: center; gap: 10px; }
+.s-cursore input[type=range] { flex: 1; }
+.s-cursore b { width: 22px; text-align: right; color: inherit; }
+.s-cursore select { flex: 1; padding: 6px; border-radius: 8px; background: var(--scheda-2); color: inherit; border: 1px solid var(--bordo); }
+.s-titolo { display: flex; align-items: center; gap: 10px; font-weight: 600; margin-top: 4px; }
+.s-piccolo { padding: 2px 10px; border-radius: 8px; background: var(--scheda-2); border: 1px solid var(--bordo); }
+.s-eventi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; overflow-y: auto; max-height: 250px; }
+.s-eventi button { display: flex; flex-direction: column; gap: 3px; padding: 4px; border-radius: 10px; background: var(--scheda);
+  border: 1px solid var(--bordo); text-align: left; font-size: 12px; }
+.s-eventi img { width: 100%; height: 100px; object-fit: cover; border-radius: 7px; background: #000; }
+.s-eventi .senza { height: 100px; display: flex; align-items: center; justify-content: center; font-size: 30px; background: #000; border-radius: 7px; }
+.s-eventi .vuoto-elenco { grid-column: 1 / -1; }
+.e-foto { width: 100%; max-height: 62vh; object-fit: contain; background: #000; border-radius: 10px; }
+.e-comandi { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.e-comandi button { padding: 6px 12px; border-radius: 8px; background: var(--scheda-2); border: 1px solid var(--bordo); }
+.e-comandi audio { height: 34px; flex: 1; min-width: 200px; }
 .monitor { height: 34px; padding: 0 12px; border-radius: 10px; background: var(--scheda); border: 1px solid rgba(53, 200, 255, .35); font-size: 13px; }
 .monitor:active { background: var(--scheda-2); }
 /* scorrimento dal bordo destro verso sinistra: entra nel secondo monitor */

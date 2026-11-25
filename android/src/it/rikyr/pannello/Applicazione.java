@@ -58,6 +58,7 @@ public class Applicazione extends Application {
             @Override public void accendiSchermo() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.accendiSchermo(); } }); }
             @Override public void spegniTablet() { principale.post(new Runnable() { @Override public void run() { Applicazione.this.spegniTablet(); } }); }
             @Override public void riavviaAdb() { Applicazione.this.riavviaAdb(); }
+            @Override public void sentinella(org.json.JSONObject s) { Sentinella.di(Applicazione.this).dalPc(s); }
         });
         simbiosi.start();
         Log.i(TAG, "simbiosi avviata nel processo dell'app");
@@ -76,6 +77,8 @@ public class Applicazione extends Application {
         registerReceiver(usb, new IntentFilter("android.hardware.usb.action.USB_STATE"));
         // Jarvis: microfono e voce del tablet, anche a schermo spento (si collega da solo quando il PC c'è)
         JarvisServizio.avvia(this);
+        // sentinella accesa prima di un riavvio (anche quelli che il tablet fa da solo): riparte da sola
+        Sentinella.di(this).riprendi();
     }
 
     private final BroadcastReceiver batteria = new BroadcastReceiver() {

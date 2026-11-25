@@ -111,6 +111,13 @@ _BRIEFING = re.compile(r"^(?:buongiorno|buon giorno|briefing|com'è la giornata|
                        r"dammi il briefing|cosa c'è oggi)$")
 _ANNULLA = re.compile(r"^(?:annulla (?:l'ultima modifica|le (?:ultime )?modifiche)|rimetti (?:tutto )?com'era|"
                       r"ripristina i file|torna come prima)$")
+# modalità sentinella del tablet (server/sentinella.py, Sentinella.java): accesa e spenta senza passare da Claude
+_SENTINELLA_NO = re.compile(r"^(?:disattiva|spegni|ferma|togli|disinserisci|disarma|chiudi|stacca)\w*\b.*\bsentinella(?: per favore| grazie)?$")
+_SENTINELLA_SI = re.compile(r"^(?:attiva|accendi|avvia|metti|inserisci|arma|fai partire)\w*\b.*\bsentinella(?: per favore| grazie)?$"
+                            r"|^(?:la )?modalit[aà] sentinella$")
+_SENTINELLA_STATO = re.compile(r"^(?:com'?è|come va|com'?è messa|qual è lo stato|stato|cosa ha (?:visto|sentito)|"
+                               r"(?:ha|hai) visto qualcosa|novità|è attiva|è accesa)\b.*\bsentinella\b.*$"
+                               r"|^(?:la )?sentinella (?:ha (?:visto|sentito)|è attiva|è accesa)\b.*$")
 _PRIVATA_NO = re.compile(r"^(?:(?:esci|disattiva|spegni|togli|chiudi)\b.*\bmodalit[aà] (?:privata|locale)"
                          r"|torna (?:a|con) claude|modalit[aà] normale)$")
 
@@ -351,6 +358,8 @@ class Jarvis:
             else "visore tolto: microfono e voce di nuovo sul tablet")
         self.uscita.visore = self.visore_audio if immersivo else None
         self._aggiorna_microfono()
+        # la sentinella del tablet sa che il microfono è spento per via del visore (non lo riapre per sé)
+        self.tablet.comando(visore=immersivo)
         self.evento(visore_immersivo=immersivo)
 
     def _guardia_visore(self):
@@ -361,6 +370,64 @@ class Jarvis:
             if self.visore_immersivo and time.time() - getattr(self, "visore_battito", 0) > 12:
                 log("visore: nessun segnale da 12 s (tolto o in pausa)")
                 self.imposta_visore(False)
+
+    # ------------------------------------------------------------ sentinella del tablet
+    def comanda_sentinella(self, attiva):
+        """"Jarvis, attiva la sentinella": il pannello passa il comando al tablet (nel suo flusso)."""
+        r = api_pannello("/api/sentinella/comando", {"attiva": attiva, "da": "jarvis"})
+        if r is None:
+            self.di("Il pannello sul PC non risponde: la sentinella non riesco a comandarla.")
+        elif not r.get("tablet_collegato"):
+            self.di("Il tablet non è collegato al PC: la sentinella si accende dal tablet.")
+        elif not attiva:
+            self.di("Sentinella spenta.")
+        else:
+            armamento = int(((stato_sentinella() or {}).get("imp") or {}).get("armamento", 20))
+            frase = (f"Sentinella attivata: fra {armamento} secondi comincio a sorvegliare con la telecamera e il "
+                     "microfono del tablet." if armamento else "Sentinella attivata: sorveglio da adesso.")
+            if self.visore_immersivo:
+                frase += " Finché hai il visore il microfono del tablet resta spento: guardo solo con la telecamera."
+            self.di(frase)
+        self._torna_libero()
+
+    def racconta_sentinella(self):
+        r = api_pannello("/api/sentinella/riassunto", {})
+        if r is None:
+            self.di("Il pannello sul PC non risponde.")
+        else:
+            t = r.get("tablet")
+            if not t:
+                stato = "Non so com'è la sentinella: il tablet non si fa sentire."
+            elif not t.get("attiva"):
+                stato = "La sentinella è spenta."
+            elif not t.get("armata"):
+                stato = "La sentinella si sta attivando."
+            else:
+                stato = "La sentinella sta sorvegliando" + ("." if t.get("rumore") else ", solo con la telecamera.")
+            n, ultimo = r.get("oggi", 0), r.get("ultimo")
+            if n and ultimo:
+                cosa = "un movimento" if ultimo.get("tipo") == "movimento" else "un rumore"
+                ora = time.strftime("%H:%M", time.localtime(ultimo.get("ora") or time.time()))
+                eventi = f" Oggi ha registrato {n} {'evento' if n == 1 else 'eventi'}, l'ultimo {cosa} alle {ora}."
+            else:
+                eventi = " Oggi nessun evento."
+            self.di(stato + eventi)
+        self._torna_libero()
+
+    def sentinella_evento(self, d):
+        """Il pannello avvisa: il tablet ha visto un movimento o sentito un rumore. Sul pannello di Jarvis e nel
+        visore (avviso volante; se lo indossi si apre anche la foto), e a voce (al massimo ogni 45 s)."""
+        testo = str(d.get("testo", "")).strip()[:200] or "un evento"
+        log("sentinella:", d.get("id", ""), testo)
+        self.evento(avviso=f"🛡 Sentinella: {testo}", sentinella={"id": str(d.get("id", ""))[:40],
+                                                                  "tipo": str(d.get("tipo", ""))[:20]})
+        adesso = time.time()
+        if d.get("voce") and self.imp.get("attivo") and adesso - getattr(self, "_voce_sentinella", 0) > 45:
+            self._voce_sentinella = adesso
+            self.di_subito(f"Attenzione: la sentinella ha registrato {testo}.")
+        if self.visore_immersivo and d.get("foto"):
+            self.mostra_nel_visore({"cosa": "file", "percorso": str(d["foto"])})
+        return {"ok": True}
 
     # ------------------------------------------------------------ telecamere (visore e tablet)
     def guarda(self, motivo, dispositivo="auto", attesa_foto=20):
@@ -741,6 +808,12 @@ class Jarvis:
             return True
         if _ANNULLA.match(t):
             threading.Thread(target=self.annulla_modifiche, daemon=True).start()
+            return True
+        if _SENTINELLA_NO.match(t) or _SENTINELLA_SI.match(t):
+            threading.Thread(target=self.comanda_sentinella, args=(not _SENTINELLA_NO.match(t),), daemon=True).start()
+            return True
+        if _SENTINELLA_STATO.match(t):
+            threading.Thread(target=self.racconta_sentinella, daemon=True).start()
             return True
         if _PRIVATA_NO.match(t):
             if self.imp.get("privata"):
@@ -1508,6 +1581,31 @@ def stato_pannello():
         return None
 
 
+def api_pannello(percorso, corpo):
+    """POST al pannello sul PC (127.0.0.1:47800) con la chiave del tablet. None se non risponde."""
+    import urllib.request
+    tablet, _pc = token_pannello()
+    r = urllib.request.Request("http://127.0.0.1:47800" + percorso, method="POST",
+                               data=json.dumps(corpo).encode("utf-8"),
+                               headers={"X-Token": tablet, "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(r, timeout=5) as risposta:
+            return json.loads(risposta.read())
+    except (OSError, ValueError):
+        return None
+
+
+def stato_sentinella():
+    import urllib.request
+    tablet, _pc = token_pannello()
+    try:
+        r = urllib.request.Request("http://127.0.0.1:47800/api/sentinella?quanti=1", headers={"X-Token": tablet})
+        with urllib.request.urlopen(r, timeout=5) as risposta:
+            return json.loads(risposta.read())
+    except (OSError, ValueError):
+        return None
+
+
 def rileva_gioco():
     """Si sta giocando? Con i dati che il pannello legge ogni secondo: FPS di RivaTuner (un gioco agganciato),
     oppure una finestra a schermo intero con la scheda video carica, oppure la scheda video molto carica."""
@@ -1808,6 +1906,8 @@ class Gestore(BaseHTTPRequestHandler):
             if u.path == "/jarvis/visore/sessione":
                 j.imposta_visore(bool(d.get("immersivo")))
                 return self.manda(200, {"ok": True})
+            if u.path == "/jarvis/sentinella":
+                return self.manda(200, j.sentinella_evento(d))
             if u.path == "/jarvis/file/apri":
                 try:
                     visore.apri_sul_pc(str(d.get("percorso", "")))

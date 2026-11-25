@@ -38,8 +38,10 @@ def _jarvis(permesso=True, visori=0, immersivo=False):
         j.conferme.append((descrizione, k))
         return permesso
     j.chiedi_conferma = chiedi
+    j.comandi_fissi = []
     j.tablet = types.SimpleNamespace(collegato=lambda: True, comando_una_volta=lambda **c: j.comandi_tablet.append(c),
-                                     vuoi_microfono=j.microfono_voluto.append)
+                                     vuoi_microfono=j.microfono_voluto.append,
+                                     comando=lambda **c: j.comandi_fissi.append(c))
     return j
 
 
@@ -107,6 +109,8 @@ def test_visore_addosso_spegne_il_microfono_del_tablet():
     j.imposta_visore(False)
     assert j.microfono_voluto == [True, False, True]
     assert [e["visore_immersivo"] for e in j.eventi if "visore_immersivo" in e] == [True, False]
+    # la sentinella del tablet lo sa: col visore addosso non riapre il microfono per sé
+    assert j.comandi_fissi == [{"visore": True}, {"visore": False}]
 
 
 def test_blocchi_del_tablet_ignorati_col_visore():

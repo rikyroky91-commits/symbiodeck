@@ -66,6 +66,7 @@
   }
 
   function mostra(d) {
+    if (d && d.sentinella) sentinellaDati(d.sentinella);
     if (d && d.config && config.versione && d.config !== config.versione) caricaConfig();  // cambiata dal companion
     if (!d || !d.cpu) return;
     var c = d.cpu, g = d.gpu, r = d.ram, f = d.fps;
@@ -438,6 +439,159 @@
     };
     apriFinestra("finestra-tasti");
   }
+
+  // ------------------------------------------------------------ sentinella
+  // Il tablet sorveglia (Sentinella.java); qui: pulsante 🛡 con gli eventi non visti, accensione, impostazioni
+  // (salvate sul PC, il tablet le riceve nel flusso) ed eventi con foto, fotogrammi e audio.
+  var sent = { dati: null, ultimo: null, eventi: [], ev: null, quadro: 0, clip: null };
+  function sentinellaAttiva() {
+    if (nativo && nativo.sentinellaAttiva) { try { return nativo.sentinellaAttiva(); } catch (e) {} }
+    return !!(sent.dati && sent.dati.tablet && sent.dati.tablet.attiva);
+  }
+  function oraEvento(ev) {
+    var d = new Date(ev.ora * 1000), oggi = new Date();
+    var o = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+    return d.toDateString() === oggi.toDateString() ? o : d.getDate() + " " + MESI[d.getMonth()].slice(0, 3) + " " + o;
+  }
+  function nomeEvento(ev) { return ev.tipo === "movimento" ? "Movimento" : "Rumore"; }
+  function fileEvento(ev, nome) {
+    return "/api/sentinella/file?t=" + encodeURIComponent(token) + "&id=" + encodeURIComponent(ev.id) + "&nome=" + nome;
+  }
+  function sentinellaDati(s) {
+    sent.dati = s;
+    var n = s.non_visti || 0;
+    $("sentinella-n").textContent = n > 9 ? "9+" : String(n);
+    $("sentinella-n").classList.toggle("nascosto", !n);
+    $("sentinella").classList.toggle("attiva", sentinellaAttiva());
+    if (s.ultimo && s.ultimo.id) {
+      if (sent.ultimo && sent.ultimo !== s.ultimo.id) {
+        avviso("🛡 Sentinella: " + (s.ultimo.tipo === "movimento" ? "movimento" : "rumore") + " alle " + oraEvento(s.ultimo));
+        if (aperta("finestra-sentinella")) caricaEventi();
+      }
+      sent.ultimo = s.ultimo.id;
+    } else if (!sent.ultimo) sent.ultimo = "-";
+    if (aperta("finestra-sentinella")) mostraStatoSentinella();
+  }
+  function aperta(id) { return !$("velo").classList.contains("nascosto") && $(id).classList.contains("aperta"); }
+  function mostraStatoSentinella() {
+    var s = sent.dati || {}, t = s.tablet, on = sentinellaAttiva(), testo;
+    if (!t && !nativo) testo = "Stato del tablet sconosciuto";
+    else if (!on) testo = "Spenta";
+    else if (t && !t.armata) testo = "Si attiva fra " + (t.armamento || 0) + " s";
+    else testo = "Sorveglia" + (t && !t.rumore ? " (solo telecamera: " + (t.perche_rumore || "microfono spento") + ")" : "");
+    if (on && t && t.telecamera && t.telecamera !== "ok") testo += " · telecamera: " + t.telecamera;
+    if (t && t.in_coda) testo += " · " + t.in_coda + " in coda";
+    $("s-stato").textContent = testo;
+    $("s-stato").classList.toggle("on", on);
+    $("s-accendi").textContent = on ? "Spegni" : "Attiva";
+    $("s-accendi").classList.toggle("primario", !on);
+    var imp = s.imp;
+    if (imp && !sent.toccando) {
+      $("s-movimento").checked = imp.movimento; $("s-rumore").checked = imp.rumore; $("s-voce").checked = imp.voce;
+      $("s-sens-movimento").value = imp.sens_movimento; $("s-sens-movimento-v").textContent = imp.sens_movimento;
+      $("s-sens-rumore").value = imp.sens_rumore; $("s-sens-rumore-v").textContent = imp.sens_rumore;
+      $("s-schermo").value = imp.schermo;
+    }
+  }
+  function caricaEventi() {
+    return api("/api/sentinella?quanti=40").then(function (d) {
+      sent.eventi = d.eventi;
+      var box = $("s-eventi");
+      box.innerHTML = "";
+      if (!d.eventi.length) { box.innerHTML = '<div class="vuoto-elenco">Nessun evento registrato</div>'; return; }
+      d.eventi.forEach(function (ev, i) {
+        var b = document.createElement("button");
+        if (ev.foto || ev.clip.length) {
+          var img = document.createElement("img");
+          img.loading = "lazy"; img.alt = "";
+          img.src = fileEvento(ev, ev.foto ? "foto.jpg" : ev.clip[0]);
+          b.appendChild(img);
+        } else {
+          var v = document.createElement("div"); v.className = "senza"; v.textContent = "🔊"; b.appendChild(v);
+        }
+        var n = document.createElement("span");
+        n.textContent = nomeEvento(ev) + " · " + oraEvento(ev) + (ev.audio ? " · 🔊" : "");
+        b.appendChild(n);
+        b.onclick = function () { apriEvento(i); };
+        box.appendChild(b);
+      });
+    }, function (e) { avviso(e.message); });
+  }
+  $("sentinella").onclick = function () {
+    apriFinestra("finestra-sentinella");
+    mostraStatoSentinella();
+    caricaEventi();
+    api("/api/sentinella/visti", {}).catch(function () {});
+  };
+  $("s-aggiorna").onclick = caricaEventi;
+  $("s-accendi").onclick = function () {
+    var voglio = !sentinellaAttiva();
+    if (nativo && nativo.sentinella) { nativo.sentinella(voglio); if (voglio) chiudiFinestre(); }
+    else api("/api/sentinella/comando", { attiva: voglio, da: "pagina" }).then(function (r) {
+      avviso(r.tablet_collegato ? (voglio ? "Sentinella: comando mandato al tablet" : "Sentinella spenta")
+        : "Il tablet non è collegato");
+    }, function (e) { avviso(e.message); });
+    setTimeout(mostraStatoSentinella, 300);
+  };
+  function salvaSentinella() {
+    sent.toccando = false;
+    api("/api/sentinella/impostazioni", {
+      movimento: $("s-movimento").checked, rumore: $("s-rumore").checked, voce: $("s-voce").checked,
+      sens_movimento: Number($("s-sens-movimento").value), sens_rumore: Number($("s-sens-rumore").value),
+      schermo: $("s-schermo").value
+    }).catch(function (e) { avviso(e.message); });
+  }
+  ["s-movimento", "s-rumore", "s-voce", "s-schermo", "s-sens-movimento", "s-sens-rumore"].forEach(function (id) {
+    var el = $(id);
+    el.onchange = salvaSentinella;
+    if (el.type === "range") el.oninput = function () { sent.toccando = true; $(id + "-v").textContent = el.value; };
+  });
+  function quadri(ev) { return (ev.foto ? ["foto.jpg"] : []).concat(ev.clip); }
+  function mostraQuadro() {
+    var ev = sent.ev, q = quadri(ev);
+    if (!q.length) { $("e-foto").removeAttribute("src"); $("e-conta").textContent = "nessuna immagine"; return; }
+    sent.quadro = (sent.quadro + q.length) % q.length;
+    $("e-foto").src = fileEvento(ev, q[sent.quadro]);
+    $("e-conta").textContent = (q[sent.quadro] === "foto.jpg" ? "foto" : "fotogramma " + q[sent.quadro].slice(5, 7)) +
+      " · " + (sent.quadro + 1) + "/" + q.length;
+  }
+  function fermaClip() { clearInterval(sent.clip); sent.clip = null; $("e-clip").textContent = "▶ Clip"; }
+  function apriEvento(i) {
+    fermaClip();
+    sent.ev = sent.eventi[i];
+    sent.quadro = 0;
+    var ev = sent.ev;
+    $("e-titolo").textContent = nomeEvento(ev) + " · " + oraEvento(ev) +
+      (ev.tipo === "rumore" && ev.valore ? " · " + ev.valore + " dB" : "");
+    mostraQuadro();
+    $("e-audio").classList.toggle("nascosto", !ev.audio);
+    if (ev.audio) $("e-audio").src = fileEvento(ev, "audio.wav"); else $("e-audio").removeAttribute("src");
+    apriFinestra("finestra-evento");
+  }
+  $("e-avanti").onclick = function () { fermaClip(); sent.quadro++; mostraQuadro(); };
+  $("e-indietro").onclick = function () { fermaClip(); sent.quadro--; mostraQuadro(); };
+  $("e-clip").onclick = function () {
+    if (sent.clip) return fermaClip();
+    var q = quadri(sent.ev);
+    if (q.length < 2) return;
+    // dai fotogrammi di prima a quelli di dopo, due al secondo (come sono stati presi)
+    var ordine = sent.ev.clip.slice(), k = 0;
+    $("e-clip").textContent = "■ Ferma";
+    sent.clip = setInterval(function () {
+      if (k >= ordine.length) return fermaClip();
+      $("e-foto").src = fileEvento(sent.ev, ordine[k]);
+      $("e-conta").textContent = "clip " + (k + 1) + "/" + ordine.length;
+      k++;
+    }, 500);
+    if (sent.ev.audio) { try { $("e-audio").currentTime = 0; $("e-audio").play(); } catch (e) {} }
+  };
+  $("e-torna").onclick = function () { fermaClip(); $("e-audio").pause(); apriFinestra("finestra-sentinella"); caricaEventi(); };
+  $("e-cancella").onclick = function () {
+    fermaClip();
+    api("/api/sentinella/cancella", { id: sent.ev.id }).then(function () {
+      avviso("Evento cancellato"); apriFinestra("finestra-sentinella"); caricaEventi();
+    }, function (e) { avviso(e.message); });
+  };
 
   // ------------------------------------------------------------ avvio
   if (!token) avviso("Manca il token: apri il pannello dall'app o dal link del PC");

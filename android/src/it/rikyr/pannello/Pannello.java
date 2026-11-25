@@ -12,6 +12,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.provider.Settings;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
@@ -39,15 +41,55 @@ public class Pannello extends Activity {
     private boolean caricato = false;
     private final Handler handler = new Handler();
     private Ritorno ritorno;
+    private Indicatore indicatore;
+    private boolean inCarica = false;
+    private float lucePagina = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE;   // quella scelta dalla pagina
+    private final Sentinella.Ascoltatore sentinella = new Sentinella.Ascoltatore() {
+        @Override public void cambiata() {
+            runOnUiThread(new Runnable() { @Override public void run() { aggiornaSentinella(); } });
+        }
+    };
 
     // Solo per lo schermo sempre acceso in carica: la simbiosi con il PC (e i suoi ricevitori) è in Applicazione
     private final BroadcastReceiver batteria = new BroadcastReceiver() {
         @Override public void onReceive(Context c, Intent i) {
-            if (i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0)
-                getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+            inCarica = i.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
+            schermoAcceso();
         }
     };
+
+    /** Schermo sempre acceso in carica, e con la sentinella attiva "attenuata" (l'indicatore deve vedersi). */
+    private void schermoAcceso() {
+        Sentinella s = Sentinella.di(this);
+        if (inCarica || (s.attiva() && !s.schermoSpento()))
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+    }
+
+    /** Sentinella accesa: indicatore nero sopra il pannello e luce al minimo; spenta: tutto come prima.
+     *  Ogni cambio di luce lo si dice alla sentinella, che per qualche secondo non guarda il movimento. */
+    private void aggiornaSentinella() {
+        Sentinella s = Sentinella.di(this);
+        boolean on = s.attiva();
+        boolean prima = indicatore.getVisibility() == View.VISIBLE;
+        indicatore.setVisibility(on ? View.VISIBLE : View.GONE);
+        indicatore.invalidate();
+        if (on != prima) {
+            s.calma(3000);
+            luce(on ? 0.01f : lucePagina);
+            if (on) {
+                InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+                imm.hideSoftInputFromWindow(web.getWindowToken(), 0);
+            }
+        }
+        schermoAcceso();
+    }
+
+    private void luce(float valore) {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        lp.screenBrightness = valore;
+        getWindow().setAttributes(lp);
+    }
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -97,13 +139,20 @@ public class Pannello extends Activity {
                 }
             }
         });
-        setContentView(web);
+        FrameLayout radice = new FrameLayout(this);
+        radice.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        indicatore = new Indicatore(this);
+        indicatore.setVisibility(View.GONE);
+        radice.addView(indicatore, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(radice);
         web.loadUrl(ATTESA);
         if (indirizzi.length == 0) cercaPc();  // APK generico, tablet non ancora abbinato
         else riprova(300);
 
         registerReceiver(batteria, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
         ritorno = new Ritorno(this);
+        Sentinella.di(this).ascolta(sentinella);
+        aggiornaSentinella();
         // Jarvis usa il microfono del tablet: si chiede una volta (l'installazione lo concede già con pm grant)
         if (!microfonoConcesso()) requestPermissions(new String[] { android.Manifest.permission.RECORD_AUDIO }, 1);
         JarvisServizio.avvia(this);
@@ -142,6 +191,7 @@ public class Pannello extends Activity {
     @Override protected void onDestroy() {
         if (cerca != null) cerca.ferma();
         if (ritorno != null) ritorno.togli();
+        Sentinella.di(this).smetti(sentinella);
         try { unregisterReceiver(batteria); } catch (IllegalArgumentException e) { /* già tolto */ }
         super.onDestroy();
     }
@@ -280,12 +330,19 @@ public class Pannello extends Activity {
         @JavascriptInterface public void luminosita(final float valore) {
             runOnUiThread(new Runnable() {
                 @Override public void run() {
-                    WindowManager.LayoutParams lp = getWindow().getAttributes();
-                    lp.screenBrightness = Math.max(0.02f, Math.min(1f, valore));
-                    getWindow().setAttributes(lp);
+                    lucePagina = Math.max(0.02f, Math.min(1f, valore));
+                    if (Sentinella.di(Pannello.this).attiva()) return;   // resta al minimo finché sorveglia
+                    luce(lucePagina);
                 }
             });
         }
+
+        /** Sentinella: accende o spegne la modalità (pulsante 🛡 del pannello). */
+        @JavascriptInterface public void sentinella(boolean attiva) {
+            Sentinella.di(Pannello.this).attiva(attiva, "tablet");
+        }
+
+        @JavascriptInterface public boolean sentinellaAttiva() { return Sentinella.di(Pannello.this).attiva(); }
 
         /** Jarvis: il microfono del tablet è utilizzabile? */
         @JavascriptInterface public boolean microfono() { return microfonoConcesso(); }

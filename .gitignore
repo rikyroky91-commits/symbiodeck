@@ -28,3 +28,6 @@ apple/Payload/
 # cartelle temporanee dei test
 tests/_tmp*/
 android/quest/build/
+
+# sentinella: foto, fotogrammi e audio degli eventi (restano sul PC)
+server/sentinella-dati/
