@@ -790,6 +790,12 @@ cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica 
   (anche a pezzi), `POST /api/sentinella/file?id=&nome=&valore=&ora=` (dal tablet; nomi `foto.jpg`, `clip.mp4`,
   `clip-NN.jpg`, `audio.wav` o `evento`), `POST /api/sentinella/stato` (dal tablet), `/comando`, `/impostazioni`,
   `/visti`, `/cancella`, `/riassunto`. Jarvis: `POST /jarvis/sentinella` (evento), `/jarvis/sentinella/stato` (allarme).
+- **Sul telefono, dalla chat di Claude** (2026-11-25 sera, richiesta dell'utente: "voglio che mi arrivano sul telefono
+  tramite chat", con pochissimi token): `server/sentinella_attesa.py` aspetta senza consumare niente il prossimo evento
+  nuovo in `Desktop\Sentinella`, aspetta foto e clip complete, raccoglie la raffica di pochi secondi e stampa una riga
+  JSON per evento (testo pronto, foto, clip), poi esce. Una chat di Claude Code con il modello più leggero (Haiku, sforzo
+  basso) lo lancia in background, manda foto, clip e notifica così come sono e lo rilancia: niente ragionamento per
+  evento. Gli avvisi di Windows sul PC (zero token) restano. Test: `tests/test_sentinella_attesa.py`.
 - **Prova da adb** (per chi sviluppa; solo dalla shell adb, il ricevitore vuole il permesso `DUMP`):
   `adb shell am broadcast -a it.rikyr.pannello.SENTINELLA_PROVA --es tipo movimento` fa scattare un evento come se la
   telecamera avesse visto qualcosa (serve la sentinella armata).
