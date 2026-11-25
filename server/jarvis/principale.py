@@ -191,6 +191,8 @@ class Jarvis:
         self.uscita = audio.Uscita(self.casse_pc, self.tablet)
         # lo speaker del Quest: Jarvis XR si collega come un altro "tablet" (stesse trame), senza microfono
         self.visore_audio = audio.Tablet(lambda *a: None)
+        # il microfono del Quest (app nativa, "Hey Jarvis" senza toccare la sfera): conta solo col visore addosso
+        self.mic_visore = audio.Tablet(lambda b: self._blocco("visore", b))
         self.stt = Trascrittore(self.imp, log)
         self.tts = Sintesi(self.imp, log)
         self.in_gioco = False
@@ -480,11 +482,23 @@ class Jarvis:
 
     # ------------------------------------------------------------ audio in ingresso
     def _blocco(self, da, blocco):
-        if da != self.imp["microfono"] or not self.imp["attivo"]:
+        if not self.imp["attivo"]:
             return
-        if da == "tablet" and self.visore_immersivo:
-            return   # col visore si parla dal Quest
-        if self.uscita.aec is not None:
+        if da == "visore":
+            # il microfono del Quest vale solo mentre l'utente ha il visore addosso (battito di Jarvis XR); l'eco
+            # della voce di Jarvis la toglie il Quest stesso (cancellazione dell'eco di Android)
+            if not self.visore_immersivo:
+                return
+            # mentre Jarvis parla dallo speaker del Quest il suo microfono non conta: senza un segnale di riferimento
+            # sul PC la sua stessa voce potrebbe sembrare l'utente che lo interrompe
+            if self.uscita.parla or time.monotonic() < (self.uscita.fine_audio or 0.0) + 0.4:
+                return
+        else:
+            if da != self.imp["microfono"]:
+                return
+            if self.visore_immersivo and (da == "tablet" or self.mic_visore.microfono_attivo()):
+                return   # col visore si parla dal Quest: niente due microfoni mescolati
+        if self.uscita.aec is not None and da != "visore":
             try:
                 blocco = self.uscita.aec.pulisci(blocco, time.monotonic())
             except Exception as e:
@@ -2100,12 +2114,17 @@ class Gestore(BaseHTTPRequestHandler):
         return self.manda(200, {"ok": True})
 
     def microfono(self):
-        """Corpo a pezzi (Transfer-Encoding: chunked) con PCM 16 kHz, finché il tablet lo manda."""
+        """Corpo a pezzi (Transfer-Encoding: chunked) con PCM 16 kHz, finché il tablet (o il Quest, ?da=visore) lo
+        manda."""
         self.close_connection = True
         q = parse_qs(urlparse(self.path).query)
-        self.j.tablet.aec = (q.get("aec") or ["0"])[0] == "1"
-        log("microfono del tablet collegato:", self.client_address[0], "- cancellazione eco:",
-            "sì" if self.j.tablet.aec else "no")
+        visore = (q.get("da") or [""])[0] == "visore"
+        dest = self.j.mic_visore if visore else self.j.tablet
+        if not visore:
+            self.j.tablet.aec = (q.get("aec") or ["0"])[0] == "1"
+        chi = "del visore" if visore else "del tablet"
+        log(f"microfono {chi} collegato:", self.client_address[0], "- cancellazione eco:",
+            "sul Quest" if visore else "sì" if self.j.tablet.aec else "no")
         try:
             if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
                 while True:
@@ -2117,16 +2136,16 @@ class Gestore(BaseHTTPRequestHandler):
                         break
                     dati = self.rfile.read(n)
                     self.rfile.readline(4)
-                    self.j.tablet.dal_microfono(dati)
+                    dest.dal_microfono(dati)
             else:
                 while True:
                     dati = self.rfile.read1(4096) if hasattr(self.rfile, "read1") else self.rfile.read(4096)
                     if not dati:
                         break
-                    self.j.tablet.dal_microfono(dati)
+                    dest.dal_microfono(dati)
         except (ConnectionError, OSError, ValueError):
             pass
-        log("microfono del tablet scollegato")
+        log(f"microfono {chi} scollegato")
         try:
             self.manda(200, {"ok": True})
         except OSError:

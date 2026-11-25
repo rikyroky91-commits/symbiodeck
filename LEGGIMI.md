@@ -705,6 +705,13 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   Prima la diretta diceva "lo schermo del PC non si può catturare". **Provato sul PC**: salvaschermo `scrnsave.scr`
   chiuso, cattura di nuovo possibile; test in `tests/test_jarvis_visore.py`. **Limite**: con la TV spenta Windows
   cattura solo nero (l'app nativa lo dice); per lo schermo con la TV spenta serve lo schermo virtuale di Apollo.
+- **"Hey Jarvis" detto nel visore** (2026-11-25, per Jarvis XR nativo): `POST /jarvis/microfono?da=visore` riceve
+  il microfono del Quest come quello del tablet (PCM 16 kHz a pezzi) e lo usa **solo** mentre il visore è addosso
+  (battito di Jarvis XR); intanto tablet e microfono del PC non si mescolano. Il Quest non ha la cancellazione dell'eco
+  di Android: mentre Jarvis parla dallo speaker del visore (e 0,4 s dopo) quel microfono si ignora, così Jarvis non
+  sente se stesso (niente interruzione a voce dal visore). Nell'app il pulsante 🎙 HEY JARVIS lo spegne.
+  **Provato**: il Quest si collega e il PC lo usa (`microfono del visore collegato`, `visore in uso`); test in
+  `tests/test_jarvis_mic_visore.py`. **Non provato**: la parola chiave detta davvero col visore in testa.
 
 ## Modalità sentinella (dal 2026-11-25, app 1.11.0)
 Il tablet fa da telecamera di sicurezza: con la telecamera **davanti** e il microfono si accorge di un movimento o
