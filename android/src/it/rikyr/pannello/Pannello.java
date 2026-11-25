@@ -77,6 +77,9 @@ public class Pannello extends Activity {
         if (on != prima) {
             s.calma(3000);
             luce(on ? 0.01f : lucePagina);
+            // la pagina (WebView, che su questo tablet gira dentro il processo dell'app) è coperta dall'indicatore:
+            // in pausa smette di disegnare e di eseguire JavaScript, e la sorveglianza ha più CPU e memoria
+            if (on) { web.onPause(); web.pauseTimers(); } else { web.resumeTimers(); web.onResume(); }
             if (on) {
                 InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
                 imm.hideSoftInputFromWindow(web.getWindowToken(), 0);
@@ -386,7 +389,7 @@ public class Pannello extends Activity {
 
         /** Sentinella: accende o spegne la modalità (pulsante 🛡 del pannello). */
         @JavascriptInterface public void sentinella(boolean attiva) {
-            Sentinella.di(Pannello.this).attiva(attiva, "tablet");
+            Sentinella.di(Pannello.this).attiva(attiva, "tablet: pulsante");
         }
 
         @JavascriptInterface public boolean sentinellaAttiva() { return Sentinella.di(Pannello.this).attiva(); }

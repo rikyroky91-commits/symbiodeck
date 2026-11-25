@@ -34,14 +34,15 @@ LIMITI = {"sens_movimento": (1, 10), "sens_rumore": (1, 10), "armamento": (0, 30
           "conserva_giorni": (1, 365)}
 SCELTE = {"schermo": ("attenuato", "spento"), "notte": ("auto", "sempre", "mai")}
 
-ID = re.compile(r"^\d{8}-\d{6}-(movimento|rumore)-[0-9a-f]{4}$")
+ID = re.compile(r"^\d{8}-\d{6}-(movimento|rumore|ferma)-[0-9a-f]{4}$")
 NOME = re.compile(r"^(foto|clip-\d{2})\.jpg$|^audio\.wav$|^clip\.mp4$")
 MAX_FILE = {".jpg": 3 * 2**20, ".wav": 4 * 2**20, ".mp4": 40 * 2**20}
-CARTELLA_EVENTO = re.compile(r"^(\d{2})\.(\d{2})\.(\d{2}) (movimento|rumore) \(([0-9a-f]{4})\)$")
+CARTELLA_EVENTO = re.compile(r"^(\d{2})\.(\d{2})\.(\d{2}) (movimento|rumore|ferma) \(([0-9a-f]{4})\)$")
 GIORNO = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 MAX_FILE_EVENTO = 48            # foto + fotogrammi + audio
 COMANDO_VALIDO = 90             # secondi: un comando vecchio non si applica (es. al riavvio del tablet)
 STATO_VECCHIO = 120             # secondi senza notizie dal tablet: stato sconosciuto
+SILENZIO_FERMA = 180            # sentinella accesa e tablet muto da 3 minuti (manda lo stato ogni 30 s): "ferma"
 
 
 def impostazioni(cfg):
@@ -162,9 +163,13 @@ class Sentinella:
     def stato_dal_tablet(self, d, ip=""):
         prima = self.tablet or {}
         s = {k: d.get(k) for k in ("attiva", "armata", "armamento", "rumore", "perche_rumore", "telecamera",
-                                    "in_coda", "visore", "livelli", "notte", "video") if k in d}
+                                    "in_coda", "visore", "livelli", "notte", "video", "da", "riaperture") if k in d}
         s["attiva"] = bool(s.get("attiva"))
         s["ricevuto"] = time.time()
+        if getattr(self, "ferma", None):
+            self.log("sentinella: il tablet si fa sentire di nuovo dopo", round(s["ricevuto"] - self.ferma["da"]), "s",
+                     "(sorveglia)" if s["attiva"] else "(spenta)")
+            self.ferma = None
         s["ip"] = ip
         self.tablet = s
         if prima.get("attiva") != s["attiva"] or prima.get("armata") != s.get("armata") \
@@ -190,6 +195,23 @@ class Sentinella:
             return None
         return dict(t, secondi_fa=round(time.time() - t["ricevuto"]))
 
+    def controlla_silenzio(self, adesso=None):
+        """Ogni 30 s dal pannello: se la sentinella era accesa e il tablet non manda lo stato da SILENZIO_FERMA secondi
+        (app chiusa, tablet spento o bloccato, rete persa) si registra un evento "ferma" nella cartella degli eventi e si
+        avvisa. Una volta sola finché il tablet non si fa risentire. Spenta di proposito (stato attiva=false) non conta."""
+        adesso = adesso or time.time()
+        t = self.tablet
+        if not t or not t.get("attiva") or getattr(self, "ferma", None) or adesso - t["ricevuto"] < SILENZIO_FERMA:
+            return None
+        self.ferma = {"da": t["ricevuto"]}
+        id_ = time.strftime("%Y%m%d-%H%M%S", time.localtime(adesso)) + "-ferma-" + secrets.token_hex(2)
+        ultimo = time.strftime("%H:%M:%S", time.localtime(t["ricevuto"]))
+        self.ricevi_file(id_, "evento", b"", valore=round(adesso - t["ricevuto"]), ora=adesso * 1000,
+                         nota=f"La sentinella era accesa ma il tablet non manda più lo stato dalle {ultimo}: "
+                              "app chiusa, tablet spento o bloccato, oppure rete persa.")
+        self.log("sentinella: FERMA, tablet muto dalle", ultimo)
+        return id_
+
     def per_flusso(self):
         """La parte del flusso del pannello (ogni secondo) che riguarda la sentinella: impostazioni per il tablet,
         comando in corso, stato del tablet e ultimo evento (per l'avviso sulla pagina)."""
@@ -213,7 +235,7 @@ class Sentinella:
                 self.log("sentinella: aggiornamento del flusso:", repr(e))
 
     # ------------------------------------------------------------ eventi
-    def ricevi_file(self, id_, nome, dati, tipo="", valore=None, ora=None):
+    def ricevi_file(self, id_, nome, dati, tipo="", valore=None, ora=None, nota=None):
         """Un file di un evento dal tablet. Il primo file di un id crea l'evento (e lo annuncia); gli altri si
         aggiungono. Lo stesso file mandato due volte (il tablet riprova se la risposta si perde) si riscrive.
         Restituisce {"ok", "nuovo"}. ValueError per dati non validi."""
@@ -247,6 +269,8 @@ class Sentinella:
                     ora = adesso
                 ev = {"id": id_, "tipo": tipo_id, "ora": ora, "ricevuto": adesso, "valore": valore,
                       "ritardo": round(adesso - ora)}
+                if nota:
+                    ev["nota"] = nota
                 (cartella / "evento.json").write_text(json.dumps(ev, ensure_ascii=False), encoding="utf-8")
             elif len(list(cartella.iterdir())) > MAX_FILE_EVENTO:
                 raise ValueError("troppi file per questo evento")
@@ -390,5 +414,8 @@ class Sentinella:
 
 def descrivi(ev):
     """La frase dell'avviso: "movimento davanti al tablet alle 14:32"."""
+    if ev.get("tipo") == "ferma":
+        return ("che la sentinella del tablet si è fermata: era accesa ma il tablet non si fa sentire "
+                f"dalle {time.strftime('%H:%M', time.localtime((ev.get('ora') or time.time()) - (ev.get('valore') or 0)))}")
     cosa = "un movimento davanti al tablet" if ev.get("tipo") == "movimento" else "un rumore vicino al tablet"
     return f"{cosa} alle {time.strftime('%H:%M', time.localtime(ev.get('ora') or time.time()))}"

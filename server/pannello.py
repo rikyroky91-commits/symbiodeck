@@ -1750,6 +1750,16 @@ def stato_sentinella_a_jarvis(cfg, stato):
 SENTINELLA = None   # Sentinella del server (main)
 
 
+def guardia_sentinella():
+    """Ogni 30 s: la sentinella accesa che smette di farsi sentire diventa un evento "ferma" (e un avviso)."""
+    while True:
+        time.sleep(30)
+        try:
+            SENTINELLA.controlla_silenzio()
+        except Exception as e:
+            log("sentinella: guardia:", repr(e))
+
+
 def pulizia_sentinella():
     while True:
         try:
@@ -2044,6 +2054,7 @@ def main():
     camp.sentinella = SENTINELLA
     camp.start()
     threading.Thread(target=pulizia_sentinella, daemon=True, name="pulizia-sentinella").start()
+    threading.Thread(target=guardia_sentinella, daemon=True, name="guardia-sentinella").start()
     threading.Thread(target=adb_reverse, daemon=True).start()
     if not cfg.get("abbinato") or "--abbina" in sys.argv:
         Abbinamento.apri()

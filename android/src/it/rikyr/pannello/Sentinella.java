@@ -114,6 +114,10 @@ final class Sentinella {
     private volatile long ultimoEvento = 0;
     private volatile String ultimoComando = "";
     private volatile String impostazioniPc = "";
+    private volatile String ultimoDa = "";            // chi l'ha accesa o spenta per ultimo (va al PC)
+    private volatile int riaperture = 0;              // telecamera riaperta dalla guardia (per il registro e il PC)
+    private long ultimaProvaVideo = 0;
+    private int larghezza = 0, altezza = 0;
 
     // impostazioni (dal PC, config.json "sentinella"; salvate anche qui; predefinite uguali a server/sentinella.py)
     private volatile boolean movimentoOn = true, rumoreOn = true;
@@ -251,7 +255,8 @@ final class Sentinella {
         synchronized (blocco) {
             if (si == attiva) { if (si) avvisaAscoltatori(); return; }
             attiva = si;
-            prefs.edit().putBoolean("attiva", si).apply();
+            ultimoDa = da;
+            prefs.edit().putBoolean("attiva", si).putString("da", da).apply();
             Log.i(TAG, (si ? "attivata" : "spenta") + " (" + da + ")");
             if (si) {
                 armataDa = SystemClock.elapsedRealtime() + armamento * 1000L;
@@ -423,7 +428,10 @@ final class Sentinella {
                     }
                 }
             }, h);
+            larghezza = misura.getWidth();
+            altezza = misura.getHeight();
             if (!video.attivo()) {
+                ultimaProvaVideo = SystemClock.elapsedRealtime();
                 videoOk = video.avvia(misura.getWidth(), misura.getHeight());
                 erroreVideo = videoOk ? "" : "encoder non disponibile";
             }
@@ -1020,6 +1028,7 @@ final class Sentinella {
                 ok = svuotaCoda();
                 ok &= mandaStato();
                 if (vuoleMicrofono() && SystemClock.elapsedRealtime() - ultimoAudio > 4000) JarvisServizio.svegliaMicrofono();
+                guardia();
                 long ora = SystemClock.elapsedRealtime();
                 if (ora - ultimoRegistro > 30_000 && attiva) {
                     ultimoRegistro = ora;
@@ -1039,6 +1048,35 @@ final class Sentinella {
         }
     }
 
+    /** Ogni ~5 s: la sentinella accesa sta davvero guardando? Telecamera senza fotogrammi da 20 s (bloccata, presa da
+     *  un'altra app, servizio della telecamera riavviato) -> la si chiude e riapre. Encoder video che non era partito
+     *  (su questo tablet a volte il servizio dei codec non risponde all'avvio) -> si riprova ogni 5 minuti. */
+    private void guardia() {
+        if (!attiva) return;
+        final long ora = SystemClock.elapsedRealtime();
+        h.post(new Runnable() {
+            @Override public void run() {
+                if (!attiva || prestata > 0 || aprendo) return;
+                if (telecamera != null && ultimoFotogramma > 0 && ora - ultimoFotogramma > 20_000) {
+                    riaperture++;
+                    Log.w(TAG, "guardia: nessun fotogramma da " + (ora - ultimoFotogramma) / 1000 + " s, riapro la telecamera");
+                    ultimoFotogramma = ora;
+                    chiudi();
+                    apri();
+                } else if (telecamera == null && !aprendo) {
+                    apri();
+                }
+                if (!videoOk && larghezza > 0 && ora - ultimaProvaVideo > 300_000) {
+                    ultimaProvaVideo = ora;
+                    video.ferma();
+                    videoOk = video.avvia(larghezza, altezza);
+                    erroreVideo = videoOk ? "" : "encoder non disponibile";
+                    Log.i(TAG, "guardia: encoder video " + (videoOk ? "ripartito" : "ancora non disponibile"));
+                }
+            }
+        });
+    }
+
     private boolean mandaStato() throws Exception {
         JSONObject s = new JSONObject();
         s.put("attiva", attiva);
@@ -1050,6 +1088,8 @@ final class Sentinella {
         s.put("video", attiva ? (videoOk ? "ok" : erroreVideo) : "");
         s.put("notte", attiva && notte);
         s.put("visore", visore);
+        s.put("da", ultimoDa);
+        s.put("riaperture", riaperture);
         s.put("in_coda", contaCoda());
         s.put("livelli", ultimiLivelli);
         String testo = s.toString();

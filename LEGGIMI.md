@@ -810,6 +810,40 @@ cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica 
   davanti alla telecamera, la notte automatica con la stanza davvero buia, la luce del sole o di una lampada che cambia,
   la sfera d'allarme nel Quest vero e nel pannello di Jarvis (codice controllato, non visto), lo schermo "spento", la foto
   di Jarvis "guarda" con la sentinella attiva.
+- **Robustezza (1.12.1, 2026-11-25 sera)**. Il 2026-11-25 dopo le 11:43 il PC non ha più ricevuto niente dalla sentinella
+  e alle ~19:12 il tablet si è spento. **Indagine**: nel dropbox del tablet nessun crash, ANR o memoria esaurita dopo le
+  10:42 (i riavvii delle 10:29, 10:32, 10:39 e 10:42 erano le installazioni della 1.12.0, che riavviano il tablet); il
+  logcat di quelle ore è perso col riavvio e la storia della batteria non ha voci tra le 10:29 e le 19:16. Il pannello
+  scrive nel registro lo stato della sentinella solo quando cambia: con la casa vuota "nessuna riga dalle 11:43" può
+  voler dire anche solo "nessun evento", e non si può più sapere se sorvegliava. Lo spegnimento delle 19:12 è
+  "ordinato" (`persist.sys.boot.reason=shutdown,` senza motivo): non è l'app (spegne il tablet solo con batteria ≤10%,
+  era al 76%); il motivo vuoto è quello di una richiesta di spegnimento senza causa; altro non resta. Dopo il riavvio
+  delle 19:16 la sentinella è **ripartita da sola** ("attivata (riavvio)", video compreso); poi è stata spenta dal
+  tablet alle 19:17:29 e alle 19:18:35 (pulsante o pressione lunga), riaccesa dal PC alle 19:18:00. Trovato anche:
+  appena acceso, a volte il servizio dei codec non risponde (l'encoder H.264 non parte: "Failed to find matching codec",
+  lo stesso problema del lettore del WebView) e la sentinella va avanti con foto e fotogrammi JPEG; il WebView del
+  pannello gira **dentro il processo dell'app** (`Chrome_InProcRendererThread`) e con la pagina animata usava gran parte
+  della CPU dell'app.
+  **Cosa cambia**:
+  - **"Sentinella ferma"** (`Sentinella.controlla_silenzio`, `guardia_sentinella` in pannello.py): se la sentinella era
+    accesa e il tablet non manda lo stato da 3 minuti (lo manda ogni 30 s), il PC registra un evento `ferma` nella
+    cartella (`Desktop\Sentinella\AAAA-MM-GG\hh.mm.ss ferma (xxxx)\evento.json`, con la nota "non manda più lo stato
+    dalle …"), avvisa Jarvis (avviso sul pannello e nel visore; a voce solo se "voce" è acceso) e la pagina del tablet.
+    Una volta sola, finché il tablet non si rifà sentire (nel registro: "si fa sentire di nuovo dopo N s"). Spenta di
+    proposito non conta: il tablet dice chi l'ha spenta (`da`: "tablet: pressione lunga", "tablet: pulsante", "PC").
+  - **Guardia sul tablet** (ogni ~5 s): telecamera senza fotogrammi da 20 s → chiusa e riaperta (`riaperture` nello
+    stato); telecamera chiusa con la sentinella accesa → riaperta; encoder video non partito → si riprova ogni 5 minuti.
+  - **WebView in pausa** mentre la sentinella sorveglia (è coperto dall'indicatore): `onPause` + `pauseTimers`, ripresa
+    quando si spegne. Misurato con la sentinella accesa: app 48% di un core e 161 MB (prima 195 MB).
+  - **Indicatore** più leggero: 15 fotogrammi al secondo invece di 20 e niente oggetti grafici nuovi a ogni disegno.
+  - Già prima: processo dell'app persistente (Android lo riavvia se muore), servizio in primo piano (`JarvisServizio`,
+    START_STICKY), sentinella che riparte da sola con le sue impostazioni.
+  **Provato dal vero (1.12.1)**: accesa dal PC → armata, video ok; **crash simulato** (`adb shell am crash
+  it.rikyr.pannello`) → processo nuovo in meno di un secondo, "attivata (riavvio)", telecamera e encoder riaperti
+  (`am force-stop` invece non ferma un'app persistente); un **movimento vero** (macchia 0,054) → clip di 35 s
+  (allungata finché c'era movimento), audio corto perché il visore era addosso. Test Python: 27 sulla sentinella (2
+  nuovi: "ferma" dopo 3 minuti di silenzio, una volta sola; spenta di proposito non è "ferma"). **Non provato dal
+  vero**: l'evento "ferma" con un tablet che si blocca davvero (solo nei test) e la riapertura della telecamera bloccata.
 - Installare con il Quest collegato via USB: adb vede due dispositivi e lo script si ferma ("more than one device"). Si
   sceglie il tablet con `ANDROID_SERIAL=<seriale del tablet> python android/costruisci.py --installa`.
 
@@ -829,4 +863,4 @@ cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica 
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.12.0 (2026-11-25, sentinella con video, notte e allarme); app iPhone/Watch: `jarvis-ios-N`.
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.12.1 (2026-11-25, sentinella più robusta, avviso "sentinella ferma"); app iPhone/Watch: `jarvis-ios-N`.

@@ -453,6 +453,31 @@ def test_clip_servita_a_pezzi_per_i_lettori_video():
         srv.server_close()
 
 
+def test_sentinella_ferma_quando_il_tablet_tace():
+    avvisi = []
+    s = _sentinella(avvisi=avvisi)
+    assert s.controlla_silenzio() is None                       # tablet mai sentito
+    s.stato_dal_tablet({"attiva": True, "armata": True})
+    assert s.controlla_silenzio(time.time() + 60) is None        # 1 minuto: normale (manda lo stato ogni 30 s)
+    id_ = s.controlla_silenzio(time.time() + modulo.SILENZIO_FERMA + 5)
+    assert id_ and "-ferma-" in id_
+    assert s.controlla_silenzio(time.time() + 1000) is None      # una volta sola
+    ev = s.evento(id_)
+    assert ev["tipo"] == "ferma" and "non manda più lo stato" in ev["nota"]
+    assert (TMP / "dati" / sottocartella(id_) / "evento.json").is_file()
+    assert _aspetta(lambda: len(avvisi) == 1) and "si è fermata" in descrivi(avvisi[0])
+    # si rifà sentire: di nuovo in guardia
+    s.stato_dal_tablet({"attiva": True, "armata": True})
+    assert s.controlla_silenzio(time.time() + modulo.SILENZIO_FERMA + 5)
+
+
+def test_spenta_di_proposito_non_e_ferma():
+    s = _sentinella()
+    s.stato_dal_tablet({"attiva": False, "da": "tablet: pressione lunga"})
+    assert s.controlla_silenzio(time.time() + 3600) is None
+    assert s.stato_tablet() is None or s.tablet["da"] == "tablet: pressione lunga"
+
+
 def test_pannello_passa_lo_stato_a_jarvis():
     import pannello
     mandate = []

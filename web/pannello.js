@@ -453,7 +453,7 @@
     var o = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
     return d.toDateString() === oggi.toDateString() ? o : d.getDate() + " " + MESI[d.getMonth()].slice(0, 3) + " " + o;
   }
-  function nomeEvento(ev) { return ev.tipo === "movimento" ? "Movimento" : "Rumore"; }
+  function nomeEvento(ev) { return ev.tipo === "movimento" ? "Movimento" : ev.tipo === "ferma" ? "⚠ Sentinella ferma" : "Rumore"; }
   function fileEvento(ev, nome) {
     return "/api/sentinella/file?t=" + encodeURIComponent(token) + "&id=" + encodeURIComponent(ev.id) + "&nome=" + nome;
   }
@@ -465,7 +465,7 @@
     $("sentinella").classList.toggle("attiva", sentinellaAttiva());
     if (s.ultimo && s.ultimo.id) {
       if (sent.ultimo && sent.ultimo !== s.ultimo.id) {
-        avviso("🛡 Sentinella: " + (s.ultimo.tipo === "movimento" ? "movimento" : "rumore") + " alle " + oraEvento(s.ultimo));
+        avviso("🛡 Sentinella: " + (s.ultimo.tipo === "movimento" ? "movimento" : s.ultimo.tipo === "ferma" ? "si è fermata (il tablet non risponde)" : "rumore") + " alle " + oraEvento(s.ultimo));
         if (aperta("finestra-sentinella")) caricaEventi();
       }
       sent.ultimo = s.ultimo.id;

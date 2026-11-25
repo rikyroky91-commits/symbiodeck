@@ -432,6 +432,8 @@ class Jarvis:
         visore (avviso volante; se lo indossi si apre anche la foto), e a voce (al massimo ogni 45 s)."""
         testo = str(d.get("testo", "")).strip()[:200] or "un evento"
         log("sentinella:", d.get("id", ""), testo)
+        if d.get("tipo") == "ferma":
+            testo = testo[0].upper() + testo[1:]
         self.evento(avviso=f"🛡 Sentinella: {testo}", sentinella={"id": str(d.get("id", ""))[:40],
                                                                   "tipo": str(d.get("tipo", ""))[:20]})
         adesso = time.time()

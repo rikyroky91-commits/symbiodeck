@@ -30,13 +30,15 @@ final class Indicatore extends View {
     private final Paint linea = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint pieno = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF arco = new RectF();
+    private Shader fascio, nucleo;
+    private float shaderR = -1;
     private final float dp;
     private final long t0 = SystemClock.elapsedRealtime();
     private long premutoDa = 0, aiutoFino = 0;
     private final Runnable spegni = new Runnable() {
         @Override public void run() {
             premutoDa = 0;
-            Sentinella.di(getContext()).attiva(false, "tablet");
+            Sentinella.di(getContext()).attiva(false, "tablet: pressione lunga");
         }
     };
 
@@ -112,18 +114,26 @@ final class Indicatore extends View {
             float f = Math.min(1f, (ora - premutoDa) / (float) TIENI);
             c.drawRect(x, h - 36 * dp, x + (w - 2 * x) * f, h - 32 * dp, barra);
         }
-        postInvalidateDelayed(50);
+        postInvalidateDelayed(66);   // ~15 al secondo: basta per l'animazione, metà lavoro di prima
     }
 
     /** La sfera di Jarvis in allarme: anelli rossi, due fasci da sirena che girano, nucleo che lampeggia. */
     private void sirena(Canvas c, float cx, float cy, float raggio, float t, boolean armata, boolean registra) {
         float velocita = registra ? 5f : armata ? 3.2f : 1.2f;
         float lampo = 0.5f + 0.5f * (float) Math.max(0, Math.sin(t * (registra ? 9 : armata ? 6 : 3)));
+        if (shaderR != raggio) {
+            shaderR = raggio;
+            fascio = new RadialGradient(cx, cy, raggio * 1.15f, Color.argb(150, 255, 38, 52), Color.argb(0, 255, 38, 52),
+                    Shader.TileMode.CLAMP);
+            nucleo = new RadialGradient(cx, cy, raggio * 0.36f * 1.7f,
+                    new int[] { Color.rgb(255, 220, 220), Color.rgb(255, 38, 52), Color.argb(0, 255, 38, 52) },
+                    new float[] { 0f, 0.35f, 1f }, Shader.TileMode.CLAMP);
+        }
         // fasci
         c.save();
         c.rotate((float) Math.toDegrees(t * velocita), cx, cy);
-        pieno.setShader(new RadialGradient(cx, cy, raggio * 1.15f, Color.argb(150, 255, 38, 52), Color.argb(0, 255, 38, 52),
-                Shader.TileMode.CLAMP));
+        pieno.setAlpha(255);
+        pieno.setShader(fascio);
         arco.set(cx - raggio * 1.15f, cy - raggio * 1.15f, cx + raggio * 1.15f, cy + raggio * 1.15f);
         c.drawArc(arco, -20, 40, true, pieno);
         c.drawArc(arco, 160, 40, true, pieno);
@@ -150,11 +160,11 @@ final class Indicatore extends View {
         for (int k = 0; k < 6; k++) c.drawArc(arco, t * 90 + k * 60, 30, false, linea);
         // nucleo
         float rn = raggio * (0.30f + 0.06f * lampo);
-        pieno.setShader(new RadialGradient(cx, cy, rn * 1.7f,
-                new int[] { Color.argb((int) (150 + 100 * lampo), 255, 220, 220), Color.argb((int) (120 + 110 * lampo), 255, 38, 52),
-                        Color.argb(0, 255, 38, 52) }, new float[] { 0f, 0.35f, 1f }, Shader.TileMode.CLAMP));
+        pieno.setShader(nucleo);
+        pieno.setAlpha((int) (150 + 100 * lampo));
         c.drawCircle(cx, cy, rn * 1.7f, pieno);
         pieno.setShader(null);
+        pieno.setAlpha(255);
         linea.setStrokeWidth(2 * dp);
         linea.setAlpha(230);
         c.drawCircle(cx, cy, rn, linea);

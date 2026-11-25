@@ -116,7 +116,7 @@ def main():
     base = COSTRUZIONE / "base.apk"
     esegui([t["aapt2"], "link", "-I", t["jar"], "--manifest", QUI / "AndroidManifest.xml",
             "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
-            "--version-code", 22, "--version-name", "1.12.0", "-A", QUI / "assets",
+            "--version-code", 23, "--version-name", "1.12.1", "-A", QUI / "assets",
             "-o", base, COSTRUZIONE / "res.zip"])
 
     classi = COSTRUZIONE / "classi"
@@ -125,8 +125,12 @@ def main():
             "-classpath", t["jar"], "-d", classi] + sorgenti)
     dex = COSTRUZIONE / "dex"
     dex.mkdir()
-    esegui([t["d8"], "--release", "--lib", t["jar"], "--min-api", MIN_SDK, "--output", dex]
-           + [str(p) for p in classi.rglob("*.class")])
+    # le classi in un .jar: passate una per una la riga di comando di d8.bat supera il limite di Windows (8191)
+    vaso = COSTRUZIONE / "classi.jar"
+    with zipfile.ZipFile(vaso, "w", zipfile.ZIP_STORED) as z:
+        for c in classi.rglob("*.class"):
+            z.write(c, c.relative_to(classi).as_posix())
+    esegui([t["d8"], "--release", "--lib", t["jar"], "--min-api", MIN_SDK, "--output", dex, vaso])
     with zipfile.ZipFile(base, "a", zipfile.ZIP_DEFLATED) as z:
         z.write(dex / "classes.dex", "classes.dex")
 
