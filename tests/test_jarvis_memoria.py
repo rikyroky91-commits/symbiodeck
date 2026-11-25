@@ -190,6 +190,7 @@ def test_conferma_di_jarvis_con_permessi():
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
     j.blocco_domande = threading.Lock()
     j.solo_remoto = False
+    j._fine_conferma = lambda: None
     j._chiedi_conferma = lambda *a, **k: Jarvis._chiedi_conferma(j, *a, **k)
 
     def rispondi(ok, sempre):

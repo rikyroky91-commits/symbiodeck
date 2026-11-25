@@ -508,6 +508,12 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
       amministratore, falliva). Misurato nell'anteprima: primo fotogramma in 0,8 s, 29,6/s a 1920×1080, cinema 28/s.
     - **Tablet, telecamera davanti** (app 1.10.1, richiesta dell'utente: il tablet sta di fronte e la posteriore
       guardava il muro). Provato con la 1.10.0 (posteriore): permesso → foto da 104 KB in 3 s → "quasi tutta nera".
+    - **Tablet fermo sulla conferma rossa** (2026-11-25): una domanda ("Un visore vuole collegarsi… Lo consento?")
+      consentita dalle impostazioni del PC restava aperta a voce e, scaduta in silenzio, lasciava Jarvis nello stato
+      "conferma" senza conferma: il tablet ha mostrato lo schermo rosso per ore. Ora a ogni conferma o domanda chiusa
+      (risposta, scadenza, chiusa da fuori) `_fine_conferma` riporta Jarvis a riposo (o a "lavoro" se sta lavorando),
+      e `/api/xr/consenti` chiude subito la domanda a voce (`POST /jarvis/domanda/chiudi`). Provato:
+      `tests/test_jarvis_domande.py` (3 casi) e, dopo il riavvio, tablet di nuovo "in attesa" (cattura dello schermo).
     - **"Guarda" più veloce**: la voce (Sonnet) usa da sola gli strumenti `mcp__visore__*`, telecamera compresa
       (`guardia.solo_esecutore`, `persona.md`), invece di passare dall'esecutore (Opus). Prova delle 23:19 (prima della
       modifica): "che telefono ho in mano?" → capito in 1 s → permesso dopo 3 s → foto 5 s dopo il sì (242 KB) →

@@ -1475,7 +1475,10 @@ class Gestore(BaseHTTPRequestHandler):
             if u.path == "/api/azione":
                 return self.manda(200, self.azione(dati))
             if livello == "pc" and u.path == "/api/xr/consenti":
-                return self.manda(200, {"ok": AbbinaVisore.decidi(str(dati.get("id", "")), bool(dati.get("ok")))})
+                deciso = AbbinaVisore.decidi(str(dati.get("id", "")), bool(dati.get("ok")))
+                if deciso:
+                    AbbinaVisore.chiudi_domanda(self.server.cfg)
+                return self.manda(200, {"ok": deciso})
             if u.path == "/api/config":
                 return self.manda(200, self.aggiorna_config(dati, livello))
             if livello == "pc" and u.path == "/api/pc/abbina":
@@ -1783,6 +1786,17 @@ class AbbinaVisore:
             r["stato"] = "ok" if ok else "no"
         log("visore", r["ip"], "consentito" if ok else "rifiutato")
         return True
+
+    @staticmethod
+    def chiudi_domanda(cfg):
+        """Deciso dalle impostazioni del PC: la domanda a voce di Jarvis ("Lo consento?") non serve più."""
+        import urllib.request
+        try:
+            q = urllib.request.Request(f"http://127.0.0.1:{PORTA_JARVIS}/jarvis/domanda/chiudi", data=b"{}",
+                                       headers={"X-Token": cfg["token"], "Content-Type": "application/json"})
+            urllib.request.urlopen(q, timeout=5).close()
+        except OSError:
+            pass
 
     @classmethod
     def esito(cls, cfg, id_, ip):

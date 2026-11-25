@@ -46,6 +46,7 @@ def _jarvis(**imp):
     j.uscita = types.SimpleNamespace(riprendi=lambda: None, parla=False)
     j._ascolta_conferma_dopo_domanda = lambda c: None
     j._risposta_conferma = lambda *a, **k: Jarvis._risposta_conferma(j, *a, **k)
+    j._fine_conferma = lambda: None
     j.meteo = {"t": 0, "testo": ""}
     j.leggi_meteo = lambda: Jarvis.leggi_meteo(j)
     return j

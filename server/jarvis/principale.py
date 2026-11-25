@@ -903,6 +903,28 @@ class Jarvis:
             return {"ok": True, "messaggio": "Fatto nel visore."}
         return {"ok": False, "messaggio": "Cosa mostrare? cartella, file, finestra, schermo, finestre o chiudi."}
 
+    def _fine_conferma(self):
+        """Conferma o domanda chiusa (risposta, scadenza, chiusa da fuori): mai restare nello stato "conferma". Prima,
+        a domanda scaduta in silenzio, Jarvis ci restava per ore e il tablet mostrava lo schermo rosso (2026-11-25)."""
+        if self.stato != "conferma":
+            return
+        if self.claude.occupato or self.claude.lavora_in_sottofondo():
+            self.imposta_stato("lavoro")
+        else:
+            self.imposta_stato("riposo")
+
+    def chiudi_domanda(self):
+        """La domanda in corso non serve più (es. visore consentito dalle impostazioni del PC): si chiude in
+        silenzio, senza risposta. True se ce n'era una."""
+        c = self.conferma
+        if not c or not c.get("domanda"):
+            return False
+        c["testo"], c["ok"] = "", False
+        self._svuota(self.da_dire)
+        self.uscita.taci()
+        c["esito"].set()
+        return True
+
     def _torna_libero(self):
         if not self.claude.occupato and not self.claude.lavora_in_sottofondo():
             self.imposta_stato("seguito" if self.imp.get("seguito") else "riposo")
@@ -1259,6 +1281,7 @@ class Jarvis:
             c["esito"].wait(attesa)
             self.conferma = None
             self.evento(conferma=None)
+            self._fine_conferma()
             log("domanda", domanda[:120], "->", c["testo"])
             return c["testo"]
         finally:
@@ -1300,6 +1323,7 @@ class Jarvis:
         c["esito"].wait(attesa)
         self.conferma = None
         self.evento(conferma=None)
+        self._fine_conferma()
         log("conferma", descrizione, "->", c["ok"], "(per sempre)" if c["sempre"] else "")
         if c["sempre"]:
             self.permessi.ricorda(impronta, c["ok"], descrizione, c["sempre_ok"])
@@ -1779,6 +1803,8 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, j.mostra_nel_visore(d))
             if u.path == "/jarvis/interno/guarda":
                 return self.manda(200, j.guarda(str(d.get("motivo", "")), str(d.get("dispositivo", "auto"))))
+            if u.path == "/jarvis/domanda/chiudi":
+                return self.manda(200, {"ok": j.chiudi_domanda()})
             if u.path == "/jarvis/visore/sessione":
                 j.imposta_visore(bool(d.get("immersivo")))
                 return self.manda(200, {"ok": True})
