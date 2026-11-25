@@ -182,6 +182,12 @@ def risolvi_cartella(nome, dove=""):
         return str(p) if p.is_dir() and consentito(p) else None
     parole = [w for w in _norma(nome).split() if w not in _PAROLE_VUOTE]
     dove = " ".join(w for w in _norma(dove).split() if w not in _PAROLE_VUOTE)   # "sul desktop" -> "desktop"
+    # "la cartella Download" (anche con dove="download"): è la cartella di Windows, non una sottocartella che si
+    # chiama così (2026-11-25: apriva ...\Fluffy Mod Manager\TmpDownload invece di Download)
+    if len(parole) == 1 and SINONIMI.get(parole[0]) and (not dove or SINONIMI.get(dove) == SINONIMI[parole[0]]):
+        nota = cartella_nota(parole[0])
+        if nota and nota.is_dir():
+            return str(nota)
     if dove:
         base = cartella_nota(dove) if SINONIMI.get(_norma(dove)) else None
         if base is None:

@@ -148,3 +148,12 @@ def test_strumenti_mcp_del_visore():
         visore_mcp.visore_chiudi()
     assert mandati == [{"cosa": "cartella", "nome": "foto", "dove": "desktop"}, {"cosa": "finestra", "titolo": "Chrome"},
                        {"cosa": "schermo", "numero": 1}, {"cosa": "chiudi"}]
+
+
+def test_cartella_di_windows_non_una_sottocartella_omonima(casa):
+    """"la cartella Download": la cartella di Windows, anche se dentro ce n'è una che si chiama quasi uguale."""
+    (casa / "Downloads" / "Mod Manager" / "TmpDownload").mkdir(parents=True)
+    atteso = str(casa / "Downloads")
+    assert visore.risolvi_cartella("Download", "") == atteso
+    assert visore.risolvi_cartella("Download", "download") == atteso
+    assert visore.risolvi_cartella("download", "Downloads") == atteso
