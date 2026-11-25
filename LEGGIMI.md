@@ -712,6 +712,8 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   sente se stesso (niente interruzione a voce dal visore). Nell'app il pulsante 🎙 HEY JARVIS lo spegne.
   **Provato**: il Quest si collega e il PC lo usa (`microfono del visore collegato`, `visore in uso`); test in
   `tests/test_jarvis_mic_visore.py`. **Non provato**: la parola chiave detta davvero col visore in testa.
+- **Jarvis XR (browser), telemetria**: "In primo piano" mostrava l'oggetto grezzo (`[object Object]`); ora il titolo
+  della finestra, se no il nome del programma, come sul tablet (2026-11-25).
 
 ## Modalità sentinella (dal 2026-11-25, app 1.11.0)
 Il tablet fa da telecamera di sicurezza: con la telecamera **davanti** e il microfono si accorge di un movimento o

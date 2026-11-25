@@ -531,7 +531,8 @@ pTelemetria.contenuto = function (c, W, H) {
   barra(H - 150, "RAM", d.ram && d.ram.usata, d.ram && d.ram.totale, "57,213,255");
   barra(H - 108, "VRAM", d.gpu && d.gpu.vram, d.gpu && d.gpu.vram_tot, "77,255,184");
   c.font = "400 22px " + FONT; c.fillStyle = "rgba(223,246,255,0.55)";
-  c.fillText("In primo piano: " + (d.primo_piano || "—"), 40, H - 50);
+  const pp = d.primo_piano || {};   // {titolo, processo}, come nel pannello del tablet
+  c.fillText("In primo piano: " + (pp.titolo || pp.processo || "—"), 40, H - 50);
 };
 function grafico(c, serie, x, y, w, h, colore, massimo) {
   c.strokeStyle = "rgba(" + colore + ",0.15)"; c.lineWidth = 1; c.strokeRect(x, y, w, h);
