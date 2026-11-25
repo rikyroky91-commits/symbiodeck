@@ -190,7 +190,13 @@ final class Sentinella {
         f.addAction(Intent.ACTION_SCREEN_OFF);
         f.addAction(Intent.ACTION_USER_PRESENT);
         c.registerReceiver(new BroadcastReceiver() {
-            @Override public void onReceive(Context x, Intent i) { calma(3000); }
+            @Override public void onReceive(Context x, Intent i) {
+                calma(3000);
+                if (Intent.ACTION_SCREEN_OFF.equals(i.getAction()) && attiva) {
+                    h.removeCallbacks(riaccendi);
+                    h.postDelayed(riaccendi, 3000);
+                }
+            }
         }, f);
         // prova dal PC con adb (solo chi ha il permesso DUMP, cioè adb shell e il sistema):
         //   adb shell am broadcast -a it.rikyr.pannello.SENTINELLA_PROVA --es tipo movimento
@@ -216,7 +222,8 @@ final class Sentinella {
     boolean attiva() { return attiva; }
     boolean armata() { return attiva && SystemClock.elapsedRealtime() >= armataDa; }
     int secondiAllArmamento() { return (int) Math.max(0, (armataDa - SystemClock.elapsedRealtime() + 999) / 1000); }
-    boolean schermoSpento() { return "spento".equals(schermo); }
+    /** Mai: la sentinella non spegne lo schermo, lo attenua soltanto (richiesta dell'utente, 2026-11-25). */
+    boolean schermoSpento() { return false; }
     boolean visore() { return visore; }
     boolean notte() { return notte; }
     boolean registra() { synchronized (this) { return evento != null; } }
@@ -263,9 +270,7 @@ final class Sentinella {
                 eventiDaAccensione = 0;
                 fondo = Float.NaN;
                 h.post(new Runnable() { @Override public void run() { apri(); } });
-                h.postDelayed(spegniSeVoluto, armamento * 1000L + 500);
             } else {
-                h.removeCallbacks(spegniSeVoluto);
                 synchronized (this) { if (evento != null) chiudiEvento(true); }
                 h.post(new Runnable() {
                     @Override public void run() {
@@ -283,14 +288,14 @@ final class Sentinella {
         avvisaAscoltatori();
     }
 
-    private final Runnable spegniSeVoluto = new Runnable() {
+    /** Schermo spento con la sentinella accesa (tempo scaduto con un'altra app davanti, tasto, chiunque): dopo 3 s
+     *  si riaccende, attenuato, con il pannello e l'indicatore davanti. */
+    private final Runnable riaccendi = new Runnable() {
         @Override public void run() {
-            if (!attiva || !schermoSpento()) return;
-            DevicePolicyManager dpm = (DevicePolicyManager) app.getSystemService(Context.DEVICE_POLICY_SERVICE);
-            if (dpm.isAdminActive(new ComponentName(app, Amministratore.class))) {
-                Log.i(TAG, "schermo spento per la sorveglianza");
-                dpm.lockNow();
-            }
+            PowerManager pm = (PowerManager) app.getSystemService(Context.POWER_SERVICE);
+            if (!attiva || pm.isInteractive()) return;
+            Log.i(TAG, "schermo spento con la sentinella accesa: lo riaccendo (attenuato)");
+            mostraPannello();
         }
     };
 

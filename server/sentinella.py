@@ -25,7 +25,7 @@ PREDEFINITE = {
     "sens_rumore": 5,         # 1 (solo rumori forti) … 10 (anche deboli)
     "armamento": 20,          # secondi tra l'accensione e l'inizio della sorveglianza (per uscire dalla stanza)
     "pausa": 20,              # secondi minimi tra un evento e il successivo
-    "schermo": "attenuato",   # "attenuato" (nero con l'indicatore, luce al minimo) o "spento"
+    "schermo": "attenuato",   # sempre "attenuato": la sentinella non spegne mai lo schermo, abbassa solo la luce
     "notte": "auto",          # bianco e nero con più luce: "auto" (quando la stanza è buia), "sempre", "mai"
     "voce": True,             # Jarvis lo dice a voce
     "notifica_pc": True,      # notifica di Windows sul PC (con la foto; senza nessun modello, zero token)
@@ -33,7 +33,7 @@ PREDEFINITE = {
 }
 LIMITI = {"sens_movimento": (1, 10), "sens_rumore": (1, 10), "armamento": (0, 300), "pausa": (5, 600),
           "conserva_giorni": (1, 365)}
-SCELTE = {"schermo": ("attenuato", "spento"), "notte": ("auto", "sempre", "mai")}
+SCELTE = {"schermo": ("attenuato",), "notte": ("auto", "sempre", "mai")}
 
 ID = re.compile(r"^\d{8}-\d{6}-(movimento|rumore|ferma)-[0-9a-f]{4}$")
 NOME = re.compile(r"^(foto|clip-\d{2})\.jpg$|^audio\.wav$|^clip\.mp4$")
@@ -50,6 +50,7 @@ def impostazioni(cfg):
     """Le impostazioni della sentinella, con i valori predefiniti per quelle mancanti."""
     imp = dict(PREDEFINITE)
     imp.update({k: v for k, v in (cfg.get("sentinella") or {}).items() if k in PREDEFINITE})
+    imp["schermo"] = "attenuato"   # "spento" non esiste più (richiesta dell'utente, 2026-11-25)
     return imp
 
 

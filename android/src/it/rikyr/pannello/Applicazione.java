@@ -111,8 +111,13 @@ public class Applicazione extends Application {
         }
     };
 
-    /** PC giù: schermo spento (serve l'amministratore del dispositivo, attivato con dpm). */
+    /** PC giù: schermo spento (serve l'amministratore del dispositivo, attivato con dpm). Non con la sentinella
+     *  accesa: lo schermo resta acceso, attenuato, con il suo indicatore (richiesta dell'utente, 2026-11-25). */
     private void spegniSchermo() {
+        if (Sentinella.di(this).attiva()) {
+            Log.i(TAG, "PC giù ma la sentinella è accesa: lo schermo resta acceso (attenuato)");
+            return;
+        }
         DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(DEVICE_POLICY_SERVICE);
         if (dpm.isAdminActive(new ComponentName(this, Amministratore.class))) dpm.lockNow();
     }

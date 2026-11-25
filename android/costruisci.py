@@ -116,7 +116,7 @@ def main():
     base = COSTRUZIONE / "base.apk"
     esegui([t["aapt2"], "link", "-I", t["jar"], "--manifest", QUI / "AndroidManifest.xml",
             "--min-sdk-version", MIN_SDK, "--target-sdk-version", TARGET_SDK,
-            "--version-code", 23, "--version-name", "1.12.1", "-A", QUI / "assets",
+            "--version-code", 24, "--version-name", "1.12.2", "-A", QUI / "assets",
             "-o", base, COSTRUZIONE / "res.zip"])
 
     classi = COSTRUZIONE / "classi"

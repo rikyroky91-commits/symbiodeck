@@ -858,6 +858,14 @@ cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica 
   "voce" è acceso). Nessuna sessione di Claude deve restare in ascolto della cartella per avvisare. Il ponte su
   Internet (in preparazione) non userà le routine di Claude Code per gli avvisi. Provato: notifica mostrata con la foto
   di un evento vero; test (XML con caratteri speciali, notifica spenta, evento "ferma").
+- **Schermo sempre acceso** (1.12.2, 2026-11-25 sera, richiesta dell'utente: "non voglio che la modalità sentinella
+  spenga lo schermo del tablet, al massimo abbassa la luminosità"). Con la sentinella accesa lo schermo resta acceso con
+  la luce al minimo e l'indicatore: l'opzione "schermo: spento" non c'è più (una config vecchia vale "attenuato"); la
+  simbiosi con il PC non lo spegne più quando il PC è spento, sospeso o irraggiungibile (`Applicazione.spegniSchermo`);
+  se si spegne comunque (tasto, tempo scaduto con un'altra app davanti) la sentinella lo riaccende dopo 3 s con il
+  pannello davanti. Provato: tasto di accensione simulato (`KEYCODE_SLEEP`) → schermo riacceso in 3 s ("lo riaccendo
+  (attenuato)"). Non provato dal vero il PC spento con la sentinella accesa: il riavvio del debug USB rimetteva il
+  tablet in attesa del PC (150 s) e la simbiosi non arrivava a decidere.
 - Installare con il Quest collegato via USB: adb vede due dispositivi e lo script si ferma ("more than one device"). Si
   sceglie il tablet con `ANDROID_SERIAL=<seriale del tablet> python android/costruisci.py --installa`.
 
@@ -877,4 +885,4 @@ cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica 
 Ogni miglioramento si pubblica su https://github.com/rikyroky91-commits/symbiodeck (`main`): LEGGIMI aggiornato,
 controllo che nel diff non ci siano segreti (config.json, chiave di firma, build e log restano fuori), commit e
 push. Se cambia l'app del tablet: nuova versione in `costruisci.py`, APK generico (`--generico`) e release
-`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.12.1 (2026-11-25, sentinella più robusta, avviso "sentinella ferma"); app iPhone/Watch: `jarvis-ios-N`.
+`vX.Y.Z` con `PannelloPC.apk`. Ultima release: v1.12.2 (2026-11-25, la sentinella non spegne mai lo schermo); app iPhone/Watch: `jarvis-ios-N`.

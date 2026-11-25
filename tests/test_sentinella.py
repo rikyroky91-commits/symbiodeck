@@ -57,11 +57,12 @@ def _aspetta(cond, secondi=2):
 # ---------------------------------------------------------------- impostazioni
 def test_impostazioni_predefinite_e_limiti():
     assert impostazioni({}) == modulo.PREDEFINITE
-    imp = correggi({"sens_movimento": 42, "armamento": "-5", "schermo": "spento", "rumore": 0, "sconosciuta": 1},
-                   impostazioni({}))
-    assert imp["sens_movimento"] == 10 and imp["armamento"] == 0 and imp["schermo"] == "spento"
+    imp = correggi({"sens_movimento": 42, "armamento": "-5", "rumore": 0, "sconosciuta": 1}, impostazioni({}))
+    assert imp["sens_movimento"] == 10 and imp["armamento"] == 0 and imp["schermo"] == "attenuato"
     assert imp["rumore"] is False and "sconosciuta" not in imp
-    for sbagliata in ({"schermo": "acceso"}, {"pausa": "tanto"}):
+    # lo schermo non si spegne mai: "spento" non si può più scegliere e una config vecchia diventa "attenuato"
+    assert impostazioni({"sentinella": {"schermo": "spento"}})["schermo"] == "attenuato"
+    for sbagliata in ({"schermo": "acceso"}, {"schermo": "spento"}, {"pausa": "tanto"}):
         try:
             correggi(sbagliata, impostazioni({}))
         except ValueError:

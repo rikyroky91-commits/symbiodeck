@@ -491,7 +491,6 @@
       $("s-movimento").checked = imp.movimento; $("s-rumore").checked = imp.rumore; $("s-voce").checked = imp.voce;
       $("s-sens-movimento").value = imp.sens_movimento; $("s-sens-movimento-v").textContent = imp.sens_movimento;
       $("s-sens-rumore").value = imp.sens_rumore; $("s-sens-rumore-v").textContent = imp.sens_rumore;
-      $("s-schermo").value = imp.schermo;
       $("s-notte").value = imp.notte || "auto";
     }
   }
@@ -540,10 +539,10 @@
     api("/api/sentinella/impostazioni", {
       movimento: $("s-movimento").checked, rumore: $("s-rumore").checked, voce: $("s-voce").checked,
       sens_movimento: Number($("s-sens-movimento").value), sens_rumore: Number($("s-sens-rumore").value),
-      schermo: $("s-schermo").value, notte: $("s-notte").value
+      notte: $("s-notte").value
     }).catch(function (e) { avviso(e.message); });
   }
-  ["s-movimento", "s-rumore", "s-voce", "s-schermo", "s-notte", "s-sens-movimento", "s-sens-rumore"].forEach(function (id) {
+  ["s-movimento", "s-rumore", "s-voce", "s-notte", "s-sens-movimento", "s-sens-rumore"].forEach(function (id) {
     var el = $(id);
     el.onchange = salvaSentinella;
     if (el.type === "range") el.oninput = function () { sent.toccando = true; $(id + "-v").textContent = el.value; };
