@@ -157,3 +157,28 @@ def test_cartella_di_windows_non_una_sottocartella_omonima(casa):
     assert visore.risolvi_cartella("Download", "") == atteso
     assert visore.risolvi_cartella("Download", "download") == atteso
     assert visore.risolvi_cartella("download", "Downloads") == atteso
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="solo Windows")
+def test_salvaschermo_chiuso_solo_se_senza_password(monkeypatch):
+    """Lo schermo guardato dal visore: il salvaschermo senza password si chiude, quello con la password no."""
+    mosse = []
+    finto = types.SimpleNamespace(
+        mouse_event=lambda *a: mosse.append(a),
+        SystemParametersInfoW=lambda azione, _, rif, __: setattr(rif._obj, "value", True) if azione == 0x0072 else None,
+    )
+    monkeypatch.setattr(visore, "user32", finto)
+    chiusi = []
+    monkeypatch.setattr(visore, "_chiudi_salvaschermo", lambda: chiusi.append(1))
+    monkeypatch.setattr(visore, "_pc_bloccato", lambda: False)
+    monkeypatch.setattr(visore, "_salvaschermo_con_password", lambda: False)
+    assert visore.tieni_acceso(forza=True) is True and len(mosse) == 1 and len(chiusi) == 1
+    monkeypatch.setattr(visore, "_salvaschermo_con_password", lambda: True)
+    assert visore.tieni_acceso(forza=True) is False and len(mosse) == 1
+    monkeypatch.setattr(visore, "_pc_bloccato", lambda: True)
+    monkeypatch.setattr(visore, "_salvaschermo_con_password", lambda: False)
+    assert visore.tieni_acceso(forza=True) is False and len(mosse) == 1
+    # senza forza, non più di una volta ogni 15 s
+    monkeypatch.setattr(visore, "_pc_bloccato", lambda: False)
+    assert visore.tieni_acceso(forza=True) is True
+    assert visore.tieni_acceso() is False

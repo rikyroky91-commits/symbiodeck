@@ -698,6 +698,13 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   riavviato in ascolto su 47800, 443 (HTTPS, risponde 200) e 80 (rimando a https); Jarvis da amministratore
   ripartito con `/jarvis/riavvia`, eco sul PC attiva, Claude Code trovato, tablet ricollegato (altoparlante e
   microfono). **Non provato**: Quest vero, conferma da telefono/orologio dal vivo, interruzione a voce con l'eco.
+- **Schermo del PC nel visore con il salvaschermo** (2026-11-25): mentre lo schermo del PC si guarda dal visore
+  (diretta di Jarvis XR, anche dell'app nativa) Jarvis tiene acceso lo schermo e azzera l'attesa del salvaschermo
+  (movimento nullo del mouse ogni 15 s); se il salvaschermo **senza password** è già partito lo chiude (gira su un
+  desktop suo, dove l'input simulato non arriva). Con quello protetto da password o il PC bloccato non tocca niente.
+  Prima la diretta diceva "lo schermo del PC non si può catturare". **Provato sul PC**: salvaschermo `scrnsave.scr`
+  chiuso, cattura di nuovo possibile; test in `tests/test_jarvis_visore.py`. **Limite**: con la TV spenta Windows
+  cattura solo nero (l'app nativa lo dice); per lo schermo con la TV spenta serve lo schermo virtuale di Apollo.
 
 ## Modalità sentinella (dal 2026-11-25, app 1.11.0)
 Il tablet fa da telecamera di sicurezza: con la telecamera **davanti** e il microfono si accorge di un movimento o

@@ -415,6 +415,72 @@ def cattura_finestra(hwnd, lato=1600):
     return _jpeg(im, lato)
 
 
+_ULTIMA_SVEGLIA = [0.0]
+
+
+def tieni_acceso(forza=False):
+    """Mentre lo schermo del PC si guarda dal visore: schermo acceso e niente salvaschermo (con il salvaschermo
+    Windows non lascia catturare lo schermo). Un movimento nullo del mouse azzera l'attesa del salvaschermo e, se è già
+    partito ed è quello senza password, lo chiude: come muovere il mouse a mano. Con il salvaschermo protetto da
+    password o il PC bloccato non fa niente (serve la password dell'utente). Al massimo ogni 15 s, salvo [forza]."""
+    if not WINDOWS:
+        return False
+    ora = time.monotonic()
+    if not forza and ora - _ULTIMA_SVEGLIA[0] < 15:
+        return False
+    _ULTIMA_SVEGLIA[0] = ora
+    try:
+        ctypes.windll.kernel32.SetThreadExecutionState(0x00000002 | 0x00000001)   # schermo e sistema: ancora svegli
+    except (AttributeError, OSError):
+        pass
+    if _pc_bloccato():
+        return False
+    in_corso = wt.BOOL(False)
+    user32.SystemParametersInfoW(0x0072, 0, ctypes.byref(in_corso), 0)   # SPI_GETSCREENSAVERRUNNING
+    if in_corso.value:
+        if _salvaschermo_con_password():
+            return False
+        # il salvaschermo gira su un desktop suo, dove l'input simulato non arriva: si chiude il suo processo,
+        # che per quello senza password equivale a muovere il mouse
+        _chiudi_salvaschermo()
+    user32.mouse_event(0x0001, 0, 0, 0, 0)                     # MOUSEEVENTF_MOVE di 0 pixel: azzera l'attesa
+    return True
+
+
+def _chiudi_salvaschermo():
+    import csv
+    import subprocess
+    try:
+        r = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=5,
+                           creationflags=0x08000000)
+        for riga in csv.reader(r.stdout.splitlines()):
+            if len(riga) > 1 and riga[0].lower().endswith(".scr"):
+                subprocess.run(["taskkill", "/PID", riga[1]], capture_output=True, timeout=5, creationflags=0x08000000)
+                print("salvaschermo chiuso per lo schermo nel visore:", riga[0], file=sys.stderr)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def _salvaschermo_con_password():
+    import winreg
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Control Panel\\Desktop") as k:
+            return str(winreg.QueryValueEx(k, "ScreenSaverIsSecure")[0]) == "1"
+    except OSError:
+        return True    # nel dubbio: come se avesse la password (non si tocca)
+
+
+def _pc_bloccato():
+    """Schermata di blocco o di accesso attiva (LogonUI.exe in esecuzione)."""
+    import subprocess
+    try:
+        r = subprocess.run(["tasklist", "/FI", "IMAGENAME eq LogonUI.exe", "/NH"], capture_output=True, text=True,
+                           timeout=5, creationflags=0x08000000)
+        return "logonui.exe" in r.stdout.lower()
+    except (OSError, subprocess.SubprocessError):
+        return True
+
+
 def cattura_schermo(numero=1, lato=1920):
     from PIL import Image
     import mss
@@ -526,8 +592,10 @@ def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
     hwnd = int(hwnd or 0)
     with mss.mss() as m:
         schermo = m.monitors[numero if 1 <= numero < len(m.monitors) else 1]
+    svegliato = False
     while True:
         t0 = _t.monotonic()
+        tieni_acceso()
         if hwnd:
             if not user32.IsWindow(hwnd):
                 raise LookupError("finestra chiusa")
@@ -547,9 +615,14 @@ def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
             im.save(out, "JPEG", quality=qualita)
             yield out.getvalue()
         except OSError:
-            # schermo del PC spento o in standby: la cattura dello schermo fallisce, PrintWindow no
+            # schermo del PC spento, in standby o col salvaschermo: la cattura fallisce, PrintWindow no
             if not hwnd:
-                raise LookupError("lo schermo del PC non si può catturare (spento o in standby?)")
+                if not svegliato:
+                    svegliato = True
+                    tieni_acceso(forza=True)
+                    _t.sleep(1.0)
+                    continue
+                raise LookupError("lo schermo del PC non si può catturare (spento, bloccato o in standby?)")
             yield cattura_finestra(hwnd, lato)
         resto = intervallo - (_t.monotonic() - t0)
         if resto > 0:
@@ -562,6 +635,7 @@ def diretta_isolata(numero=0, hwnd=0, lato=1280, fps=30):
     import importlib.util
     import subprocess
     import sys
+    tieni_acceso(forza=True)
     if not importlib.util.find_spec("dxcam"):
         yield from diretta(numero, hwnd, lato, fps)
         return
@@ -574,6 +648,7 @@ def diretta_isolata(numero=0, hwnd=0, lato=1280, fps=30):
             testa = proc.stdout.read(4)
             if len(testa) < 4:
                 break                                   # il processo di cattura è finito o caduto
+            tieni_acceso()
             jpeg = proc.stdout.read(int.from_bytes(testa, "big"))
             if not jpeg.startswith(b"\xff\xd8"):
                 break
