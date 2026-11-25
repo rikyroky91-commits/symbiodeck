@@ -844,6 +844,14 @@ cartella sul Desktop, funzionante anche a PC spento, modalità notte automatica 
   (allungata finché c'era movimento), audio corto perché il visore era addosso. Test Python: 27 sulla sentinella (2
   nuovi: "ferma" dopo 3 minuti di silenzio, una volta sola; spenta di proposito non è "ferma"). **Non provato dal
   vero**: l'evento "ferma" con un tablet che si blocca davvero (solo nei test) e la riapertura della telecamera bloccata.
+- **Notifiche senza token** (2026-11-25 sera, richiesta dell'utente: "devono essere tokenless o con pochissimi token
+  … usare Opus per questo mi sembra esagerato"). Ogni evento (anche "sentinella ferma") fa comparire sul PC una
+  **notifica di Windows** con la foto e un clic che apre la cartella dell'evento (`notifica_windows` in pannello.py:
+  API di Windows da PowerShell, niente librerie, niente rete, nessun modello). Si spegne con `"notifica_pc": false`
+  nelle impostazioni della sentinella. Anche l'avviso di Jarvis è a testo fisso (nessun modello; a voce solo se
+  "voce" è acceso). Nessuna sessione di Claude deve restare in ascolto della cartella per avvisare. Il ponte su
+  Internet (in preparazione) non userà le routine di Claude Code per gli avvisi. Provato: notifica mostrata con la foto
+  di un evento vero; test (XML con caratteri speciali, notifica spenta, evento "ferma").
 - Installare con il Quest collegato via USB: adb vede due dispositivi e lo script si ferma ("more than one device"). Si
   sceglie il tablet con `ANDROID_SERIAL=<seriale del tablet> python android/costruisci.py --installa`.
 

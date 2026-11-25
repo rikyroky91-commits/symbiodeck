@@ -1714,14 +1714,63 @@ def custode_jarvis(cfg):
 ATTIVITA_JARVIS = "Pannello PC - Jarvis"
 
 
+AUMID_POWERSHELL = r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe"
+
+
+def xml_notifica(titolo, testo, immagine=None, apri=None):
+    """La notifica di Windows (toast): titolo, testo, foto grande, clic che apre una cartella."""
+    from xml.sax.saxutils import escape, quoteattr
+    img = f"<image placement=\"hero\" src={quoteattr(Path(immagine).as_uri())}/>" if immagine else ""
+    lancio = f" activationType=\"protocol\" launch={quoteattr(Path(apri).as_uri())}" if apri else ""
+    return (f"<toast{lancio}><visual><binding template=\"ToastGeneric\"><text>{escape(titolo)}</text>"
+            f"<text>{escape(testo)}</text>{img}</binding></visual></toast>")
+
+
+def notifica_windows(titolo, testo, immagine=None, apri=None):
+    """Mostra una notifica di Windows con le API di sistema (WinRT da PowerShell): niente librerie, niente rete,
+    niente modelli. L'XML passa in base64 in una variabile d'ambiente, così gli accenti arrivano giusti."""
+    import base64
+    script = ("[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null;"
+              "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] > $null;"
+              "$x = New-Object Windows.Data.Xml.Dom.XmlDocument;"
+              "$x.LoadXml([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:NOTIFICA)));"
+              "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($env:AUMID).Show("
+              "[Windows.UI.Notifications.ToastNotification]::new($x))")
+    xml = xml_notifica(titolo, testo, immagine, apri)
+    env = dict(os.environ, NOTIFICA=base64.b64encode(xml.encode("utf-8")).decode(), AUMID=AUMID_POWERSHELL)
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], env=env,
+                       capture_output=True, text=True, timeout=30, creationflags=SENZA_FINESTRA)
+    if r.returncode != 0:
+        log("notifica di Windows non mostrata:", (r.stderr or r.stdout).strip()[:300])
+    return r.returncode == 0
+
+
+def notifica_sentinella(ev, foto=None):
+    """La notifica di Windows di un evento della sentinella: testo fisso, nessun modello."""
+    tipo = ev.get("tipo")
+    titolo = ("⚠ Sentinella ferma" if tipo == "ferma" else
+              "🛡 Sentinella: " + ("movimento" if tipo == "movimento" else "rumore"))
+    testo = descrivi_sentinella(ev)
+    testo = testo[0].upper() + testo[1:]
+    if ev.get("ritardo", 0) > 120:
+        testo += f" (arrivato {round(ev['ritardo'] / 60)} min dopo: il PC era spento o irraggiungibile)"
+    cartella = (SENTINELLA.evento(ev["id"]) or {}).get("cartella") if SENTINELLA else None
+    return notifica_windows(titolo, testo, foto, cartella)
+
+
 def avvisa_sentinella(cfg, ev):
-    """Evento nuovo della sentinella: lo dice Jarvis (a voce, sul pannello di Jarvis e nel visore se è collegato).
-    Gli eventi arrivati tardi (il PC dormiva e il tablet li aveva in coda) non si dicono a voce."""
-    import urllib.request
-    if cfg.get("jarvis") is False:
-        return
+    """Evento nuovo della sentinella: notifica di Windows (con la foto) e Jarvis (sul suo pannello, nel visore se è
+    collegato e a voce se "voce" è acceso). Tutto con testi fissi: nessun modello, zero token. Gli eventi arrivati
+    tardi (il PC dormiva e il tablet li aveva in coda) non si dicono a voce."""
     imp = SENTINELLA.impostazioni() if SENTINELLA else {}
     foto = SENTINELLA.file(ev["id"], "foto.jpg") if SENTINELLA else None
+    if imp.get("notifica_pc", True):
+        try:
+            notifica_sentinella(ev, str(foto) if foto else None)
+        except (OSError, subprocess.SubprocessError) as e:
+            log("notifica di Windows non mostrata:", repr(e))
+    if cfg.get("jarvis") is False:
+        return
     corpo = {"id": ev["id"], "tipo": ev["tipo"], "testo": descrivi_sentinella(ev), "ritardo": ev.get("ritardo", 0),
              "voce": bool(imp.get("voce", True)) and ev.get("ritardo", 0) < 120,
              "foto": str(foto) if foto else ""}

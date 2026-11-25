@@ -28,6 +28,7 @@ PREDEFINITE = {
     "schermo": "attenuato",   # "attenuato" (nero con l'indicatore, luce al minimo) o "spento"
     "notte": "auto",          # bianco e nero con più luce: "auto" (quando la stanza è buia), "sempre", "mai"
     "voce": True,             # Jarvis lo dice a voce
+    "notifica_pc": True,      # notifica di Windows sul PC (con la foto; senza nessun modello, zero token)
     "conserva_giorni": 30,    # gli eventi più vecchi si cancellano
 }
 LIMITI = {"sens_movimento": (1, 10), "sens_rumore": (1, 10), "armamento": (0, 300), "pausa": (5, 600),

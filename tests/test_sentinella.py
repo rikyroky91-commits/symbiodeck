@@ -266,7 +266,9 @@ def test_avviso_a_jarvis_dal_pannello():
     id_ = _id()
     s.ricevi_file(id_, "foto.jpg", JPEG)
     ev = s.evento(id_)
-    with mock.patch("urllib.request.urlopen", apri):
+    notifiche = []
+    with mock.patch("urllib.request.urlopen", apri), \
+            mock.patch.object(pannello, "notifica_windows", lambda *a: notifiche.append(a) or True):
         pannello.avvisa_sentinella({"token": "k"}, ev)
         pannello.avvisa_sentinella({"token": "k"}, dict(ev, ritardo=900))   # arrivato tardi: niente voce
         pannello.avvisa_sentinella({"token": "k", "jarvis": False}, ev)      # Jarvis spento: nessuna chiamata
@@ -274,6 +276,27 @@ def test_avviso_a_jarvis_dal_pannello():
     url, corpo, _h = mandate[0]
     assert url.endswith("/jarvis/sentinella") and corpo["voce"] is True and corpo["foto"].endswith("foto.jpg")
     assert "davanti al tablet" in corpo["testo"] and mandate[1][1]["voce"] is False
+    # la notifica di Windows c'è sempre (anche con Jarvis spento), con la foto e la cartella dell'evento
+    assert len(notifiche) == 3 and notifiche[0][0].endswith("movimento") and notifiche[0][2].endswith("foto.jpg")
+    assert "min dopo" in notifiche[1][1] and Path(notifiche[0][3]).is_dir()
+
+
+def test_notifica_di_windows_senza_modello():
+    import xml.dom.minidom
+    import pannello
+    x = pannello.xml_notifica("🛡 Sentinella: movimento", 'Un <movimento> & "prova" àè', r"C:\x y\foto.jpg", r"C:\x y")
+    xml.dom.minidom.parseString(x.encode("utf-8"))            # XML valido anche con caratteri speciali
+    assert "&lt;movimento&gt; &amp;" in x and 'src="file:///C:/x%20y/foto.jpg"' in x and 'launch="file:///C:/x%20y"' in x
+    s = _sentinella({"sentinella": {"notifica_pc": False}})
+    pannello.SENTINELLA = s
+    viste = []
+    with mock.patch.object(pannello, "notifica_windows", lambda *a: viste.append(a)), \
+            mock.patch.object(pannello, "a_jarvis", lambda *a: None):
+        pannello.avvisa_sentinella({"token": "k"}, {"id": _id(), "tipo": "movimento", "ora": time.time()})
+        assert viste == []                                     # spenta nelle impostazioni
+        s.cambia_impostazioni({"notifica_pc": True})
+        pannello.avvisa_sentinella({"token": "k"}, {"id": _id("ferma"), "tipo": "ferma", "ora": time.time(), "valore": 200})
+    assert viste[0][0] == "⚠ Sentinella ferma" and "si è fermata" in viste[0][1]
 
 
 # ---------------------------------------------------------------- Jarvis
