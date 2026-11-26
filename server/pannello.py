@@ -348,6 +348,15 @@ class Campionatore(threading.Thread):
             self.ultima = dict(self.ultima or {}, config=self.versione_config, t=time.time())
             self.cond.notify_all()
 
+    mouse_vero = None     # ultima volta (time.time) che si è mosso il mouse fisico del PC (mouse_vero.py)
+
+    def mouse_mosso(self):
+        """Il mouse vero si è mosso: al visore subito (spegne le mani sullo schermo del PC)."""
+        self.mouse_vero = time.time()
+        with self.cond:
+            self.ultima = dict(self.ultima or {}, mouse_vero=self.mouse_vero, t=time.time())
+            self.cond.notify_all()
+
     def avvisa(self, stato):
         """Manda subito al tablet lo stato del PC, senza aspettare la lettura successiva."""
         self.stato_pc = stato
@@ -366,6 +375,7 @@ class Campionatore(threading.Thread):
             dati["pc"] = self.stato_pc
             dati["config"] = self.versione_config
             dati["sentinella"] = self._sentinella()
+            dati["mouse_vero"] = self.mouse_vero
             with self.cond:
                 self.ultima = dati
                 self.cond.notify_all()
@@ -2109,6 +2119,11 @@ def main():
         Abbinamento.apri()
     threading.Thread(target=Abbinamento.ascolta, args=(cfg,), daemon=True).start()
     threading.Thread(target=ascolta_windows, args=(camp,), daemon=True).start()
+    try:
+        import mouse_vero
+        mouse_vero.avvia(camp.mouse_mosso, log)
+    except Exception as e:   # senza, il visore usa solo il cambio a mano (mani giunte / pulsante)
+        log("mouse vero non disponibile:", repr(e))
     threading.Thread(target=lambda: estrai_icone([a["target"] for a in cfg["app"]] + [a["target"] for a in elenco_app()]),
                      daemon=True).start()
     srv = ServerUnico(("0.0.0.0", PORTA), Gestore)

@@ -712,6 +712,16 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   sente se stesso (niente interruzione a voce dal visore). Nell'app il pulsante 🎙 HEY JARVIS lo spegne.
   **Provato**: il Quest si collega e il PC lo usa (`microfono del visore collegato`, `visore in uso`); test in
   `tests/test_jarvis_mic_visore.py`. **Non provato**: la parola chiave detta davvero col visore in testa.
+- **Mouse vero del PC e mani nel visore** (2026-11-26, per Jarvis XR nativo): con lo schermo del PC aperto nel
+  visore, se muovi il mouse fisico le mani smettono di muovere il cursore (prima mani e mouse se lo contendevano).
+  `server/mouse_vero.py`: Raw Input su una finestra invisibile (non rallenta il mouse come un hook farebbe); conta solo
+  un dispositivo vero: l'input che arriva dal visore passa da Apollo con SendInput e Windows lo consegna senza
+  dispositivo, e i dispositivi virtuali con nome riconoscibile (vmulti, ViGEm, Sunshine…) si ignorano. Il pannello
+  mette `mouse_vero` (ora dell'ultimo movimento) nel flusso `/api/flusso`, subito e al massimo due volte al secondo.
+  Nel visore tornano le mani con le **mani giunte** (o il grilletto del controller sullo schermo, o il pulsante
+  ✋/🖱 della barra). **Provato sul PC**: test in `tests/test_mouse_vero.py`, pannello riavviato ("mouse vero: in
+  ascolto"). **Non provato**: che il movimento di Apollo arrivi davvero senza dispositivo (dal PC bloccato SendInput
+  era rifiutato, quindi la prova va fatta a sessione aperta: il registro dice "mouse vero: conta …" o "ignorato").
 - **Jarvis XR (browser), telemetria**: "In primo piano" mostrava l'oggetto grezzo (`[object Object]`); ora il titolo
   della finestra, se no il nome del programma, come sul tablet (2026-11-25).
 
