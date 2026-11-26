@@ -65,7 +65,7 @@ PREDEFINITE = {
     # corto). Registro del 2026-11-26: "Hey Jarvis" vero a 0,83 trascritto "Grazie." e scartato; le attivazioni a
     # vuoto mentre si parlava d'altro erano tutte tra 0,40 e 0,51
     "parola_quasi_sicura": 0.75,
-    "seguito": 8,                  # secondi in cui ascolta ancora dopo aver risposto
+    "seguito": 10,                 # secondi in cui ascolta ancora dopo aver finito di rispondere
     "pausa": 1.4,                  # secondi di silenzio che chiudono una frase (più lunga: puoi pensare)
     "conferme": "irreversibili",   # irreversibili | sempre | mai
     "stt": "auto",
@@ -557,6 +557,8 @@ class Jarvis:
             ora = time.time()
             prima.append(blocco)
             del prima[:-25]                                  # 2 s
+            if self.stato == "parlo" or self.uscita.parla:
+                inizio_ascolto = 0                           # il seguito si conta da quando ha finito di parlare
             if verifica is not None:
                 if verifica["esito"] is None and ora - verifica["t"] < 10:
                     verifica["dopo"].append(blocco)
@@ -632,10 +634,15 @@ class Jarvis:
             interruzione.azzera()
             interruzione_pulita.azzera()
             ascolta = ("ascolto", "seguito", "conferma") + (("penso", "lavoro") if self.conversazione else ())
+            # il tempo per rispondere si conta da quando Jarvis ha FINITO di parlare (prima contava da quando
+            # cominciava: dopo una risposta lunga il seguito era già scaduto e serviva di nuovo "Hey Jarvis";
+            # "deve essere come una discussione continua", 2026-11-26)
             if self.stato not in ascolta:
                 self.utente_parla = False
+                inizio_ascolto = 0
                 continue
             if self.uscita.parla or self._coda_eco(aec):
+                inizio_ascolto = 0
                 continue  # suoni brevi (attivazione, conferma) e la loro eco: non si ascoltano
             if not inizio_ascolto:
                 inizio_ascolto = ora
@@ -651,8 +658,8 @@ class Jarvis:
                 if self.stato in ("penso", "lavoro") or self.claude.lavora_in_sottofondo() or self.dettatura:
                     inizio_ascolto = ora  # mentre lavora la conversazione non scade: puoi aggiungere quando vuoi
                     continue
-                # dopo una domanda di Jarvis ("Mi conferma?") si aspetta di più la risposta
-                seguito = max(self.imp["seguito"], 12) if self.domanda else self.imp["seguito"]
+                # dopo una domanda di Jarvis ("Come glielo mando?") si aspetta di più la risposta: almeno 15 s
+                seguito = max(self.imp["seguito"], ATTESA_DOMANDA) if self.domanda else self.imp["seguito"]
                 attesa = {"ascolto": 6, "conferma": 10}.get(self.stato, seguito)
                 if ora - inizio_ascolto > attesa:
                     if self.stato == "conferma":
@@ -669,6 +676,7 @@ class Jarvis:
                 frase, parlato, silenzio, inizio_ascolto = [], False, 0, 0
                 self.utente_parla = False
                 vad.reset_states()
+                self.domanda = False         # hai risposto: la prossima risposta di Jarvis decide di nuovo
                 if self.stato == "conferma":
                     threading.Thread(target=self._capisci_conferma, args=(pcm,), daemon=True).start()
                 else:
@@ -1295,7 +1303,10 @@ class Jarvis:
                 continue   # la risposta l'ha già letta il telefono o l'orologio
             if self.stato in ("lavoro", "penso", "riposo", "seguito"):
                 self.imposta_stato("parlo")
-            self.domanda = voce[0].rstrip().endswith("?")
+            # una domanda in qualunque frase della risposta, non solo nell'ultima ("Come glielo mando? ... Se hai
+            # più di una Elena, dimmi anche quale."): si aspetta la tua risposta più a lungo
+            if "?" in voce[0]:
+                self.domanda = True
             log("detto:", voce[0])
             self.uscita.riproduci(voce[1])
             self.fine_parlato = time.time()
@@ -1698,6 +1709,9 @@ def rete_locale(ip):
         return a.is_private or a.is_loopback or a in TAILSCALE
     except ValueError:
         return False
+
+
+ATTESA_DOMANDA = 15   # secondi di ascolto, senza "Hey Jarvis", dopo una risposta che contiene una domanda
 
 
 def token_pannello():

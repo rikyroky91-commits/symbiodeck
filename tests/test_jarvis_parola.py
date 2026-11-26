@@ -149,6 +149,25 @@ def test_punteggio_basso_e_whisper_senza_parole_non_accende():
     assert j.stato == "riposo" and not j.suoni
 
 
+def test_seguito_conta_da_quando_jarvis_ha_finito_di_parlare():
+    # 2026-11-26: "quando Jarvis mi fa una domanda deve rimanere in ascolto": il tempo partiva da quando pensava, così
+    # dopo una risposta lunga il seguito era già finito
+    j = _jarvis(lambda pcm: (False, ""))
+    j.imp["seguito"] = 1
+    j.conversazione, j.stato = True, "penso"
+    _avvia(j)
+    _manda(j, [_blocco(SILENZIO) for _ in range(5)], pausa=0.1)       # pensa 0,5 s
+    j.stato, j.uscita.parla = "parlo", True
+    _manda(j, [_blocco(SILENZIO) for _ in range(15)], pausa=0.1)      # risponde per 1,5 s
+    j.stato, j.uscita.parla = "seguito", False
+    _manda(j, [_blocco(SILENZIO) for _ in range(6)], pausa=0.1)       # 0,6 s dopo la fine: ascolta ancora
+    time.sleep(0.1)
+    assert j.stato == "seguito"
+    _manda(j, [_blocco(SILENZIO) for _ in range(10)], pausa=0.1)      # 1,6 s dopo: scaduto
+    time.sleep(0.2)
+    assert j.stato == "riposo"
+
+
 def test_parola_sicura_basta_da_sola():
     chiamate = []
     j = _jarvis(lambda pcm: chiamate.append(1) or (False, ""))

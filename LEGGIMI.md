@@ -649,6 +649,13 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   Se aggiungi un pezzo entro 10 s dall'inizio della risposta, la risposta in corso si butta (interruzione del turno)
   e Claude riceve il pezzo nuovo con "(continuo quello che stavo dicendo)"; più tardi il pezzo si accoda e basta.
   Le frasi fisse non dicono più "signore". **Non provato dal vivo.**
+- **Discussione continua** (2026-11-26 sera, "quando Jarvis mi fa una domanda deve rimanere in ascolto per almeno 10
+  secondi, se no ogni volta devo dire Hey Jarvis"): il tempo per rispondere senza parola chiave ("seguito") si
+  contava da quando Jarvis cominciava a pensare/parlare, così dopo una risposta di 7-8 s era già scaduto. Ora parte
+  da quando ha **finito** di parlare: 10 s (predefinito, anche in `jarvis.json`, dove era 7), **15 s** se in
+  qualunque frase della risposta c'è una domanda (prima solo se finiva con "?" l'ultima: "Come glielo mando? … dimmi
+  anche quale." non contava). Provato: `test_seguito_conta_da_quando_jarvis_ha_finito_di_parlare` (fallisce sul
+  codice vecchio), 171 test, Jarvis riavviato e tablet ricollegato. Non provato con la voce vera.
 - **Conversazioni nell'app Claude, progetto pc-panel** (2026-11-23): Claude Code di Jarvis lavora nella cartella
   pc-panel (impostazione `cartella_lavoro`, vuota = pc-panel), quindi le sessioni stanno sotto questo progetto. Le
   sessioni di `claude -p` non compaiono da sole nell'app: appena c'è la prima risposta e Jarvis è fermo (niente
