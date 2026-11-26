@@ -376,12 +376,29 @@ def _jpeg(im, lato, qualita=72):
     return out.getvalue()
 
 
+def ripristina_ridotta(hwnd):
+    """Una finestra ridotta a icona non dà immagini: chiesta per il visore si riapre da sola, senza rubare il primo
+    piano (SW_SHOWNOACTIVATE). Prima il pannello del visore restava per sempre su "collegamento" (2026-11-26, l'app
+    Claude per desktop ridotta). True se era ridotta."""
+    hwnd = int(hwnd)
+    if not user32.IsIconic(hwnd):
+        return False
+    user32.ShowWindow(hwnd, 4)   # SW_SHOWNOACTIVATE: dalla barra delle applicazioni al suo posto, il fuoco resta dov'è
+    for _ in range(10):          # l'animazione di Windows ci mette un attimo
+        if not user32.IsIconic(hwnd):
+            break
+        time.sleep(0.05)
+    time.sleep(0.15)
+    return True
+
+
 def cattura_finestra(hwnd, lato=1600):
     """JPEG della finestra, anche se è coperta da altre (PrintWindow con PW_RENDERFULLCONTENT)."""
     from PIL import Image
     hwnd = int(hwnd)
     if not user32.IsWindow(hwnd):
         raise LookupError("finestra chiusa")
+    ripristina_ridotta(hwnd)
     if user32.IsIconic(hwnd):
         raise LookupError("finestra ridotta a icona: portala davanti")
     l, t, r, b = _rettangolo(hwnd)
@@ -593,6 +610,7 @@ def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
     with mss.mss() as m:
         schermo = m.monitors[numero if 1 <= numero < len(m.monitors) else 1]
     svegliato = False
+    riaperta = 0.0
     while True:
         t0 = _t.monotonic()
         tieni_acceso()
@@ -600,6 +618,11 @@ def diretta(numero=0, hwnd=0, lato=1280, fps=30, qualita=72):
             if not user32.IsWindow(hwnd):
                 raise LookupError("finestra chiusa")
             if user32.IsIconic(hwnd):
+                # ridotta a icona (anche dopo, mentre la guardi nel visore): si riapre, al massimo ogni 3 s
+                if t0 - riaperta > 3:
+                    riaperta = t0
+                    ripristina_ridotta(hwnd)
+                    continue
                 _t.sleep(0.3)
                 continue
             l, t, r, b = _rettangolo(hwnd)

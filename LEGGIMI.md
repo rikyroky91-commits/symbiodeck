@@ -649,6 +649,17 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   Se aggiungi un pezzo entro 10 s dall'inizio della risposta, la risposta in corso si butta (interruzione del turno)
   e Claude riceve il pezzo nuovo con "(continuo quello che stavo dicendo)"; più tardi il pezzo si accoda e basta.
   Le frasi fisse non dicono più "signore". **Non provato dal vivo.**
+- **Finestra ridotta a icona nel visore** (2026-11-26 notte, segnalata dal visore: l'app Claude per desktop ridotta
+  restava ferma su "Collego la finestra…"): una finestra ridotta non dà immagini. Ora `visore.ripristina_ridotta`
+  la riapre da sola senza prenderle il primo piano (`SW_SHOWNOACTIVATE`), sia per la foto sia per la diretta (che la
+  riapre al massimo ogni 3 s se la riduci mentre la guardi); il pannello nel visore, dopo 6 s senza fotogrammi, dice
+  cosa può essere. Provato: `tests/test_visore_ridotta.py` (user32 finto). Non provato con una finestra vera.
+- **HDR e colori sfalsati nel visore** (segnalato dal visore): il registro di Apollo mostra `Client dynamicRange: 0,
+  Display is HDR: true`: il visore chiede un flusso SDR, ma con l'HDR di Windows acceso Apollo cattura lo schermo HDR
+  in 8 bit (`DXGI_FORMAT_B8G8R8A8_UNORM`) e i colori escono sbagliati. Convertirli nel visore vorrebbe dire passare
+  ogni fotogramma da uno shader (oggi il decoder disegna direttamente sul pannello). Soluzione dal lato di Apollo:
+  far seguire al suo schermo virtuale l'HDR chiesto dal visore (impostazione HDR del dispositivo "automatica"), da
+  decidere con l'utente; finché no, HDR spento mentre si usa il visore.
 - **Discussione continua** (2026-11-26 sera, "quando Jarvis mi fa una domanda deve rimanere in ascolto per almeno 10
   secondi, se no ogni volta devo dire Hey Jarvis"): il tempo per rispondere senza parola chiave ("seguito") si
   contava da quando Jarvis cominciava a pensare/parlare, così dopo una risposta di 7-8 s era già scaduto. Ora parte
