@@ -662,8 +662,11 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   serie; la causa vera è che il client **quest** in Apollo ha **"SDR a 10 bit"** acceso (`prefer_10bit_sdr` in
   `sunshine_state.json`; registro: "10-bit SDR is enabled for this client, but Main10 is unavailable; using 8-bit SDR
   encode", cattura in `R16G16B16A16_FLOAT`). Da spegnere solo per il Quest (pagina Client di Apollo, oppure
-  `sunshine_state.json` con Apollo fermo, da amministratore). Tentato con la richiesta UAC il 2026-11-26: annullata,
-  niente cambiato.
+  `sunshine_state.json` con Apollo fermo, da amministratore). **Fatto il 2026-11-27** (richiesta UAC confermata
+  dall'utente): solo `quest` → `prefer_10bit_sdr: false` (copia del file prima: `sunshine_state.json.prima-sdr8`;
+  "switch" e "build8" restano con il 10 bit), Apollo ripartito, 15 client tutti al loro posto. Da verificare alla
+  prossima sessione: nel registro di Apollo niente più "10-bit SDR is enabled" per il Quest e colori giusti con l'HDR
+  di Windows acceso.
 - **Discussione continua** (2026-11-26 sera, "quando Jarvis mi fa una domanda deve rimanere in ascolto per almeno 10
   secondi, se no ogni volta devo dire Hey Jarvis"): il tempo per rispondere senza parola chiave ("seguito") si
   contava da quando Jarvis cominciava a pensare/parlare, così dopo una risposta di 7-8 s era già scaduto. Ora parte
