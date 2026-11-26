@@ -182,6 +182,14 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   Whisper large-v3-turbo vero sulla GPU con voce sintetica Piper: 13 frasi su 13 giuste (5 con "Jarvis", anche in
   mezzo a una frase; 8 comuni scartate, comprese quelle che lo avevano acceso), ~0,15 s. Sulla CPU (gioco) ~3,5 s.
   **Non provato**: con la voce vera dell'utente al tablet.
+  **Con la voce vera** (2026-11-26 sera, "Jarvis del tablet è in attesa e quando dico hey Jarvis non mi sente"): la
+  parola chiave scattava (0,54–0,83) ma la verifica la scartava. Whisper aveva scritto "Ehi Tarvis", "Ehi Cervis",
+  "e carvis", "E carvissi", "E' già visto" e, a 0,83, "Grazie." (la sua invenzione sull'audio corto). Ora `NOME`
+  accetta qualunque lettera prima di "-arvis"/"-ervis" (con la "r": "Travis", "Davis", "avvisi", "servizio" restano
+  fuori) e da `parola_quasi_sicura` (0,75) basta un Whisper senza parole vere (`ALLUCINAZIONI`); le attivazioni a
+  vuoto erano tutte tra 0,40 e 0,51. Sul registro intero, degli scarti passano ora solo i 5 tentativi veri.
+  Provato: `tests/test_jarvis_parola.py` (9 test), Jarvis riavviato con `/jarvis/riavvia`, tablet ricollegato.
+  Non provato: con la voce vera dopo la correzione.
 - **Come è fatto** (`server/jarvis/`, processo a parte avviato e tenuto in vita da `pannello.py`, porta 47802,
   stesso token del pannello; `adb reverse` inoltra anche la 47802):
   - `principale.py`: stati (riposo, ascolto, penso, lavoro, parlo, conferma, seguito), parola chiave sempre

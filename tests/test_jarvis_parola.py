@@ -87,11 +87,13 @@ def _manda(j, blocchi, pausa=0.0):
 
 def test_nome_come_lo_scrive_whisper():
     for detto in ("e giarvis a bespotify", "e i GARVIS.", "Jarvis, che ore sono?", "Ehi Jarvis", "hey jervis",
-                  "Ei Giarvis apri", "Hey Jarbis"):
+                  "Ei Giarvis apri", "Hey Jarbis", "Ehi Tarvis", "Ehi Cervis", "e carvis", "E carvissi.",
+                  "E' già visto."):
         assert NOME.search(detto), detto
     for frase in ("Dobbiamo festeggiare!", "La pipi delle 4 e mezza.", "Ma che dobbiamo fare stasera?",
                   "Hai visto la partita ieri sera?", "Davvero, non ci credo.", "Ho letto l'avviso", "Travis Scott",
-                  "Gli avvisi del servizio", "Davis Cup", "e ciao come va?"):
+                  "Gli avvisi del servizio", "Davis Cup", "e ciao come va?",
+                  "Grazie a tutti.", "Ho previsto tutto", "Il servizio clienti", "Servirà una visita", "Arriba."):
         assert not NOME.search(frase), frase
 
 
@@ -120,6 +122,31 @@ def test_parola_incerta_confermata_tiene_la_richiesta_detta_di_fila():
     assert tipo == "voce" and len(pcm) >= 12 * 1280             # la richiesta intera, non persa nella verifica
     assert "attivo" not in j.suoni                              # parlava già: niente suono sopra le sue parole
     assert "capito" in j.suoni
+
+
+def test_punteggio_alto_e_whisper_senza_parole_accende():
+    # registro del 2026-11-26: "Hey Jarvis" a 0,83 trascritto "Grazie." (invenzione di Whisper sull'audio corto)
+    j = _jarvis(lambda pcm: (False, "Grazie."))
+    _avvia(j)
+    _manda(j, [_blocco(VOCE, 0.83)] + [_blocco(SILENZIO) for _ in range(10)], pausa=0.002)
+    time.sleep(0.4)
+    assert j.stato == "ascolto" and "attivo" in j.suoni
+
+
+def test_punteggio_alto_ma_frase_vera_non_accende():
+    j = _jarvis(lambda pcm: (False, "no per un giallo"))
+    _avvia(j)
+    _manda(j, [_blocco(VOCE, 0.83)] + [_blocco(SILENZIO) for _ in range(10)], pausa=0.002)
+    time.sleep(0.4)
+    assert j.stato == "riposo" and not j.suoni
+
+
+def test_punteggio_basso_e_whisper_senza_parole_non_accende():
+    j = _jarvis(lambda pcm: (False, "Grazie a tutti."))
+    _avvia(j)
+    _manda(j, [_blocco(VOCE, 0.45)] + [_blocco(SILENZIO) for _ in range(10)], pausa=0.002)
+    time.sleep(0.4)
+    assert j.stato == "riposo" and not j.suoni
 
 
 def test_parola_sicura_basta_da_sola():

@@ -160,8 +160,11 @@ class Trascrittore:
 
 
 # "Jarvis" come lo scrive Whisper, detto all'inglese o all'italiana (provato con voce sintetica il 2026-11-24:
-# "e giarvis", "e i GARVIS", "e i JARVIS", "Jarvis"; nessuna frase comune lo contiene)
-NOME = re.compile(r"\b(?:j|gi|g|dj|dg|ch|ci|y|i)[ae]h?r?\s?[vb]i[sz]", re.I)
+# "e giarvis", "e i GARVIS", "e i JARVIS", "Jarvis"; nessuna frase comune lo contiene). Con la voce vera al tablet
+# (registro del 2026-11-24/26) Whisper ha scritto anche "Ehi Tarvis", "Ehi Cervis", "e carvis", "E carvissi",
+# "E' già visto": la seconda forma accetta qualunque lettera prima di "-arvis"/"-ervis" (con la "r", così
+# "Travis", "Davis", "avvisi", "servizio" restano fuori)
+NOME = re.compile(r"\b(?:j|gi|g|dj|dg|ch|ci|y|i)[aàe]h?r?\s?[vb]i[sz]|[aàeè]h?r\s?[vb]is", re.I)
 
 
 # suggerimento per Whisper (lingua, nome "Jarvis"). Sul rumore Whisper a volte lo ripete: non deve mai essere un

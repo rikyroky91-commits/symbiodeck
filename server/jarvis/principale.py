@@ -34,7 +34,7 @@ from .permessi import Permessi
 from .promemoria import Promemoria, capisci as capisci_promemoria
 from .sicurezza import oscura
 from .trame import Frasi, Interruzione, risposta_conferma
-from .voce_claude import MODELLI_STT, VOCI, Sintesi, Trascrittore
+from .voce_claude import ALLUCINAZIONI, MODELLI_STT, VOCI, Sintesi, Trascrittore
 
 SERVER = Path(__file__).resolve().parent.parent
 CONFIG_PANNELLO = SERVER / "config.json"
@@ -61,6 +61,10 @@ PREDEFINITE = {
     "sensibilita": 0.5,            # soglia di openWakeWord: più bassa = si attiva più facilmente
     "verifica_parola": True,       # sotto "parola_sicura" Whisper controlla che sia stato detto davvero "Jarvis"
     "parola_sicura": 0.9,          # da qui in su la parola chiave basta da sola (detta bene: 0,93-0,97)
+    # da qui in su basta anche un Whisper che non ha capito parole ("Grazie.", vuoto: le sue invenzioni sull'audio
+    # corto). Registro del 2026-11-26: "Hey Jarvis" vero a 0,83 trascritto "Grazie." e scartato; le attivazioni a
+    # vuoto mentre si parlava d'altro erano tutte tra 0,40 e 0,51
+    "parola_quasi_sicura": 0.75,
     "seguito": 8,                  # secondi in cui ascolta ancora dopo aver risposto
     "pausa": 1.4,                  # secondi di silenzio che chiudono una frase (più lunga: puoi pensare)
     "conferme": "irreversibili",   # irreversibili | sempre | mai
@@ -586,7 +590,8 @@ class Jarvis:
                 if self.imp.get("verifica_parola", True) and punteggio < self.imp.get("parola_sicura", 0.9):
                     if verifica is None:     # una per volta
                         verifica = {"esito": None, "dopo": [], "t": ora}
-                        threading.Thread(target=self._verifica_parola, args=(np.concatenate(prima), verifica),
+                        threading.Thread(target=self._verifica_parola,
+                                         args=(np.concatenate(prima), verifica, float(punteggio)),
                                          daemon=True).start()
                     continue
                 verifica = None              # detta bene: la verifica in corso non serve più
@@ -726,11 +731,16 @@ class Jarvis:
         if suono:
             self._suona("attivo")
 
-    def _verifica_parola(self, pcm, verifica):
+    def _verifica_parola(self, pcm, verifica, punteggio=0.0):
         """Thread: c'è davvero "Jarvis" nell'audio della parola chiave? Se Whisper non va: no (meglio una parola
-        chiave da ripetere che Jarvis che si accende mentre si parla d'altro)."""
+        chiave da ripetere che Jarvis che si accende mentre si parla d'altro). Con un punteggio alto basta che
+        Whisper non abbia capito parole vere (una delle sue invenzioni): non si stava parlando d'altro."""
         try:
             detto, testo = self.stt.dice_jarvis(pcm)
+            if not detto and punteggio >= self.imp.get("parola_quasi_sicura", 0.75) \
+                    and ALLUCINAZIONI.match(testo.lower().strip(" .,!?")):
+                detto = True
+                testo += " (nessuna parola vera, punteggio alto)"
         except Exception as e:
             detto, testo = False, f"(verifica non riuscita: {e!r})"[:160]
         log("parola chiave", "confermata" if detto else "scartata", f"da Whisper: {testo!r}")
