@@ -658,8 +658,12 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   Display is HDR: true`: il visore chiede un flusso SDR, ma con l'HDR di Windows acceso Apollo cattura lo schermo HDR
   in 8 bit (`DXGI_FORMAT_B8G8R8A8_UNORM`) e i colori escono sbagliati. Convertirli nel visore vorrebbe dire passare
   ogni fotogramma da uno shader (oggi il decoder disegna direttamente sul pannello). Soluzione dal lato di Apollo:
-  far seguire al suo schermo virtuale l'HDR chiesto dal visore (impostazione HDR del dispositivo "automatica"), da
-  decidere con l'utente; finché no, HDR spento mentre si usa il visore.
+  far seguire al suo schermo virtuale l'HDR chiesto dal visore. Verificato poi: `dd_hdr_option` è già "auto" di
+  serie; la causa vera è che il client **quest** in Apollo ha **"SDR a 10 bit"** acceso (`prefer_10bit_sdr` in
+  `sunshine_state.json`; registro: "10-bit SDR is enabled for this client, but Main10 is unavailable; using 8-bit SDR
+  encode", cattura in `R16G16B16A16_FLOAT`). Da spegnere solo per il Quest (pagina Client di Apollo, oppure
+  `sunshine_state.json` con Apollo fermo, da amministratore). Tentato con la richiesta UAC il 2026-11-26: annullata,
+  niente cambiato.
 - **Discussione continua** (2026-11-26 sera, "quando Jarvis mi fa una domanda deve rimanere in ascolto per almeno 10
   secondi, se no ogni volta devo dire Hey Jarvis"): il tempo per rispondere senza parola chiave ("seguito") si
   contava da quando Jarvis cominciava a pensare/parlare, così dopo una risposta di 7-8 s era già scaduto. Ora parte
