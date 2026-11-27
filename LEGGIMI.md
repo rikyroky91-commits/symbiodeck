@@ -195,6 +195,11 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   invece di 49 ("Ehi Yardis", "Gerdes", "Argus" ora passano), nessun nome inventato sul rumore, 14 falsi invece di
   10 su 598 spezzoni di altro parlato. **Non provato** con la voce vera. L'audio degli scarti non si salva, quindi
   non si sa quali righe del registro fossero tentativi veri.
+- **Allenarlo sulla voce vera** (2026-11-27, `server/jarvis/allena_parola.py`): dalla cartella `server`,
+  `python -m jarvis.allena_parola registra si 60` ("Hey Jarvis" ripetuto), `registra no 120` (altro parlato), poi
+  `prova` (accensioni e conferme) e, con almeno 2 registrazioni per tipo, `allena` (modello di openWakeWord sulla
+  voce, confrontato sull'ultima registrazione di ogni tipo, tenuta fuori). Registra solo quando lo chiedi e per il
+  tempo chiesto; i WAV restano in `jarvis-dati/parola/`. Jarvis non usa ancora il modello allenato.
   Non provato: con la voce vera dopo la correzione.
 - **Come è fatto** (`server/jarvis/`, processo a parte avviato e tenuto in vita da `pannello.py`, porta 47802,
   stesso token del pannello; `adb reverse` inoltra anche la 47802):

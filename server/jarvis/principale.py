@@ -30,6 +30,7 @@ from .cervello import Cervello
 from .emergenza import CervelloLocale, Emergenza, SintesiLocale
 from .esecutore import trova_claude
 from .memoria import UTENTE, Memoria
+from .allena_parola import Registrazione
 from .permessi import Permessi
 from .promemoria import Promemoria, capisci as capisci_promemoria
 from .sicurezza import oscura
@@ -499,6 +500,20 @@ class Jarvis:
             self.evento(errore="Riconoscimento vocale non disponibile")
 
     # ------------------------------------------------------------ audio in ingresso
+    registrazione = None   # allena_parola: finché c'è, il microfono va nel file e Jarvis non ascolta
+
+    def registra_parola(self, etichetta, secondi):
+        if self.registrazione is not None:
+            raise ValueError("c'è già una registrazione in corso")
+        self.registrazione = Registrazione(etichetta, secondi, self._parola_registrata)
+        log("registrazione di prova iniziata:", etichetta)
+        self._suona("attivo")
+
+    def _parola_registrata(self, percorso, secondi):
+        self.registrazione = None
+        log("registrazione di prova finita:", f"{secondi:.0f} s", percorso or "(dal microfono non è arrivato niente)")
+        self._suona("fine")
+
     def _blocco(self, da, blocco):
         if not self.imp["attivo"]:
             return
@@ -522,6 +537,10 @@ class Jarvis:
             except Exception as e:
                 log("cancellazione dell'eco non riuscita, la spengo:", repr(e))
                 self.uscita.aec = None
+        registrazione = self.registrazione
+        if registrazione is not None:
+            registrazione.aggiungi(blocco)
+            return
         try:
             self.blocchi.put_nowait(blocco)
         except queue.Full:
@@ -2063,6 +2082,9 @@ class Gestore(BaseHTTPRequestHandler):
                 log("riavvio richiesto")
                 j.claude.ferma()
                 threading.Timer(0.5, lambda: os._exit(3)).start()
+                return self.manda(200, {"ok": True})
+            if u.path == "/jarvis/registra-parola":
+                j.registra_parola(str(d.get("etichetta", "")), d.get("secondi", 60))
                 return self.manda(200, {"ok": True})
             if u.path == "/jarvis/prova-voce":
                 j.prova_voce()
