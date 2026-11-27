@@ -758,6 +758,25 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
 - **Jarvis XR (browser), telemetria**: "In primo piano" mostrava l'oggetto grezzo (`[object Object]`); ora il titolo
   della finestra, se no il nome del programma, come sul tablet (2026-11-25).
 
+## Bacchetta magica, mouse virtuale e finestre ancorate nel visore (2026-11-27)
+Richiesta dell'utente: pescare dal palmo sinistro (come in Half-Life: Alyx) una bacchetta stile Harry Potter con cui
+cerchiare qualcosa e farlo cercare a Jarvis, e un mouse virtuale che funzioni anche sullo schermo in Moonlight; poi
+finestre ancorate e ricordate. Il visore è l'app nativa (cartella `jarvis-xr`, ramo `bacchetta-mouse`); qui c'è la parte
+del PC:
+- `server/jarvis/bacchetta.py`: `POST /jarvis/bacchetta/ritaglio?fonte=schermo|finestra|foto|stanza&punti=x,y;…` (per la
+  stanza il corpo è il JPEG della telecamera del visore). Prende l'immagine, ritaglia attorno al disegno (cerchio =
+  dentro, riga = quello che sta sopra, puntino = la zona attorno) e salva in **Immagini\Bacchetta**.
+- `POST /jarvis/bacchetta/azione {id, azione: cerca|guarda|traduci|annulla}`. Senza pulsante, il ritaglio si attacca
+  alla prossima frase detta (entro 3 minuti). **L'immagine va a Claude solo allora**: disegnare non manda niente fuori.
+  In emergenza o in privata non parte (il modello locale non vede immagini): Jarvis dice dove è salvata.
+- La voce riceve l'immagine insieme alle parole e, per cercare in rete, passa all'esecutore il percorso del ritaglio.
+- Il **mouse virtuale** si usa appoggiato (tavolo o gamba) o in aria: conta solo il movimento orizzontale, alzare la
+  mano lo solleva, clic premendo o toccando con l'indice (logica nell'app del visore, `magia/MouseVirtuale.kt`).
+- **Per usarla**: unire il ramo e riavviare Jarvis (`POST /jarvis/riavvia`).
+- **Provato**: `tests/test_jarvis_bacchetta.py` (7 prove) e gli altri 22 file di test; con Claude vero (Haiku) un'immagine
+  allegata nel formato usato da Jarvis è stata letta; cattura vera dello schermo e i due indirizzi via HTTP. **Non
+  provato**: dal visore fino alla risposta di Jarvis.
+
 ## Modalità sentinella (dal 2026-11-25, app 1.11.0; video, notte e allarme dalla 1.12.0)
 Il tablet fa da telecamera di sicurezza: con la telecamera **davanti** e il microfono si accorge di un movimento o
 di un rumore, registra una foto e una **clip video con audio** (da qualche secondo prima) e le manda **solo al PC**, nella

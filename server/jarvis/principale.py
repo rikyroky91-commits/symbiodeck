@@ -25,7 +25,7 @@ from urllib.parse import parse_qs, urlparse
 
 import numpy as np
 
-from . import annulla, audio, llm_locale, memoria, tastiera, visore
+from . import annulla, audio, bacchetta, llm_locale, memoria, tastiera, visore
 from .cervello import Cervello
 from .emergenza import CervelloLocale, Emergenza, SintesiLocale
 from .esecutore import trova_claude
@@ -214,6 +214,7 @@ class Jarvis:
         self.visori = 0            # visori (Quest, web/xr.js) collegati al flusso di eventi
         self.visore_immersivo = False   # l'utente è dentro Jarvis XR (sessione immersiva): microfono del tablet spento
         self.foto_attese = {}      # id -> {"pronta": Event, "jpeg": bytes}: foto chieste a visore o tablet
+        self.bacchetta = bacchetta.Bacchetta()   # quello che cerchi con la bacchetta magica nel visore
         self.emergenza = Emergenza(self, log)
         self.tts_locale = SintesiLocale(log)
         self.claude = None
@@ -791,10 +792,12 @@ class Jarvis:
                         if not self.claude.occupato and not self.claude.lavora_in_sottofondo():
                             self.imposta_stato("seguito" if self.conversazione else "riposo")
                         continue
+                elif tipo == "bacchetta":        # pulsante della scheda nel visore: richiesta già scritta
+                    testo = dato[0]
                 else:
                     testo = dato
                 self.evento(utente=testo)
-                if self._comando_locale(testo):
+                if tipo != "bacchetta" and self._comando_locale(testo):
                     continue
                 if _BRIEFING.match(re.sub(r"^(?:ehi |hey )?jarvis\W*", "",
                                           " ".join(testo.lower().replace("’", "'").split()).strip(" .!?,"))):
@@ -831,11 +834,48 @@ class Jarvis:
                 self.ultima_attivita = time.time()
                 self.fine_parlato = time.time()
                 self.inizio_turno = time.time()
-                self.claude.chiedi(testo)
+                self._chiedi(testo, dato[1] if tipo == "bacchetta" else self.bacchetta.prendi())
             except Exception as e:
                 log("errore richiesta:", traceback.format_exc())
                 self.imposta_stato("riposo")
                 self.di("Scusa, qualcosa è andato storto: " + str(e)[:120])
+
+    def _chiedi(self, testo, ritaglio=None):
+        """La domanda a Claude; con un ritaglio della bacchetta in attesa, gliela si allega."""
+        if not ritaglio:
+            self.claude.chiedi(testo)
+            return
+        self.evento(bacchetta={"presa": ritaglio["id"]}, azione="Guardo quello che hai cerchiato")
+        if self.emergenza.attiva:    # il cervello sul PC non vede le immagini (e in privata nulla esce)
+            self.claude.chiedi(f"{testo} (L'utente ha cerchiato qualcosa con la bacchetta: non puoi vedere "
+                               f"immagini, digli che il ritaglio è salvato in {ritaglio['percorso']}.)")
+            return
+        self.claude.chiedi(testo + "\n" + bacchetta.nota_per_claude(ritaglio), ritaglio["jpeg"], ritaglio["percorso"])
+
+    def ritaglio_bacchetta(self, q, corpo):
+        """Il disegno fatto con la bacchetta: si prende l'immagine, si ritaglia e si salva (non esce niente dal PC)."""
+        import base64
+        p = {k: v[0] for k, v in q.items()}
+        fonte = p.get("fonte", "")
+        s, anteprima = self.bacchetta.nuovo(fonte, bacchetta.leggi_punti(p.get("punti")), p, corpo)
+        log("bacchetta:", fonte, "->", s["percorso"])
+        return {"id": s["id"], "percorso": s["percorso"], "anteprima": base64.b64encode(anteprima).decode()}
+
+    def azione_bacchetta(self, d):
+        id_ = str(d.get("id", ""))
+        cosa = str(d.get("azione", ""))
+        if cosa == "annulla":
+            return {"ok": self.bacchetta.annulla(id_)}
+        if cosa not in bacchetta.RICHIESTE:
+            raise ValueError("azione sconosciuta")
+        s = self.bacchetta.prendi(id_)
+        if not s:
+            raise ValueError("quel ritaglio non c'è più: rifai il cerchio")
+        self.solo_remoto = False
+        self.conversazione = True
+        self.uscita.riprendi()
+        self.richieste.put(("bacchetta", (bacchetta.RICHIESTE[cosa], s)))
+        return {"ok": True}
 
     def _comando_locale(self, testo):
         """Richieste gestite sul PC senza mandarle a nessun modello: modalità privata e promemoria. True se gestita."""
@@ -1893,6 +1933,8 @@ class Gestore(BaseHTTPRequestHandler):
             return self.voce_intera()
         if u.path == "/jarvis/telecamera":
             return self.foto_dal_dispositivo(q)
+        if u.path == "/jarvis/bacchetta/ritaglio":
+            return self.ritaglio_bacchetta(q)
         try:
             n = int(self.headers.get("Content-Length") or 0)
             if n > 64 * 1024:
@@ -1961,6 +2003,8 @@ class Gestore(BaseHTTPRequestHandler):
                 return self.manda(200, j.guarda(str(d.get("motivo", "")), str(d.get("dispositivo", "auto"))))
             if u.path == "/jarvis/domanda/chiudi":
                 return self.manda(200, {"ok": j.chiudi_domanda()})
+            if u.path == "/jarvis/bacchetta/azione":
+                return self.manda(200, j.azione_bacchetta(d))
             if u.path == "/jarvis/visore/sessione":
                 j.imposta_visore(bool(d.get("immersivo")))
                 return self.manda(200, {"ok": True})
@@ -2120,6 +2164,20 @@ class Gestore(BaseHTTPRequestHandler):
         finally:
             fotogrammi.close()
             log("diretta per il visore finita:", n, "fotogrammi")
+
+    def ritaglio_bacchetta(self, q):
+        """Un disegno della bacchetta: parametri nell'indirizzo, nel corpo la foto della stanza (o niente)."""
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 8 * 1024 * 1024:
+                return self.manda(400, {"errore": "foto troppo grande"})
+            corpo = self.rfile.read(n) if n else b""
+            return self.manda(200, self.j.ritaglio_bacchetta(q, corpo))
+        except (PermissionError, LookupError, ValueError, FileNotFoundError) as e:
+            return self.manda(404, {"errore": str(e)})
+        except Exception as e:
+            log("bacchetta:", traceback.format_exc()[-600:])
+            return self.manda(500, {"errore": str(e)})
 
     def foto_dal_dispositivo(self, q):
         """La foto chiesta da guarda(): JPEG nel corpo (visore o tablet), ?id=…; ?errore=… se non è riuscita."""

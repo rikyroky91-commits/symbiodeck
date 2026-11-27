@@ -2,6 +2,7 @@
 uscita), con tutti gli strumenti di Claude Code, lo schermo e Chrome. Fa i lavori che la voce gli affida (vedi
 cervello.py); la sua sessione è quella che compare nell'app Claude sotto il progetto pc-panel. Ogni strumento
 passa prima dalla guardia (guardia.py, hook PreToolUse)."""
+import base64
 import json
 import os
 import re
@@ -302,7 +303,8 @@ class Esecutore:
         self.proc.stdin.flush()
 
     # ------------------------------------------------------------ comandi
-    def chiedi(self, testo):
+    def chiedi(self, testo, immagine=None):
+        """`immagine`: JPEG (byte) da allegare alla domanda (il ritaglio della bacchetta magica)."""
         if self.continuata_nell_app():
             self.nuova_conversazione()   # l'utente l'ha ripresa nell'app: quella resta all'app
         if self.sessione and self._domande_note is None:
@@ -314,7 +316,12 @@ class Esecutore:
                 self._avvia()
             self.occupato = True
             self._domanda = self._domanda or testo
-            self._scrivi({"type": "user", "message": {"role": "user", "content": testo}})
+            contenuto = testo
+            if immagine:
+                contenuto = [{"type": "text", "text": testo},
+                             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                          "data": base64.b64encode(immagine).decode()}}]
+            self._scrivi({"type": "user", "message": {"role": "user", "content": contenuto}})
 
     def interrompi(self):
         if self._vivo() and self.occupato:
