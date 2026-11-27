@@ -15,7 +15,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "server"))
 from jarvis import principale  # noqa: E402
 from jarvis.principale import PREDEFINITE, Jarvis  # noqa: E402
-from jarvis.voce_claude import NOME  # noqa: E402
+from jarvis.voce_claude import NOME, Trascrittore  # noqa: E402
 
 # i test non scrivono nel registro vero di Jarvis (server/jarvis.log)
 principale.REGISTRO = Path(tempfile.gettempdir()) / "jarvis-prove.log"
@@ -95,6 +95,30 @@ def test_nome_come_lo_scrive_whisper():
                   "Gli avvisi del servizio", "Davis Cup", "e ciao come va?",
                   "Grazie a tutti.", "Ho previsto tutto", "Il servizio clienti", "Servirà una visita", "Arriba."):
         assert not NOME.search(frase), frase
+
+
+def _trascrittore(senza, con):
+    """Whisper finto: `senza` è il testo senza suggerimento, `con` quello suggerendo la parola "Jarvis"."""
+    chiamate = []
+
+    def transcribe(audio, **k):
+        chiamate.append(k.get("hotwords"))
+        testo = con if k.get("hotwords") else senza
+        return [types.SimpleNamespace(text=testo, no_speech_prob=0.0, avg_logprob=0.0)], None
+    t = Trascrittore({}, print)
+    t.modello = types.SimpleNamespace(transcribe=transcribe)
+    t.prepara = lambda: None
+    return t, chiamate
+
+
+def test_verifica_riprova_suggerendo_il_nome():
+    pcm = np.zeros(16000, dtype=np.int16)
+    t, chiamate = _trascrittore("Ehi Yardis", "Hey Jarvis")
+    assert t.dice_jarvis(pcm) == (True, "Hey Jarvis") and chiamate == [None, "Jarvis"]
+    t, chiamate = _trascrittore("Ehi Jarvis", "non serve")
+    assert t.dice_jarvis(pcm) == (True, "Ehi Jarvis") and chiamate == [None]      # capito subito: niente riprova
+    t, chiamate = _trascrittore("Grazie.", "Grazie.")
+    assert t.dice_jarvis(pcm) == (False, "Grazie.")                               # resta il testo senza suggerimento
 
 
 def test_parola_incerta_scartata_se_whisper_non_sente_jarvis():

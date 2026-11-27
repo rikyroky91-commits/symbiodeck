@@ -148,15 +148,28 @@ class Trascrittore:
         return testo
 
     def dice_jarvis(self, pcm16k):
-        """Seconda verifica della parola chiave: c'è davvero "Jarvis" negli ultimi secondi? Trascrizione senza
-        suggerimento (quello normale contiene "Jarvis" e sul rumore Whisper potrebbe ripeterlo).
+        """Seconda verifica della parola chiave: c'è davvero "Jarvis" negli ultimi secondi? Prima senza
+        suggerimento (quello normale contiene "Jarvis" e sul rumore Whisper potrebbe ripeterlo); se il nome non
+        esce, si riprova suggerendo solo la parola "Jarvis": da sola, in italiano, Whisper la scrive "Yardis",
+        "Gerdes", "Argus", "Tarvis". Misurato il 2026-11-27 con voci sintetiche: confermati 54 "Hey Jarvis" su 54
+        invece di 49, nessun "Jarvis" inventato sul rumore, e su 598 spezzoni di altro parlato 14 falsi invece di
+        10 (che contano solo se anche openWakeWord si era acceso).
         Restituisce (sì/no, testo capito)."""
         self.prepara()
         audio = pcm16k.astype(np.float32) / 32768
-        segmenti, _info = self.modello.transcribe(audio, language="it", beam_size=1, vad_filter=False,
-                                                  condition_on_previous_text=False)
-        testo = " ".join(s.text.strip() for s in segmenti if not _vuoto(s)).strip()
-        return bool(NOME.search(testo)), testo
+
+        def capisci(**suggerimento):
+            segmenti, _info = self.modello.transcribe(audio, language="it", beam_size=1, vad_filter=False,
+                                                      condition_on_previous_text=False, **suggerimento)
+            return " ".join(s.text.strip() for s in segmenti if not _vuoto(s)).strip()
+
+        testo = capisci()
+        if NOME.search(testo):
+            return True, testo
+        suggerito = capisci(hotwords="Jarvis")
+        if NOME.search(suggerito):
+            return True, suggerito
+        return False, testo
 
 
 # "Jarvis" come lo scrive Whisper, detto all'inglese o all'italiana (provato con voce sintetica il 2026-11-24:

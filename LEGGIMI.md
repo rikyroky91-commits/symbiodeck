@@ -189,6 +189,12 @@ impostazioni. Dal PC: sezione 🎙️ Jarvis nella pagina delle impostazioni.
   fuori) e da `parola_quasi_sicura` (0,75) basta un Whisper senza parole vere (`ALLUCINAZIONI`); le attivazioni a
   vuoto erano tutte tra 0,40 e 0,51. Sul registro intero, degli scarti passano ora solo i 5 tentativi veri.
   Provato: `tests/test_jarvis_parola.py` (9 test), Jarvis riavviato con `/jarvis/riavvia`, tablet ricollegato.
+- **Ancora non riconosciuto** (2026-11-27, "quando dico hei jarvis non mi riconosci"): nel registro la parola chiave
+  scattava (0,41-0,69) e la verifica scartava ("Grazie.", "che non"…). `dice_jarvis` ora, se senza suggerimento il
+  nome non esce, riprova suggerendo solo la parola "Jarvis" (`hotwords`): con voci sintetiche 54 conferme su 54
+  invece di 49 ("Ehi Yardis", "Gerdes", "Argus" ora passano), nessun nome inventato sul rumore, 14 falsi invece di
+  10 su 598 spezzoni di altro parlato. **Non provato** con la voce vera. L'audio degli scarti non si salva, quindi
+  non si sa quali righe del registro fossero tentativi veri.
   Non provato: con la voce vera dopo la correzione.
 - **Come è fatto** (`server/jarvis/`, processo a parte avviato e tenuto in vita da `pannello.py`, porta 47802,
   stesso token del pannello; `adb reverse` inoltra anche la 47802):
