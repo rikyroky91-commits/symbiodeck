@@ -10,8 +10,13 @@ Pannello sempre acceso con temperature, carichi, FPS, app e scorciatoie del PC.
   `server/avvia-pannello.vbs` (python.exe nascosto). Dal 2026-11-14 non più dalla cartella Esecuzione
   automatica: Windows la eseguiva ~2 minuti dopo l'accesso. Una sola copia alla volta (mutex
   `Local\PannelloPCServer`; una seconda si chiude e scrive "server già in esecuzione" nel log).
-- FPS: li misura RivaTuner (RTSS) agganciandosi al gioco quando parte; Afterburner li espone in
-  `MAHMSharedMemory` (0x50/0x53/0x55). RTSS aveva "Livello di rilevamento" = Nessuno (`EnableHooking=0` in
+- FPS: li misura RivaTuner (RTSS) agganciandosi al gioco quando parte. Dal 2026-11-28 il pannello li legge
+  direttamente dalla memoria di RivaTuner (`RTSSSharedMemoryV2`, `server/rivatuner.py`), non più da Afterburner:
+  con Afterburner chiuso (aveva perso l'avvio con Windows) il tablet restava senza FPS. Gioco = programma in primo
+  piano che RivaTuner vede disegnare (2 s di tolleranza dopo un tocco sul tablet); media dall'avvio del gioco,
+  1% low sugli ultimi 5 minuti. Se RTSS è chiuso da 15 s il pannello rilancia l'attività pianificata `RTSS`; se il
+  rilevamento è spento lo scrive nel log e sul tablet. Afterburner serve ancora per la temperatura della CPU.
+  RTSS aveva "Livello di rilevamento" = Nessuno (`EnableHooking=0` in
   `Profiles\Global`): il 2026-11-14 riattivato con `server/rtss-rilevamento.ps1` (da amministratore, RTSS gira
   elevato; OSD lasciato spento). Copia di prima: `RTSS-Global.prima-del-pannello`. Un gioco già aperto non
   viene agganciato: va riavviato. Da verificare con FC 27 (anti-cheat EA).

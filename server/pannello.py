@@ -32,6 +32,7 @@ try:
 except ImportError:  # il pannello funziona lo stesso, con meno dati
     psutil = None
 
+from rivatuner import RivaTuner
 from sentinella import Sentinella, cartella_desktop, descrivi as descrivi_sentinella
 
 QUI = Path(__file__).resolve().parent
@@ -230,6 +231,8 @@ class Afterburner:
 class Sensori:
     def __init__(self):
         self.ab = Afterburner()
+        self.rtss = RivaTuner(log)   # FPS diretti da RivaTuner: non servono più ad Afterburner
+        self.rtss.start()
         self.vram_tot = None
         self.ram_tot = psutil.virtual_memory().total / 2**20 if psutil else None
         self.ultimo_smi = 0
@@ -309,8 +312,12 @@ class Sensori:
                         "watt": s.get("watt"), "vram": s.get("vram"), "vram_tot": self.vram_tot,
                         "ventola": s.get("ventola")},
                 "ram": {"usata": r(vm.used / 2**20) if vm else None, "totale": r(self.ram_tot)},
-                "fps": {"ora": None, "media": None, "low1": None},
             }
+        fps, stato_rtss = self.rtss.lettura()
+        # da Afterburner si tengono gli FPS solo se RivaTuner non si legge e lui invece li ha
+        if stato_rtss == "ok" or "fps" not in dati or dati["fps"]["ora"] is None:
+            dati["fps"] = {k: r(x) for k, x in fps.items()}
+        dati["rtss"] = stato_rtss
         dati["primo_piano"] = self.app_in_primo_piano()
         dati["t"] = time.time()
         return dati

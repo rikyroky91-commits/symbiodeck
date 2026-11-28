@@ -101,7 +101,9 @@
     testo("fps-media", num(f.media));
     var pp = d.primo_piano || {};
     var nomePP = pp.titolo || pp.processo || "—";
-    testo("fps-gioco", gioco ? nomePP : (d.fonte === "base" ? "Afterburner chiuso: niente FPS" : "nessun gioco"));
+    var senzaFps = d.rtss === "chiuso" ? "RivaTuner chiuso: niente FPS"
+      : d.rtss === "spento" ? "RivaTuner non rileva i giochi" : "nessun gioco";
+    testo("fps-gioco", gioco ? nomePP : senzaFps);
     testo("pp-etichetta", gioco ? "In gioco" : "In primo piano");
     testo("pp-nome", nomePP);
 
